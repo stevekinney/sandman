@@ -1,0 +1,275 @@
+/**
+ * shared.ts — type constants and helpers for the Sandman food-ordering
+ * sandbox template.
+ *
+ * This file is a STANDALONE mirror of src/lib/contracts/workflow-api.ts.
+ * It ships inside the E2B Firecracker MicroVM where src/lib/ is absent,
+ * so it MUST NOT import from the app layer. If you update workflow-api.ts,
+ * keep this file in sync.
+ */
+
+// ---------------------------------------------------------------------------
+// Monetary primitive
+// ---------------------------------------------------------------------------
+
+/** An amount of money expressed as integer cents (e.g. 1099 = $10.99). */
+export type MoneyCents = number;
+
+// ---------------------------------------------------------------------------
+// Customer tier
+// ---------------------------------------------------------------------------
+
+/** Customer tier — affects priority routing and discount eligibility. */
+export const CUSTOMER_TIER = {
+	Standard: 'standard',
+	Premium: 'premium',
+	Enterprise: 'enterprise'
+} as const;
+
+export type CustomerTier = (typeof CUSTOMER_TIER)[keyof typeof CUSTOMER_TIER];
+
+// ---------------------------------------------------------------------------
+// Order status
+// ---------------------------------------------------------------------------
+
+/** All possible order lifecycle states. */
+export const ORDER_STATUS = {
+	Created: 'CREATED',
+	Validating: 'VALIDATING',
+	AwaitingRestaurant: 'AWAITING_RESTAURANT',
+	Preparing: 'PREPARING',
+	AwaitingCourier: 'AWAITING_COURIER',
+	InDelivery: 'IN_DELIVERY',
+	Delivered: 'DELIVERED',
+	Cancelled: 'CANCELLED',
+	Refunded: 'REFUNDED'
+} as const;
+
+export type OrderStatus = (typeof ORDER_STATUS)[keyof typeof ORDER_STATUS];
+
+// ---------------------------------------------------------------------------
+// Task-queue and workflow-type constants
+// ---------------------------------------------------------------------------
+
+/** Temporal task queue shared by the Sandman worker and client. */
+export const TASK_QUEUE = 'sandman-food' as const;
+
+/** Workflow type name for the primary food-ordering orchestration workflow. */
+export const ORDER_FOOD_WORKFLOW = 'OrderFoodWorkflow' as const;
+
+/** Workflow type name for the delivery child workflow. */
+export const DELIVERY_WORKFLOW = 'DeliveryWorkflow' as const;
+
+/** Workflow type name for the subscription renewal workflow. */
+export const SUBSCRIPTION_WORKFLOW = 'SubscriptionWorkflow' as const;
+
+// ---------------------------------------------------------------------------
+// Domain types
+// ---------------------------------------------------------------------------
+
+/** A single item in an order. */
+export type OrderItem = {
+	itemId: string;
+	name: string;
+	quantity: number;
+	unitPriceCents: MoneyCents;
+};
+
+/** Delivery address for the order. */
+export type DeliveryAddress = {
+	street: string;
+	city: string;
+	state: string;
+	postalCode: string;
+	notes?: string;
+};
+
+/** Payment method — discriminated union on `type`. */
+export type PaymentMethod =
+	| { type: 'card'; last4: string; brand: string }
+	| { type: 'wallet'; provider: 'apple-pay' | 'google-pay' }
+	| { type: 'credits'; balanceCents: MoneyCents };
+
+/** Input passed to `orderFoodWorkflow` when placing a new food order. */
+export type OrderInput = {
+	orderId: string;
+	items: OrderItem[];
+	deliveryAddress: DeliveryAddress;
+	customerTier: CustomerTier;
+	paymentMethod: PaymentMethod;
+	restaurantId: string;
+	customerId: string;
+	promoCode?: string;
+	restaurantAcceptTimeoutMinutes?: number;
+};
+
+// ---------------------------------------------------------------------------
+// Signals
+// ---------------------------------------------------------------------------
+
+export type SignalName =
+	| 'cancelOrder'
+	| 'restaurantAccepted'
+	| 'restaurantRejected'
+	| 'foodReady'
+	| 'courierLocationUpdate'
+	| 'addTip';
+
+export type CancelOrderSignal = { reason: string };
+export type RestaurantAcceptedSignal = { estimatedPrepMinutes: number };
+export type RestaurantRejectedSignal = { reason: string; retryable: boolean };
+export type FoodReadySignal = Record<string, never>;
+export type CourierLocationUpdate = { lat: number; lng: number; speedKmh?: number };
+export type AddTipSignal = { amountCents: MoneyCents };
+
+export type SignalPayloadMap = {
+	cancelOrder: CancelOrderSignal;
+	restaurantAccepted: RestaurantAcceptedSignal;
+	restaurantRejected: RestaurantRejectedSignal;
+	foodReady: FoodReadySignal;
+	courierLocationUpdate: CourierLocationUpdate;
+	addTip: AddTipSignal;
+};
+
+// ---------------------------------------------------------------------------
+// Queries
+// ---------------------------------------------------------------------------
+
+export type QueryName = 'getStatus' | 'getTimeline';
+
+export type CourierInfo = {
+	courierId: string;
+	name: string;
+	location?: CourierLocationUpdate;
+	etaMinutes?: number;
+};
+
+export type CompensationRecord = {
+	action: string;
+	timestamp: string;
+	ok: boolean;
+	errorMessage?: string;
+};
+
+/** Full queryable state of a live order workflow. */
+export type OrderSnapshot = {
+	status: OrderStatus;
+	input: OrderInput;
+	subtotalCents: MoneyCents;
+	deliveryFeeCents: MoneyCents;
+	tipCents: MoneyCents;
+	promoDiscountCents: MoneyCents;
+	totalCents: MoneyCents;
+	attemptCounts: Record<string, number>;
+	compensations: CompensationRecord[];
+	courier?: CourierInfo;
+	locationUpdateCount: number;
+	restaurantDeadline?: string;
+	deliveryDeadline?: string;
+	startedAt: string;
+	updatedAt: string;
+	completedAt?: string;
+	appliedPromoCode?: string;
+	continueAsNewPending: boolean;
+	searchAttributes: {
+		OrderStatus: OrderStatus;
+		CustomerTier: CustomerTier;
+		RestaurantId: string;
+	};
+};
+
+/** A single annotated entry in the order event timeline. */
+export type TimelineEntry = {
+	index: number;
+	timestamp: string;
+	description: string;
+	status: OrderStatus;
+	featureId?: string;
+};
+
+export type QueryReturnMap = {
+	getStatus: OrderSnapshot;
+	getTimeline: TimelineEntry[];
+};
+
+// ---------------------------------------------------------------------------
+// Updates
+// ---------------------------------------------------------------------------
+
+export type UpdateName = 'updateDeliveryAddress' | 'applyPromoCode';
+
+export type UpdateDeliveryAddressInput = { newAddress: DeliveryAddress };
+export type UpdateDeliveryAddressResult = { updated: boolean; effectiveAddress: DeliveryAddress };
+export type UpdateDeliveryAddressRejection =
+	| 'order-already-in-delivery'
+	| 'order-already-completed'
+	| 'order-cancelled';
+
+export type ApplyPromoCodeInput = { code: string };
+export type ApplyPromoCodeResult = {
+	discountCents: MoneyCents;
+	newTotalCents: MoneyCents;
+	description: string;
+};
+export type ApplyPromoCodeRejection =
+	| 'invalid-code'
+	| 'code-already-used'
+	| 'code-expired'
+	| 'order-already-completed'
+	| 'order-cancelled';
+
+// ---------------------------------------------------------------------------
+// Delivery workflow types
+// ---------------------------------------------------------------------------
+
+/** Input for the delivery child workflow. */
+export type DeliveryInput = {
+	orderId: string;
+	courierId: string;
+	courierName: string;
+	deliveryAddress: DeliveryAddress;
+	/** Heartbeat interval in ms — set low in tests for fast iteration. */
+	heartbeatIntervalMs?: number;
+	/** SLA timeout duration for delivery completion. Defaults to '2h'. */
+	slaTimeout?: string;
+	/**
+	 * Maximum heartbeat ticks before `trackCourier` exits naturally.
+	 * Undefined (default) loops forever. Set in tests to let the SLA timer
+	 * fire via time-skip once the activity has completed.
+	 */
+	maxTrackerTicks?: number;
+};
+
+/** Result returned by `deliveryWorkflow`. */
+export type DeliveryResult = {
+	deliveredOnTime: boolean;
+	courierId: string;
+};
+
+// ---------------------------------------------------------------------------
+// Subscription workflow types
+// ---------------------------------------------------------------------------
+
+/** Input for the subscription workflow. Carries state across continueAsNew. */
+export type SubscriptionInput = {
+	customerId: string;
+	baseOrder: Omit<OrderInput, 'orderId'>;
+	cycleCount: number;
+	lastOrderId?: string;
+	/** Maximum number of cycles before the subscription ends (0 = unlimited). */
+	maxCycles?: number;
+};
+
+// ---------------------------------------------------------------------------
+// Known promo codes (deterministic — no I/O in workflow)
+// ---------------------------------------------------------------------------
+
+/** Promo codes known to the workflow. Defined here so tests can reference them. */
+export const PROMO_CODES = {
+	SAVE10: { discountPercent: 10, description: '10% off your order' },
+	SAVE20: { discountPercent: 20, description: '20% off your order' },
+	FLAT500: { discountCents: 500, description: '$5 off your order' }
+} as const;
+
+/** Type of a valid promo code key. */
+export type PromoCodeKey = keyof typeof PROMO_CODES;

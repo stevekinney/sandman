@@ -34,8 +34,18 @@ export default defineConfig(
 		}
 	},
 	{
-		// Override or add rule settings here, such as:
-		// 'svelte/button-has-type': 'error'
-		rules: {}
+		rules: {
+			// Allow unused variables and parameters when prefixed with `_`.
+			// This is the TypeScript convention for intentionally unused values
+			// (e.g. `_id` in a default no-op resolver, destructured-but-unused slots).
+			'@typescript-eslint/no-unused-vars': [
+				'error',
+				{
+					argsIgnorePattern: '^_',
+					varsIgnorePattern: '^_',
+					caughtErrorsIgnorePattern: '^_'
+				}
+			]
+		}
 	}
 );

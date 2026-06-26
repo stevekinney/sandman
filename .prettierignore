@@ -8,3 +8,7 @@ bun.lockb
 # Miscellaneous
 /static/
 /drizzle/
+
+# README contains a generated Demo Script section whose table format is
+# canonical (unpadded) — Prettier's column-padding breaks docs:demo:check.
+README.md

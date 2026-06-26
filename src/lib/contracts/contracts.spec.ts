@@ -159,40 +159,47 @@ describe('OrderStatus type', () => {
 });
 
 describe('SignalName / QueryName / UpdateName types', () => {
-	it('are string types', () => {
+	it('are string types matching the workflow-api.ts contract', () => {
 		expectTypeOf<SignalName>().toEqualTypeOf<
+			| 'cancelOrder'
 			| 'restaurantAccepted'
 			| 'restaurantRejected'
-			| 'courierAssigned'
-			| 'orderDelivered'
-			| 'cancelOrder'
+			| 'foodReady'
+			| 'courierLocationUpdate'
+			| 'addTip'
 		>();
-		expectTypeOf<QueryName>().toEqualTypeOf<'getOrderStatus' | 'getOrderDetails'>();
-		expectTypeOf<UpdateName>().toEqualTypeOf<'updateDeliveryAddress'>();
+		expectTypeOf<QueryName>().toEqualTypeOf<'getStatus' | 'getTimeline'>();
+		expectTypeOf<UpdateName>().toEqualTypeOf<'updateDeliveryAddress' | 'applyPromoCode'>();
 
 		// Runtime assertion so requireAssertions is satisfied
 		const signal: SignalName = 'cancelOrder';
-		const query: QueryName = 'getOrderStatus';
+		const query: QueryName = 'getStatus';
 		const update: UpdateName = 'updateDeliveryAddress';
 		expect(signal).toBe('cancelOrder');
-		expect(query).toBe('getOrderStatus');
+		expect(query).toBe('getStatus');
 		expect(update).toBe('updateDeliveryAddress');
 	});
 });
 
 describe('FeatureId type', () => {
-	it('includes the kill-worker feature', () => {
-		const feature: FeatureId = 'kill-worker';
-		expect(feature).toBe('kill-worker');
+	it('includes all fourteen features from the workflow-api.ts contract', () => {
+		const feature: FeatureId = 'activities-retry';
+		expect(feature).toBe('activities-retry');
 		expectTypeOf<FeatureId>().toEqualTypeOf<
-			| 'signal'
-			| 'query'
-			| 'update'
-			| 'timer'
-			| 'activity'
+			| 'activities-retry'
+			| 'non-retryable-failure'
+			| 'saga-compensation'
+			| 'signals'
+			| 'queries'
+			| 'updates-validators'
+			| 'timers-durable-sleep'
 			| 'child-workflow'
-			| 'compensation'
-			| 'kill-worker'
+			| 'heartbeats-cancellation'
+			| 'continue-as-new'
+			| 'search-attributes'
+			| 'local-activities'
+			| 'replay-safety'
+			| 'durable-recovery'
 		>();
 	});
 });
