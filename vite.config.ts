@@ -31,6 +31,17 @@ export default defineConfig({
 			}
 		})
 	],
+	// @lostgradient/cinder ships uncompiled Svelte source (including `.svelte.ts`
+	// utilities such as `use-reduced-motion.svelte.ts` that use `export type`).
+	// Vite's dependency optimizer pre-bundles deps with Rolldown, whose Svelte
+	// parser cannot handle TS `export type` and throws `js_parse_error`. Excluding
+	// the library from pre-bundling routes its modules through the normal
+	// vite-plugin-svelte transform (which strips TS first), fixing the dev/test
+	// optimizer crash that otherwise blocks importing `RunStepTimeline`.
+	// Upstream packaging bug: https://github.com/stevekinney/cinder/issues/534
+	optimizeDeps: {
+		exclude: ['@lostgradient/cinder']
+	},
 	test: {
 		expect: { requireAssertions: true },
 		projects: [

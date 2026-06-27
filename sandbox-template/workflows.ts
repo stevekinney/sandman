@@ -2,12 +2,16 @@
  * workflows.ts — Temporal workflow definitions for the Sandman food-ordering
  * demo.
  *
- * DETERMINISM RULES (enforced here, never bypassed):
- * - No Date.now() or Math.random() — the SDK overrides Date deterministically
- *   inside the workflow sandbox; Math.random() must use workflowRandom()
- * - No raw I/O or Node built-ins
- * - No direct imports of activities (use `import type` + proxyActivities)
- * - Order IDs generated via uuid4() from @temporalio/workflow
+ * DETERMINISM MODEL (Temporal TypeScript SDK):
+ * - The workflow sandbox injects deterministic replacements for Date, Date.now(),
+ *   Math.random(), and setTimeout (see the SDK's packages/worker/src/workflow/vm.ts),
+ *   so those are replay-safe. There is no `workflow.now()` in the TS SDK — you use
+ *   the patched Date. All clock reads here are centralised in nowMs()/now() below.
+ * - Genuinely unsafe (and therefore avoided here): real I/O and network (fetch),
+ *   Web Crypto randomness (NOT patched — use uuid4()), Node built-ins, and
+ *   non-durable timers (use sleep()/condition() instead).
+ * - No direct imports of activities (use `import type` + proxyActivities).
+ * - Order IDs generated via uuid4() from @temporalio/workflow.
  */
 
 import {
@@ -166,9 +170,19 @@ export const deliveryCompletedSignal = defineSignal('deliveryCompleted');
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** ISO-8601 timestamp using the workflow-controlled deterministic clock. */
+/**
+ * Current time in epoch milliseconds, read through Temporal's deterministic
+ * workflow clock. The SDK patches Date/Date.now() inside the workflow sandbox, so
+ * this is replay-safe. Centralised as the single clock-access point so the rest of
+ * the workflow never touches the global clock directly.
+ */
+function nowMs(): number {
+	return Date.now();
+}
+
+/** ISO-8601 timestamp from the deterministic workflow clock (see {@link nowMs}). */
 function now(): string {
-	return new Date().toISOString();
+	return new Date(nowMs()).toISOString();
 }
 
 // ---------------------------------------------------------------------------
@@ -481,18 +495,28 @@ export async function orderFoodWorkflow(
 	addTimeline('Charging payment', 'activities-retry');
 
 	try {
-		attemptCounts['chargePayment'] = (attemptCounts['chargePayment'] ?? 0) + 1;
 		const charge = await chargePayment(
 			currentInput.orderId,
 			currentInput.paymentMethod,
 			totalCents
 		);
+		// Record the REAL number of attempts the SDK made (from the activity's
+		// activityInfo().attempt), not a workflow-side guess. A transient failure
+		// that succeeds on retry reports 2; a clean first-try success reports 1.
+		attemptCounts['chargePayment'] = charge.attempts;
 		addTimeline(`Payment charged: txn ${charge.transactionId}`, 'activities-retry');
-		log.info('Payment charged', { transactionId: charge.transactionId });
+		log.info('Payment charged', {
+			transactionId: charge.transactionId,
+			attempts: charge.attempts
+		});
 	} catch (err) {
 		// Non-retryable: PAYMENT_DECLINED — run saga immediately
 		const failure = err instanceof ApplicationFailure ? err : undefined;
 		const isDeclined = failure?.nonRetryable === true || failure?.type === 'PAYMENT_DECLINED';
+		// A non-retryable decline fails on the first attempt and is never retried,
+		// so the real attempt count is 1. Record it so the snapshot never reports an
+		// undefined charge-attempt count on the failure path.
+		attemptCounts['chargePayment'] = 1;
 		addTimeline(
 			`Payment failed${isDeclined ? ' (non-retryable)' : ''}`,
 			isDeclined ? 'non-retryable-failure' : 'activities-retry'
@@ -625,7 +649,7 @@ export async function orderFoodWorkflow(
 
 	// Delivery SLA — 2 hours before escalation
 	const slaHours = 2;
-	deliveryDeadline = new Date(Date.now() + slaHours * 60 * 60 * 1000).toISOString();
+	deliveryDeadline = new Date(nowMs() + slaHours * 60 * 60 * 1000).toISOString();
 
 	try {
 		await runDeliveryPhase();

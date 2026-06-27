@@ -12,6 +12,8 @@
 	 * (editor saves fail with 503, iframe shows 502, API calls show errors).
 	 */
 	import type { PageData } from './$types';
+	import type { WorkflowRun } from '$lib/components/control-plane/types';
+	import type { TimelineEntry } from '$lib/contracts/workflow-api';
 	import Editor from '$lib/components/editor/editor.svelte';
 	import TemporalUiFrame from '$lib/components/temporal-ui/temporal-ui-frame.svelte';
 	import ControlPlane from '$lib/components/control-plane/control-plane.svelte';
@@ -22,6 +24,37 @@
 
 	const controller = $derived(new FetchController(data.sandboxId));
 	const tourState = new TourState();
+
+	// Live order timeline: poll `getTimeline` while a run is active and feed the
+	// result to the control plane's `RunStepTimeline`. The control plane emits the
+	// run via `onstarted` since it owns the start-order form.
+	let run = $state<WorkflowRun | null>(null);
+	let timelineEntries = $state<TimelineEntry[]>([]);
+
+	$effect(() => {
+		// Read `controller` synchronously so the effect is tracked against it and
+		// re-subscribes if the sandbox (and thus the controller) identity changes.
+		const activeController = controller;
+		if (run === null) return;
+		const workflowId = run.workflowId;
+		let cancelled = false;
+
+		async function poll(): Promise<void> {
+			try {
+				const entries = await activeController.query(workflowId, 'getTimeline');
+				if (!cancelled && Array.isArray(entries)) timelineEntries = entries;
+			} catch {
+				// No live sandbox / worker yet — keep the last known entries.
+			}
+		}
+
+		void poll();
+		const handle = setInterval(() => void poll(), 2000);
+		return () => {
+			cancelled = true;
+			clearInterval(handle);
+		};
+	});
 </script>
 
 <div class="sandman-session">
@@ -40,7 +73,7 @@
 		</section>
 
 		<aside class="panel panel--control" aria-label="Control plane and guided tour">
-			<ControlPlane {controller} />
+			<ControlPlane {controller} {timelineEntries} onstarted={(r) => (run = r)} />
 			<div class="guided-tour-panel">
 				<GuidedTour
 					progress={{

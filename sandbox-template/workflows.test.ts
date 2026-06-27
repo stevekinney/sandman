@@ -244,8 +244,10 @@ describe('activities + retry', () => {
 
 		// Workflow should have retried and ultimately succeeded
 		expect(snapshot.status).toBe(ORDER_STATUS.Delivered);
-		// attemptCounts reflects at least one charge attempt
-		expect(snapshot.attemptCounts['chargePayment']).toBeGreaterThanOrEqual(1);
+		// chargePayment fails on attempt 1 (last4 '0000') and succeeds on attempt 2,
+		// so the SDK-reported attempt count must be exactly 2 — proving the value
+		// reflects real Temporal retries rather than a workflow-side guess.
+		expect(snapshot.attemptCounts['chargePayment']).toBe(2);
 	}, 30_000);
 });
 
@@ -263,6 +265,8 @@ describe('non-retryable failure', () => {
 		const snapshot = await handle.result();
 
 		expect(snapshot.status).toBe(ORDER_STATUS.Cancelled);
+		// The decline is non-retryable, so it fails on attempt 1 with no retries.
+		expect(snapshot.attemptCounts['chargePayment']).toBe(1);
 	}, 30_000);
 });
 
@@ -800,19 +804,25 @@ describe('replay safety', () => {
 		const result = await driveToDelivered(handle, input);
 		expect(result.status).toBe(ORDER_STATUS.Delivered);
 
-		// Fetch recorded history
+		// Fetch recorded history — assert it is a complete, non-trivial happy path
+		// so the replay below actually exercises the full workflow code path.
 		const history = await env.client.workflow.getHandle(`order-${input.orderId}`).fetchHistory();
+		expect(history.events?.length ?? 0).toBeGreaterThan(0);
+		expect(
+			history.events?.some((event) => event.workflowExecutionCompletedEventAttributes != null)
+		).toBe(true);
 
-		// Replay — throws if determinism is violated
-		await Worker.runReplayHistory(
-			{
-				workflowsPath: WORKFLOWS_PATH,
-				replayName: 'replay-safety-test'
-			},
-			history
-		);
-
-		expect(true).toBe(true); // Reached here → no replay error
+		// Replaying the recorded history must resolve without throwing — a
+		// determinism violation would reject this promise.
+		await expect(
+			Worker.runReplayHistory(
+				{
+					workflowsPath: WORKFLOWS_PATH,
+					replayName: 'replay-safety-test'
+				},
+				history
+			)
+		).resolves.toBeUndefined();
 	}, 60_000);
 });
 
@@ -821,8 +831,9 @@ describe('replay safety', () => {
 // ---------------------------------------------------------------------------
 
 describe('subscriptionWorkflow – continueAsNew', () => {
-	it('runs one cycle then calls continueAsNew with incremented cycleCount', async () => {
+	it('carries an incremented cycleCount across continueAsNew runs', async () => {
 		const orderId = uniqueId('sub');
+		const subWorkflowId = `sub-${orderId}`;
 		const subInput: SubscriptionInput = {
 			customerId: 'cust-sub',
 			baseOrder: {
@@ -835,25 +846,30 @@ describe('subscriptionWorkflow – continueAsNew', () => {
 				restaurantAcceptTimeoutMinutes: 1
 			},
 			cycleCount: 0,
-			maxCycles: 1 // Stop after one cycle
+			maxCycles: 2 // Two cycles, so continueAsNew must carry state at least once
 		};
 
 		const subHandle = await env.client.workflow.start(subscriptionWorkflow, {
-			workflowId: `sub-${orderId}`,
+			workflowId: subWorkflowId,
 			taskQueue: TASK_QUEUE,
 			args: [subInput]
 		});
 
-		// The sub workflow starts a child orderFoodWorkflow for cycle 0
-		// That child will wait for restaurant accept; time-skip will auto-advance
-		// the 1-minute restaurant timeout → Refunded → parent cycle completes
-		// Then the subscription waits 7 days (time-skipped) then continueAsNew
-		// The new run has maxCycles=1 and cycleCount=1 so it terminates
+		// Each cycle places a child order (which times out at the 1-minute
+		// restaurant deadline → REFUNDED → completes), sleeps 7 days, then
+		// continueAsNew with cycleCount + 1. Run sequence under time-skipping:
+		//   cycleCount 0 → child order `${id}-cycle-0` → continueAsNew(1)
+		//   cycleCount 1 → child order `${id}-cycle-1` → continueAsNew(2)
+		//   cycleCount 2 → terminates (2 >= maxCycles)
+		await subHandle.result();
 
-		const result = await subHandle.result();
-		void result; // subscriptionWorkflow returns void
-
-		expect(true).toBe(true); // Completed without error
+		// Proof that continueAsNew carried the incremented cycleCount: the SECOND
+		// cycle's child order only exists if the continued run executed with
+		// cycleCount = 1. Both child orders must have completed.
+		const cycle0 = await env.client.workflow.getHandle(`${subWorkflowId}-cycle-0`).describe();
+		const cycle1 = await env.client.workflow.getHandle(`${subWorkflowId}-cycle-1`).describe();
+		expect(cycle0.status.name).toBe('COMPLETED');
+		expect(cycle1.status.name).toBe('COMPLETED');
 	}, 60_000);
 });
 

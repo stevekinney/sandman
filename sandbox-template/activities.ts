@@ -138,6 +138,12 @@ export async function emitMetrics(metric: {
 export type ChargeResult = {
 	transactionId: string;
 	chargedCents: MoneyCents;
+	/**
+	 * The attempt number on which the charge ultimately succeeded, taken from
+	 * the activity's `activityInfo().attempt`. Reflects real Temporal retries:
+	 * 1 on first-try success, 2 if it succeeded after one retry, etc.
+	 */
+	attempts: number;
 };
 
 /**
@@ -172,8 +178,8 @@ export async function chargePayment(
 	}
 
 	const transactionId = `txn-${orderId}-${info.attempt}`;
-	log.info('chargePayment: success', { orderId, transactionId });
-	return { transactionId, chargedCents: amountCents };
+	log.info('chargePayment: success', { orderId, transactionId, attempts: info.attempt });
+	return { transactionId, chargedCents: amountCents, attempts: info.attempt };
 }
 
 // ---------------------------------------------------------------------------

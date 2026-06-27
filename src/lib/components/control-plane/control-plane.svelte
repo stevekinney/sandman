@@ -9,28 +9,28 @@
 	 * `controller` is the seam: production callers pass a `FetchController`;
 	 * tests inject `MockTemporalController`.
 	 *
-	 * The order timeline (`RunStepTimeline`) is intentionally not statically
-	 * imported here — it is a separate `OrderTimeline` component that callers
-	 * can compose alongside `ControlPlane` when they need it. This avoids a
-	 * Vite/Rolldown optimization crash caused by `@lostgradient/cinder`'s
-	 * `RunStepTimeline` → `Collapsible` → `use-reduced-motion.svelte.ts` chain
-	 * producing a TypeScript `export type` that Rolldown's JS parser cannot handle.
-	 * See: https://github.com/lostgradient/cinder (issue filed separately).
+	 * The order timeline (`OrderTimeline` → Cinder `RunStepTimeline`) is rendered
+	 * directly. Its live data (`timelineEntries`) is supplied by the parent, which
+	 * owns the `getTimeline` poll — keeping this component's own controller-query
+	 * surface limited to explicit user actions. The parent learns the active run
+	 * via the `onstarted` callback so it can scope its poll to the workflow ID.
 	 */
-	import type { Snippet } from 'svelte';
 	import type { TemporalController, WorkflowRun } from './types.ts';
 	import type { WorkflowEvent } from '$lib/contracts/events';
+	import type { TimelineEntry } from '$lib/contracts/workflow-api';
 	import StartOrderForm from './start-order-form.svelte';
 	import SignalControls from './signal-controls.svelte';
 	import QueryPanel from './query-panel.svelte';
 	import UpdateControls from './update-controls.svelte';
 	import EventRail from './event-rail.svelte';
 	import ChaosControls from './chaos-controls.svelte';
+	import OrderTimeline from './order-timeline.svelte';
 
 	let {
 		controller,
 		events = [],
-		timeline
+		timelineEntries = [],
+		onstarted
 	}: {
 		controller: TemporalController;
 		/**
@@ -39,18 +39,20 @@
 		 */
 		events?: WorkflowEvent[];
 		/**
-		 * Optional snippet rendered below the event rail for the order timeline.
-		 * Pass `{#snippet timeline(run)}<OrderTimeline ... />{/snippet}` from the
-		 * parent to display `RunStepTimeline` without creating a static import that
-		 * triggers the Vite optimizer failure described above.
+		 * Live `getTimeline` snapshot, provided by the parent. Rendered as a
+		 * Cinder `RunStepTimeline`. Defaults to empty (timeline hidden) so tests
+		 * and pre-start states render nothing.
 		 */
-		timeline?: Snippet<[WorkflowRun]>;
+		timelineEntries?: TimelineEntry[];
+		/** Called once when a workflow run starts, so the parent can scope its poll. */
+		onstarted?: (run: WorkflowRun) => void;
 	} = $props();
 
 	let workflowRun = $state<WorkflowRun | null>(null);
 
 	function handleStarted(run: WorkflowRun): void {
 		workflowRun = run;
+		onstarted?.(run);
 	}
 </script>
 
@@ -81,8 +83,6 @@
 
 		<EventRail {events} />
 
-		{#if timeline}
-			{@render timeline(workflowRun)}
-		{/if}
+		<OrderTimeline entries={timelineEntries} />
 	{/if}
 </div>

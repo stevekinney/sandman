@@ -18,7 +18,9 @@ import { describe, it, expect } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import { MockTemporalController } from './mock-controller.ts';
+import type { WorkflowRun } from './types.ts';
 import type { WorkflowEvent } from '$lib/contracts/events';
+import type { TimelineEntry } from '$lib/contracts/workflow-api';
 import ControlPlane from './control-plane.svelte';
 import EventRail from './event-rail.svelte';
 
@@ -229,6 +231,50 @@ describe('query controls', () => {
 		expect(controller.queryCalls).toHaveLength(1);
 		expect(controller.queryCalls[0]).toMatchObject({ name: 'getTimeline' });
 		await expect.element(page.getByText(/Order created/)).toBeInTheDocument();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 3b. Order timeline (Cinder RunStepTimeline)
+// ---------------------------------------------------------------------------
+
+describe('order timeline', () => {
+	it('renders a RunStepTimeline step for each timeline entry after a run starts', async () => {
+		const controller = new MockTemporalController();
+		const timelineEntries: TimelineEntry[] = [
+			{
+				index: 0,
+				timestamp: '2026-01-01T00:00:00.000Z',
+				description: 'Validating order',
+				status: 'VALIDATING'
+			},
+			{
+				index: 1,
+				timestamp: '2026-01-01T00:01:00.000Z',
+				description: 'Charging payment',
+				status: 'AWAITING_RESTAURANT'
+			}
+		];
+		render(ControlPlane, { props: { controller, timelineEntries } });
+		await startWorkflow(controller);
+
+		// Cinder's RunStepTimeline renders an <ol aria-label="Order timeline">;
+		// asserting the list role confirms the real component (not a fallback) mounted.
+		await expect.element(page.getByRole('list', { name: 'Order timeline' })).toBeInTheDocument();
+		await expect.element(page.getByText('Validating order')).toBeInTheDocument();
+		await expect.element(page.getByText('Charging payment')).toBeInTheDocument();
+	});
+
+	it('invokes onstarted with the run identifiers when an order starts', async () => {
+		const controller = new MockTemporalController();
+		const runs: WorkflowRun[] = [];
+		render(ControlPlane, {
+			props: { controller, onstarted: (run: WorkflowRun) => runs.push(run) }
+		});
+		await startWorkflow(controller);
+
+		expect(runs).toHaveLength(1);
+		expect(runs[0]).toEqual(controller.startResult);
 	});
 });
 
