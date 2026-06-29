@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createSandboxClient } from './client.ts';
+import { createSandboxClient, loadDefaultTemplateFiles } from './client.ts';
 import { SANDBOX_STATUS } from '$lib/contracts/sandbox';
 import type { E2bAdapter, E2bSandboxSession } from './e2b-adapter.ts';
 import type { SandboxHandle } from '$lib/contracts/sandbox';
@@ -483,5 +483,45 @@ describe('terminate()', () => {
 
 		const killCount = calls.filter((c) => c.method === 'sandbox.kill').length;
 		expect(killCount).toBe(1); // sandbox killed exactly once
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: loadDefaultTemplateFiles — exclude test / config files
+// ---------------------------------------------------------------------------
+
+describe('loadDefaultTemplateFiles()', () => {
+	it('includes runtime files that the sandbox worker needs', async () => {
+		const files = await loadDefaultTemplateFiles();
+		const keys = Object.keys(files);
+
+		expect(keys).toContain('/app/package.json');
+		expect(keys).toContain('/app/worker.ts');
+		expect(keys).toContain('/app/workflows.ts');
+		expect(keys).toContain('/app/activities.ts');
+		expect(keys).toContain('/app/shared.ts');
+		expect(keys).toContain('/app/client.ts');
+	});
+
+	it('excludes *.test.ts files from the sandbox', async () => {
+		const files = await loadDefaultTemplateFiles();
+		const keys = Object.keys(files);
+
+		const testFiles = keys.filter((k) => k.endsWith('.test.ts'));
+		expect(testFiles).toHaveLength(0);
+	});
+
+	it('excludes *.spec.ts files from the sandbox', async () => {
+		const files = await loadDefaultTemplateFiles();
+		const keys = Object.keys(files);
+
+		const specFiles = keys.filter((k) => k.endsWith('.spec.ts'));
+		expect(specFiles).toHaveLength(0);
+	});
+
+	it('excludes vitest.config.ts from the sandbox', async () => {
+		const files = await loadDefaultTemplateFiles();
+
+		expect(files).not.toHaveProperty('/app/vitest.config.ts');
 	});
 });

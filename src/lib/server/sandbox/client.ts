@@ -95,8 +95,25 @@ export type SandboxClientOpts = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Loads all `.ts` and `.json` files from `sandbox-template/`. */
-async function loadDefaultTemplateFiles(): Promise<Record<string, string>> {
+/** Patterns whose matching files are excluded from sandbox VM writes. */
+const EXCLUDED_TEMPLATE_PATTERNS: ReadonlyArray<RegExp> = [
+	/\.test\.ts$/,
+	/\.spec\.ts$/,
+	/^vitest\.config\./
+];
+
+/**
+ * Loads runtime `.ts` and `.json` files from `sandbox-template/` into a record
+ * keyed by their `/app/<name>` destination path inside the sandbox VM.
+ *
+ * Test files (`*.test.ts`, `*.spec.ts`) and config files (`vitest.config.*`)
+ * are excluded — they have no role at runtime and should not be shipped into
+ * the sandbox.
+ *
+ * @internal Exported for unit testing; external callers should prefer
+ *   `SandboxClientOpts.templateFiles` to supply pre-loaded content.
+ */
+export async function loadDefaultTemplateFiles(): Promise<Record<string, string>> {
 	const templateDir = join(process.cwd(), 'sandbox-template');
 	const allowedExtensions = new Set(['.ts', '.json']);
 	const files: Record<string, string> = {};
@@ -111,7 +128,11 @@ async function loadDefaultTemplateFiles(): Promise<Record<string, string>> {
 
 	await Promise.all(
 		entries
-			.filter((name) => allowedExtensions.has(extname(name)))
+			.filter(
+				(name) =>
+					allowedExtensions.has(extname(name)) &&
+					!EXCLUDED_TEMPLATE_PATTERNS.some((pattern) => pattern.test(name))
+			)
 			.map(async (name) => {
 				const contents = await readFile(join(templateDir, name), 'utf-8');
 				files[`/app/${name}`] = contents;
