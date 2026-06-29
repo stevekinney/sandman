@@ -6,7 +6,7 @@
  * is ever created.
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { createSandboxClient, loadDefaultTemplateFiles } from './client.ts';
 import { SANDBOX_STATUS } from '$lib/contracts/sandbox';
 import type { E2bAdapter, E2bSandboxSession } from './e2b-adapter.ts';
@@ -166,6 +166,98 @@ describe('provision()', () => {
 		});
 		await client.provision();
 		expect(capturedOpts?.network?.allowPublicTraffic).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: provision() — E2B_TEMPLATE_ID wiring
+// ---------------------------------------------------------------------------
+
+describe('provision() — templateId wiring', () => {
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	it('passes templateId to adapter.create when set via SandboxClientOpts', async () => {
+		let capturedOpts: Parameters<E2bAdapter['create']>[0] | undefined;
+		const { adapter: baseAdapter } = createMockAdapter();
+		const adapter: E2bAdapter = {
+			async create(opts) {
+				capturedOpts = opts;
+				return baseAdapter.create(opts);
+			}
+		};
+		const client = createSandboxClient({
+			adapter,
+			templateFiles: {},
+			maxReadinessRetries: 1,
+			readinessDelayMs: 0,
+			templateId: 'tmpl-test-123'
+		});
+		await client.provision();
+		expect(capturedOpts?.templateId).toBe('tmpl-test-123');
+	});
+
+	it('passes templateId to adapter.create when set via E2B_TEMPLATE_ID env var', async () => {
+		vi.stubEnv('E2B_TEMPLATE_ID', 'tmpl-from-env');
+		let capturedOpts: Parameters<E2bAdapter['create']>[0] | undefined;
+		const { adapter: baseAdapter } = createMockAdapter();
+		const adapter: E2bAdapter = {
+			async create(opts) {
+				capturedOpts = opts;
+				return baseAdapter.create(opts);
+			}
+		};
+		// Create client AFTER stubbing the env var so the resolved templateId picks it up.
+		const client = createSandboxClient({
+			adapter,
+			templateFiles: {},
+			maxReadinessRetries: 1,
+			readinessDelayMs: 0
+		});
+		await client.provision();
+		expect(capturedOpts?.templateId).toBe('tmpl-from-env');
+	});
+
+	it('passes templateId as undefined when neither option nor env var is set', async () => {
+		vi.stubEnv('E2B_TEMPLATE_ID', '');
+		let capturedOpts: Parameters<E2bAdapter['create']>[0] | undefined;
+		const { adapter: baseAdapter } = createMockAdapter();
+		const adapter: E2bAdapter = {
+			async create(opts) {
+				capturedOpts = opts;
+				return baseAdapter.create(opts);
+			}
+		};
+		const client = createSandboxClient({
+			adapter,
+			templateFiles: {},
+			maxReadinessRetries: 1,
+			readinessDelayMs: 0
+		});
+		await client.provision();
+		expect(capturedOpts?.templateId).toBeUndefined();
+	});
+
+	it('SandboxClientOpts.templateId takes precedence over E2B_TEMPLATE_ID env var', async () => {
+		vi.stubEnv('E2B_TEMPLATE_ID', 'tmpl-from-env');
+		let capturedOpts: Parameters<E2bAdapter['create']>[0] | undefined;
+		const { adapter: baseAdapter } = createMockAdapter();
+		const adapter: E2bAdapter = {
+			async create(opts) {
+				capturedOpts = opts;
+				return baseAdapter.create(opts);
+			}
+		};
+		const client = createSandboxClient({
+			adapter,
+			templateFiles: {},
+			maxReadinessRetries: 1,
+			readinessDelayMs: 0,
+			templateId: 'tmpl-explicit'
+		});
+		await client.provision();
+		expect(capturedOpts?.templateId).toBe('tmpl-explicit');
 	});
 });
 

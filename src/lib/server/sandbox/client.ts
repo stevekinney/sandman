@@ -89,6 +89,13 @@ export type SandboxClientOpts = {
 	maxReadinessRetries?: number;
 	/** Milliseconds to wait between readiness probes. */
 	readinessDelayMs?: number;
+	/**
+	 * ID of a prebuilt E2B template to use when provisioning sandboxes.
+	 * Falls back to `process.env.E2B_TEMPLATE_ID` when unset here.
+	 * If neither is set, the E2B default base image is used and the Temporal
+	 * CLI plus worker deps are installed on demand during bootstrap.
+	 */
+	templateId?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -211,6 +218,12 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		readinessDelayMs = DEFAULT_READINESS_DELAY_MS
 	} = opts;
 
+	// Resolve the template ID: explicit option wins, then env var, then undefined
+	// (empty-string env var is treated as unset so Sandbox.create is never called
+	// with an empty string as the template name).
+	const templateId: string | undefined =
+		opts.templateId ?? (process.env.E2B_TEMPLATE_ID || undefined);
+
 	const sandboxes = new Map<string, InternalSandboxState>();
 
 	// ------------------------------------------------------------------
@@ -220,7 +233,8 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 	async function provision(provisionOpts?: { timeoutMs?: number }): Promise<SandboxHandle> {
 		const session = await adapter.create({
 			timeoutMs: provisionOpts?.timeoutMs ?? sandboxTimeoutMs,
-			network: { allowPublicTraffic: false }
+			network: { allowPublicTraffic: false },
+			templateId
 		});
 
 		const state: InternalSandboxState = {

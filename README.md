@@ -29,6 +29,34 @@ bun run dev
 | `E2B_TEMPLATE_ID`        | _Optional._ ID of a prebuilt E2B template with Node + the Temporal CLI + worker deps baked in. If unset, Sandman uses the default base image and installs the Temporal CLI and worker dependencies on demand during bootstrap. |
 | `SANDMAN_SESSION_TTL_MS` | Sandbox lifetime in milliseconds (default: `300000` / 5 min)             |
 
+## Prebuilt E2B template (optional — cuts cold-start from ~50 s to ~5 s)
+
+The default flow installs the Temporal CLI and worker npm dependencies on every
+boot. Baking them into a prebuilt E2B template removes that per-boot latency.
+
+**Requirements:** `e2b` CLI and an authenticated E2B account.
+
+Build and publish the template from the repo root:
+
+```sh
+npx e2b@latest template build --name sandman
+```
+
+The command prints the new template ID. Add it to your `.env`:
+
+```sh
+E2B_TEMPLATE_ID=<id-printed-above>
+```
+
+Sandman reads `E2B_TEMPLATE_ID` at startup. When set, it passes the template ID
+to `Sandbox.create()` so each session boots from the prebuilt image. When unset,
+it falls back to the default base image with on-demand install—no other config
+change required.
+
+The template definition lives in `e2b.Dockerfile` at the repo root. Re-run
+`e2b template build` after updating Node, the Temporal CLI version, or the
+worker's `package.json` dependencies to keep the baked cache current.
+
 ## Verification gates
 
 Run these in order to confirm the project is healthy:

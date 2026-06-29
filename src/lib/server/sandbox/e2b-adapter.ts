@@ -54,6 +54,13 @@ export type E2bCreateOpts = {
 	network?: {
 		allowPublicTraffic?: boolean;
 	};
+	/**
+	 * ID of a prebuilt E2B template to use when creating the sandbox.
+	 * When set, the E2B SDK calls `Sandbox.create(templateId, opts)` instead
+	 * of `Sandbox.create(opts)`, which skips the default base image and boots
+	 * the named prebuilt image. When omitted, the E2B default base image is used.
+	 */
+	templateId?: string;
 };
 
 /** Injectable abstraction over the E2B SDK for unit-testable sandbox operations. */
@@ -145,14 +152,19 @@ export function wrapSandbox(sandbox: SandboxType): E2bSandboxSession {
 /**
  * Creates an `E2bAdapter` backed by the real `e2b` npm package.
  * Requires `E2B_API_KEY` to be set in the environment.
+ *
+ * When `opts.templateId` is provided, the sandbox is created from that prebuilt
+ * template (fast path). Otherwise the E2B default base image is used and the
+ * bootstrap step installs the Temporal CLI and worker deps on demand.
  */
 export function createRealE2bAdapter(): E2bAdapter {
 	return {
 		async create(opts = {}) {
-			const sandbox = await Sandbox.create({
-				timeoutMs: opts.timeoutMs,
-				network: opts.network
-			});
+			const sandboxOpts = { timeoutMs: opts.timeoutMs, network: opts.network };
+			const sandbox =
+				opts.templateId !== undefined
+					? await Sandbox.create(opts.templateId, sandboxOpts)
+					: await Sandbox.create(sandboxOpts);
 			return wrapSandbox(sandbox);
 		}
 	};
