@@ -26,18 +26,20 @@ is complete. The orchestrator reads this field to determine whether to proceed.
 | Track C (Monaco editor)           | `SANDMAN_TRACK_C_COMPLETE` |
 | Track D (workflow implementation) | `SANDMAN_TRACK_D_COMPLETE` |
 | Track E (control plane UI)        | `SANDMAN_TRACK_E_COMPLETE` |
+| Track F (guided demo / explainer) | `SANDMAN_TRACK_F_COMPLETE` |
 
 ## Ownership map
 
-| Path                                    | Owner track                     |
-| --------------------------------------- | ------------------------------- |
-| `package.json`, configs, `.env.example` | Track 0                         |
-| `src/lib/contracts/**`                  | Track 0 (stub); Track D (final) |
-| `src/lib/server/sandbox/**`             | Track A                         |
-| `src/routes/sbx/[id]/ui/**`             | Track B                         |
-| `src/lib/components/editor/**`          | Track C                         |
-| `sandbox-template/**`                   | Track D                         |
-| `src/lib/components/control-plane/**`   | Track E                         |
+| Path                                                    | Owner track                     |
+| ------------------------------------------------------- | ------------------------------- |
+| `package.json`, configs, `.env.example`                 | Track 0                         |
+| `src/lib/contracts/**`                                  | Track 0 (stub); Track D (final) |
+| `src/lib/server/sandbox/**`                             | Track A                         |
+| `src/routes/sbx/[id]/ui/**`                             | Track B                         |
+| `src/lib/components/editor/**`                          | Track C                         |
+| `sandbox-template/**`                                   | Track D                         |
+| `src/lib/components/control-plane/**`                   | Track E                         |
+| `src/lib/components/explainer/**`, `src/lib/content/**` | Track F                         |
 
 Tracks may READ any path; only the owner track may write to its path.
 

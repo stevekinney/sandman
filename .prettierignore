@@ -12,6 +12,10 @@ bun.lockb
 # Machine-local Claude Code settings (git-ignored; not project source)
 .claude/
 
+# Agent skill-system artifacts (machine-managed; not project source)
+.agents/
+skills-lock.json
+
 # README contains a generated Demo Script section whose table format is
 # canonical (unpadded) — Prettier's column-padding breaks docs:demo:check.
 README.md
