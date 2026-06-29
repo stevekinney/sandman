@@ -33,10 +33,13 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && rm -rf /var/lib/apt/lists/*
 
 # -- Temporal CLI -------------------------------------------------------------
-# Mirror exactly what client.ts TEMPORAL_INSTALL_CMD does so the bootstrap
-# check (`temporal --version`) always exits 0 in this image.
+# Install the Temporal CLI and move the binary to a world-readable location on
+# PATH (the installer drops it under $HOME/.temporalio, i.e. /root, which is not
+# readable when the sandbox runs as a non-root user). This keeps the bootstrap
+# check (`temporal --version`) at exit 0 regardless of the runtime user.
 RUN curl -sSf https://temporal.download/cli.sh | sh \
-    && ln -sf "$HOME/.temporalio/bin/temporal" /usr/local/bin/temporal
+    && mv "$HOME/.temporalio/bin/temporal" /usr/local/bin/temporal \
+    && chmod a+rx /usr/local/bin/temporal
 
 # -- Pre-warm npm cache with sandbox worker dependencies ----------------------
 # The bootstrap copies sandbox-template/package.json to /app/package.json at
@@ -44,4 +47,8 @@ RUN curl -sSf https://temporal.download/cli.sh | sh \
 # that install step completes from local cache instead of hitting the network.
 WORKDIR /app
 COPY sandbox-template/package.json ./
-RUN npm install
+# Make /app writable by any runtime user — the bootstrap writes the template
+# files here and re-runs `npm install --prefer-offline` (a fast no-op against
+# the baked node_modules) when the sandbox starts.
+RUN npm install \
+    && chmod -R a+rwX /app
