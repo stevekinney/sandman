@@ -39,6 +39,17 @@ const WORKER_CMD = 'cd /app && node_modules/.bin/tsx worker.ts';
 /** Command used to install sandbox dependencies. */
 const INSTALL_CMD = 'cd /app && npm install --prefer-offline';
 
+/**
+ * Installs the Temporal CLI inside the sandbox when the base image lacks it.
+ * The official installer drops the binary in `~/.temporalio/bin`, which is not on
+ * the non-interactive PATH, so we symlink it into `/usr/local/bin` (writable and
+ * on PATH in the E2B base image). Baking the CLI into a prebuilt E2B template
+ * would remove this per-boot download — tracked as a perf follow-up.
+ */
+const TEMPORAL_INSTALL_CMD =
+	'curl -sSf https://temporal.download/cli.sh | sh && ' +
+	'ln -sf "$HOME/.temporalio/bin/temporal" /usr/local/bin/temporal';
+
 /** How many times to poll before declaring temporal not ready. */
 const DEFAULT_READINESS_RETRIES = 60;
 
@@ -111,12 +122,13 @@ async function loadDefaultTemplateFiles(): Promise<Record<string, string>> {
 }
 
 /**
- * Verifies that Node.js and the Temporal CLI are present in the sandbox.
- * Throws a descriptive error if either binary is missing, so callers get a
- * clear failure message instead of a cryptic `temporal server start-dev` exit.
+ * Ensures Node.js and the Temporal CLI are available in the sandbox.
  *
- * Use an E2B template that pre-installs both tools. Creating that template is
- * tracked as a followup task.
+ * Node.js ships in the E2B base image, so a missing `node` fails loudly. The
+ * Temporal CLI is NOT in the base image: when it is absent we install it on
+ * demand (download + symlink onto PATH) and re-verify, rather than failing.
+ * Baking both tools into a prebuilt E2B template would remove the per-boot
+ * install latency — tracked as a perf follow-up.
  */
 async function ensureRuntimeDependencies(session: E2bSandboxSession): Promise<void> {
 	const nodeResult = await session.commands.run('node --version', { timeoutMs: 10_000 });
@@ -128,11 +140,17 @@ async function ensureRuntimeDependencies(session: E2bSandboxSession): Promise<vo
 	}
 
 	const temporalResult = await session.commands.run('temporal --version', { timeoutMs: 10_000 });
-	if (temporalResult.exitCode !== 0) {
-		throw new Error(
-			`Temporal CLI is not installed in the sandbox environment. ` +
-				`Use an E2B template that includes the Temporal CLI. stderr: ${temporalResult.stderr}`
-		);
+	if (temporalResult.exitCode === 0) return;
+
+	// Not in the base template — install it (the "otherwise install" path).
+	const install = await session.commands.run(TEMPORAL_INSTALL_CMD, { timeoutMs: 180_000 });
+	if (install.exitCode !== 0) {
+		throw new Error(`Failed to install the Temporal CLI in the sandbox. stderr: ${install.stderr}`);
+	}
+
+	const verify = await session.commands.run('temporal --version', { timeoutMs: 10_000 });
+	if (verify.exitCode !== 0) {
+		throw new Error(`Temporal CLI is not runnable after install. stderr: ${verify.stderr}`);
 	}
 }
 

@@ -9,6 +9,9 @@ bun.lockb
 /static/
 /drizzle/
 
+# Machine-local Claude Code settings (git-ignored; not project source)
+.claude/
+
 # README contains a generated Demo Script section whose table format is
 # canonical (unpadded) — Prettier's column-padding breaks docs:demo:check.
 README.md

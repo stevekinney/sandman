@@ -1,0 +1,19 @@
+{
+	"name": "sandman-sandbox",
+	"version": "0.0.1",
+	"private": true,
+	"type": "module",
+	"description": "In-sandbox Temporal worker project for Sandman. Copied into the E2B MicroVM at /app during bootstrap and run with tsx. Dependency versions are pinned to match the host so workflow behavior and replay stay consistent.",
+	"scripts": {
+		"worker": "tsx worker.ts",
+		"client": "tsx client.ts"
+	},
+	"dependencies": {
+		"@temporalio/activity": "1.18.1",
+		"@temporalio/client": "1.18.1",
+		"@temporalio/common": "1.18.1",
+		"@temporalio/worker": "1.18.1",
+		"@temporalio/workflow": "1.18.1",
+		"tsx": "4.22.4"
+	}
+}

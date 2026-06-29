@@ -55,7 +55,10 @@ export type OrderStatus = (typeof ORDER_STATUS)[keyof typeof ORDER_STATUS];
 export const TASK_QUEUE = 'sandman-food' as const;
 
 /** Workflow type name for the primary food-ordering orchestration workflow. */
-export const ORDER_FOOD_WORKFLOW = 'OrderFoodWorkflow' as const;
+// MUST equal the exported workflow function name below — the Temporal worker
+// registers workflows by their function name (orderFoodWorkflow), so clients that
+// start a different string fail with "workflow type not registered".
+export const ORDER_FOOD_WORKFLOW = 'orderFoodWorkflow' as const;
 
 /** Workflow type name for the delivery child workflow. */
 export const DELIVERY_WORKFLOW = 'DeliveryWorkflow' as const;

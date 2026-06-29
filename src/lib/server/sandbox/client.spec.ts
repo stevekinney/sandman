@@ -276,6 +276,96 @@ describe('bootstrap()', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: bootstrap installs the Temporal CLI when the base image lacks it
+// ---------------------------------------------------------------------------
+
+describe('bootstrap() — Temporal CLI install path', () => {
+	/**
+	 * Builds a client whose sandbox reports the Temporal CLI as missing until the
+	 * install command has run. `installExitCode` controls whether that install
+	 * succeeds. Returns a recorder of every command the bootstrap issues.
+	 */
+	function makeInstallScenario(installExitCode: number): {
+		client: ReturnType<typeof createSandboxClient>;
+		ranCommands: string[];
+	} {
+		const ranCommands: string[] = [];
+		let installed = false;
+
+		const session: E2bSandboxSession = {
+			sandboxId: 'sbx-install',
+			trafficAccessToken: 'tok',
+			getHost: (port) => `sbx-install-${port}.e2b.dev`,
+			commands: {
+				async run(cmd) {
+					ranCommands.push(cmd);
+					if (cmd.includes('temporal.download/cli.sh')) {
+						if (installExitCode === 0) installed = true;
+						return { exitCode: installExitCode, stdout: '', stderr: 'install stderr' };
+					}
+					if (cmd === 'temporal --version') {
+						return installed
+							? { exitCode: 0, stdout: 'temporal version 1.7.2', stderr: '' }
+							: { exitCode: 127, stdout: '', stderr: 'temporal: command not found' };
+					}
+					return { exitCode: 0, stdout: '', stderr: '' };
+				},
+				async start() {
+					return {
+						pid: 1,
+						async wait() {
+							return { exitCode: 0, stdout: '', stderr: '' };
+						},
+						async kill() {
+							return true;
+						}
+					};
+				},
+				async kill() {
+					return true;
+				}
+			},
+			files: {
+				async write() {}
+			},
+			async kill() {
+				return true;
+			}
+		};
+
+		const client = createSandboxClient({
+			adapter: {
+				async create() {
+					return session;
+				}
+			},
+			templateFiles: { '/app/worker.ts': '// placeholder' },
+			maxReadinessRetries: 1,
+			readinessDelayMs: 0
+		});
+		return { client, ranCommands };
+	}
+
+	it('installs the Temporal CLI on demand, then re-verifies and proceeds', async () => {
+		const { client, ranCommands } = makeInstallScenario(0);
+		const handle = await client.provision();
+		const result = await client.bootstrap(handle);
+
+		// The on-demand installer was invoked.
+		expect(ranCommands.some((c) => c.includes('temporal.download/cli.sh'))).toBe(true);
+		// `temporal --version` is checked once before install and once after.
+		expect(ranCommands.filter((c) => c === 'temporal --version')).toHaveLength(2);
+		expect(result.ready).toBe(true);
+	});
+
+	it('throws a descriptive error when the Temporal CLI install fails', async () => {
+		const { client } = makeInstallScenario(1);
+		const handle = await client.provision();
+		await expect(client.bootstrap(handle)).rejects.toThrow(/Failed to install the Temporal CLI/);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Tests: restartWorker
 // ---------------------------------------------------------------------------
 
