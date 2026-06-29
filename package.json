@@ -20,15 +20,10 @@
 		"proof:preview": "bun src/lib/server/proxy/proof.ts",
 		"smoke:e2e": "bun src/lib/server/sandbox/smoke-e2e.ts",
 		"docs:demo": "bun src/lib/content/docs-generator.ts",
-		"docs:demo:check": "bun src/lib/content/docs-generator.ts --check",
-		"db:push": "drizzle-kit push",
-		"db:generate": "drizzle-kit generate",
-		"db:migrate": "drizzle-kit migrate",
-		"db:studio": "drizzle-kit studio"
+		"docs:demo:check": "bun src/lib/content/docs-generator.ts --check"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
-		"@libsql/client": "^0.17.3",
 		"@playwright/test": "^1.60.0",
 		"@sveltejs/adapter-auto": "next",
 		"@sveltejs/adapter-node": "6.0.0-next.0",
@@ -36,8 +31,6 @@
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
 		"@types/node": "^24",
 		"@vitest/browser-playwright": "^4.1.8",
-		"drizzle-kit": "^0.31.10",
-		"drizzle-orm": "^0.45.2",
 		"eslint": "^10.4.1",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-svelte": "^3.19.0",

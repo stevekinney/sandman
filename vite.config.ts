@@ -19,12 +19,6 @@ export default defineConfig({
 				remoteFunctions: true,
 				handleRenderingErrors: true,
 				forkPreloads: true
-			},
-			typescript: {
-				config: (config) => ({
-					...config,
-					include: [...config.include, '../drizzle.config.ts']
-				})
 			}
 		})
 	],

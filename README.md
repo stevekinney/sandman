@@ -28,7 +28,6 @@ bun run dev
 | `E2B_API_KEY`            | Your E2B API key — get one at https://e2b.dev                            |
 | `E2B_TEMPLATE_ID`        | _Optional._ ID of a prebuilt E2B template with Node + the Temporal CLI + worker deps baked in. If unset, Sandman uses the default base image and installs the Temporal CLI and worker dependencies on demand during bootstrap. |
 | `SANDMAN_SESSION_TTL_MS` | Sandbox lifetime in milliseconds (default: `300000` / 5 min)             |
-| `DATABASE_URL`           | Required by the leftover Drizzle scaffold's env validation (e.g. `file:local.db`). Sandman's core does **not** use a database; this requirement is vestigial — see `FOLLOWUPS.md` to remove it. |
 
 ## Prebuilt E2B template (optional)
 
@@ -92,7 +91,7 @@ bun run smoke:e2e      # start an order → worker executes it → kill + restar
 
 ```sh
 bun run build         # vite build → standalone Node server in build/ (via @sveltejs/adapter-node)
-node build/index.js   # run it; provide the same env vars (E2B_API_KEY, DATABASE_URL, …)
+node build/index.js   # run it; provide the same env vars (E2B_API_KEY, …)
 ```
 
 Sandman uses `@sveltejs/adapter-node` (pinned to the SvelteKit 3 `next` line to match

@@ -18,12 +18,13 @@ Remove the exclusion from `vite.config.ts` once
 a 0.4.1 repro) ships a fix that routes the browser-context optimizer to compiled output
 (e.g. `dist/index.js`). Re-verify all gates after removing the workaround.
 
-### 2. Remove the unused Drizzle/DB scaffold
+### 2. Use Cinder form components in the control-plane forms
 
-Sandman uses no database, but the leftover `sv create` Drizzle scaffold forces a
-`DATABASE_URL` env var (validated at server startup, so the built Node server crashes
-without it). Nothing in the app imports `src/lib/server/db/**`. Remove `src/lib/server/db/`,
-the `DATABASE_URL` entry in `src/env.ts`, `drizzle.config.ts`, the `db:*` scripts and
-`drizzle-*` deps in `package.json`, and drop `DATABASE_URL` from `.env.example` and the
-README env table. This removes a setup footgun (`cp .env.example .env` currently yields a
-config that fails env validation).
+The control-plane forms hand-roll raw HTML inputs instead of Cinder components.
+`start-order-form.svelte`, `signal-controls.svelte`, and `update-controls.svelte` use raw
+`<input>`, `<select>`, `<textarea>`, `<label>`, and `<fieldset>` for their fields (they
+already use Cinder `Button` for actions). Cinder ships `input`, `number-input`, `select`,
+`textarea`, `form-field`, and `label` — migrate the fields to those for consistency and
+accessibility. Also: the landing page (`src/routes/+page.svelte`) and the editor's file
+tabs (`src/lib/components/editor/editor.svelte`) use raw `<button>` where Cinder `Button`
+(or `Tabs`) would fit.
