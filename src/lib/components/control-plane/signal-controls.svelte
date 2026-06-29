@@ -6,6 +6,15 @@
 	 * courierLocationUpdate, addTip.
 	 */
 	import Button from '@lostgradient/cinder/button';
+	import FormField from '@lostgradient/cinder/form-field';
+	import Label from '@lostgradient/cinder/label';
+	import NumberInput from '@lostgradient/cinder/number-input';
+	import Textarea from '@lostgradient/cinder/textarea';
+	import '@lostgradient/cinder/button/styles';
+	import '@lostgradient/cinder/form-field/styles';
+	import '@lostgradient/cinder/label/styles';
+	import '@lostgradient/cinder/number-input/styles';
+	import '@lostgradient/cinder/textarea/styles';
 	import type { TemporalController } from './types.ts';
 
 	let {
@@ -19,12 +28,12 @@
 	// --- per-signal state -----------------------------------------------------
 
 	let cancelReason = $state('');
-	let estimatedPrepMinutes = $state(20);
+	let estimatedPrepMinutes = $state<number | null>(20);
 	let rejectionReason = $state('');
 	let rejectionRetryable = $state(false);
-	let courierLat = $state(0);
-	let courierLng = $state(0);
-	let tipAmountCents = $state(0);
+	let courierLat = $state<number | null>(0);
+	let courierLng = $state<number | null>(0);
+	let tipAmountCents = $state<number | null>(0);
 
 	// --- sending helpers -------------------------------------------------------
 
@@ -36,10 +45,9 @@
 <section aria-label="Signal controls">
 	<!-- cancelOrder -->
 	<div class="signal-group">
-		<div class="field">
-			<label for="cancel-reason">Cancellation reason</label>
-			<input id="cancel-reason" type="text" bind:value={cancelReason} placeholder="Enter reason…" />
-		</div>
+		<FormField id="cancel-reason" label="Cancellation reason" class="field">
+			<Textarea id="cancel-reason" rows={2} bind:value={cancelReason} placeholder="Enter reason…" />
+		</FormField>
 		<Button
 			label="Cancel Order"
 			variant="danger"
@@ -50,17 +58,16 @@
 
 	<!-- restaurantAccepted -->
 	<div class="signal-group">
-		<div class="field">
-			<label for="prep-minutes">Estimated prep (minutes)</label>
-			<input id="prep-minutes" type="number" min="1" bind:value={estimatedPrepMinutes} />
-		</div>
+		<FormField id="prep-minutes" label="Estimated prep (minutes)" class="field">
+			<NumberInput id="prep-minutes" min={1} bind:value={estimatedPrepMinutes} />
+		</FormField>
 		<Button
 			label="Restaurant Accepted"
 			variant="soft"
 			onclick={() =>
 				send(() =>
 					controller.signal(workflowId, 'restaurantAccepted', {
-						estimatedPrepMinutes
+						estimatedPrepMinutes: estimatedPrepMinutes ?? 0
 					})
 				)}
 		/>
@@ -68,20 +75,17 @@
 
 	<!-- restaurantRejected -->
 	<div class="signal-group">
-		<div class="field">
-			<label for="rejection-reason">Rejection reason</label>
-			<input
+		<FormField id="rejection-reason" label="Rejection reason" class="field">
+			<Textarea
 				id="rejection-reason"
-				type="text"
+				rows={2}
 				bind:value={rejectionReason}
 				placeholder="Enter reason…"
 			/>
-		</div>
-		<div class="field">
-			<label>
-				<input type="checkbox" bind:checked={rejectionRetryable} />
-				Retryable
-			</label>
+		</FormField>
+		<div class="field checkbox-field">
+			<input id="rejection-retryable" type="checkbox" bind:checked={rejectionRetryable} />
+			<Label for="rejection-retryable">Retryable</Label>
 		</div>
 		<Button
 			label="Restaurant Rejected"
@@ -107,22 +111,20 @@
 
 	<!-- courierLocationUpdate -->
 	<div class="signal-group">
-		<div class="field">
-			<label for="courier-lat">Courier latitude</label>
-			<input id="courier-lat" type="number" step="any" bind:value={courierLat} />
-		</div>
-		<div class="field">
-			<label for="courier-lng">Courier longitude</label>
-			<input id="courier-lng" type="number" step="any" bind:value={courierLng} />
-		</div>
+		<FormField id="courier-lat" label="Courier latitude" class="field">
+			<NumberInput id="courier-lat" step={0.0001} bind:value={courierLat} />
+		</FormField>
+		<FormField id="courier-lng" label="Courier longitude" class="field">
+			<NumberInput id="courier-lng" step={0.0001} bind:value={courierLng} />
+		</FormField>
 		<Button
 			label="Update Courier Location"
 			variant="soft"
 			onclick={() =>
 				send(() =>
 					controller.signal(workflowId, 'courierLocationUpdate', {
-						lat: courierLat,
-						lng: courierLng
+						lat: courierLat ?? 0,
+						lng: courierLng ?? 0
 					})
 				)}
 		/>
@@ -130,15 +132,14 @@
 
 	<!-- addTip -->
 	<div class="signal-group">
-		<div class="field">
-			<label for="tip-amount">Tip amount (cents)</label>
-			<input id="tip-amount" type="number" min="1" bind:value={tipAmountCents} />
-		</div>
+		<FormField id="tip-amount" label="Tip amount (cents)" class="field">
+			<NumberInput id="tip-amount" min={1} bind:value={tipAmountCents} />
+		</FormField>
 		<Button
 			label="Add Tip"
 			variant="soft"
 			onclick={() =>
-				send(() => controller.signal(workflowId, 'addTip', { amountCents: tipAmountCents }))}
+				send(() => controller.signal(workflowId, 'addTip', { amountCents: tipAmountCents ?? 0 }))}
 		/>
 	</div>
 </section>

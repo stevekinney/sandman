@@ -8,7 +8,9 @@
 	 *
 	 * Monaco is loaded lazily in the browser only.
 	 */
-	import { FILE_DESCRIPTORS, type FileDescriptor } from '$lib/components/editor/file-descriptors';
+	import Tabs from '@lostgradient/cinder/tabs';
+	import '@lostgradient/cinder/tabs/styles';
+	import { FILE_DESCRIPTORS } from '$lib/components/editor/file-descriptors';
 	import { getDeterminismMarkers } from '$lib/components/editor/determinism-guard';
 	import { createDebounce } from '$lib/components/editor/debounce';
 	import WorkerStatusStrip from '$lib/components/editor/worker-status-strip.svelte';
@@ -27,7 +29,10 @@
 	// Reactive UI state — drives the template
 	// ---------------------------------------------------------------------------
 
-	let activeFile = $state<FileDescriptor>(FILE_DESCRIPTORS[0]);
+	let activeFileName = $state(FILE_DESCRIPTORS[0].name);
+	const activeFile = $derived(
+		FILE_DESCRIPTORS.find((descriptor) => descriptor.name === activeFileName) ?? FILE_DESCRIPTORS[0]
+	);
 	let workerStatus = $state<WorkerStatus | null>(null);
 	let isLoading = $state(false);
 	let editorContainer = $state<HTMLDivElement | undefined>();
@@ -182,26 +187,23 @@
 </script>
 
 <div class="sandman-editor">
-	<div class="editor-tabs" role="tablist" aria-label="Editor files">
-		{#each FILE_DESCRIPTORS as descriptor (descriptor.name)}
-			<button
-				role="tab"
-				aria-selected={activeFile.name === descriptor.name}
-				class="editor-tab"
-				class:active={activeFile.name === descriptor.name}
-				class:readonly={descriptor.readOnly}
-				onclick={() => {
-					activeFile = descriptor;
-				}}
-				aria-label={descriptor.readOnly ? `${descriptor.name} (read-only)` : descriptor.name}
-			>
-				{descriptor.name}
-				{#if descriptor.readOnly}
-					<span class="readonly-badge" aria-hidden="true">read-only</span>
-				{/if}
-			</button>
-		{/each}
-	</div>
+	<Tabs bind:value={activeFileName} class="editor-tabs">
+		<Tabs.List label="Editor files" class="editor-tab-list">
+			{#each FILE_DESCRIPTORS as descriptor (descriptor.name)}
+				<Tabs.Trigger
+					value={descriptor.name}
+					class={`editor-tab${activeFile.name === descriptor.name ? ' active' : ''}${
+						descriptor.readOnly ? ' readonly' : ''
+					}`}
+				>
+					{descriptor.name}
+					{#if descriptor.readOnly}
+						<span class="readonly-badge" aria-hidden="true">read-only</span>
+					{/if}
+				</Tabs.Trigger>
+			{/each}
+		</Tabs.List>
+	</Tabs>
 
 	{#if isLoading}
 		<div class="editor-saving" aria-live="polite" aria-label="Saving file">Saving…</div>
@@ -221,17 +223,19 @@
 		color: #ccc;
 	}
 
-	.editor-tabs {
-		display: flex;
+	.sandman-editor :global(.editor-tabs) {
+		flex-shrink: 0;
+		gap: 0;
+	}
+
+	.sandman-editor :global(.editor-tab-list) {
 		gap: 2px;
 		padding: 4px 8px 0;
-		border-bottom: 1px solid #333;
-		flex-shrink: 0;
+		border-bottom-color: #333;
 		overflow-x: auto;
 	}
 
-	.editor-tab {
-		padding: 6px 12px;
+	.sandman-editor :global(.editor-tab) {
 		background: #2d2d2d;
 		border: 1px solid transparent;
 		border-bottom: none;
@@ -247,18 +251,18 @@
 		flex-shrink: 0;
 	}
 
-	.editor-tab:hover:not(.active) {
+	.sandman-editor :global(.editor-tab:hover:not(.active)) {
 		background: #3a3a3a;
 		color: #fff;
 	}
 
-	.editor-tab.active {
+	.sandman-editor :global(.editor-tab.active) {
 		background: #1e1e1e;
 		border-color: #444;
 		color: #fff;
 	}
 
-	.editor-tab.readonly {
+	.sandman-editor :global(.editor-tab.readonly) {
 		cursor: default;
 		opacity: 0.75;
 	}

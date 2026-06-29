@@ -10,6 +10,11 @@
 	 * as an unhandled error.
 	 */
 	import Button from '@lostgradient/cinder/button';
+	import FormField from '@lostgradient/cinder/form-field';
+	import Input from '@lostgradient/cinder/input';
+	import '@lostgradient/cinder/button/styles';
+	import '@lostgradient/cinder/form-field/styles';
+	import '@lostgradient/cinder/input/styles';
 	import type { TemporalController } from './types.ts';
 	import { isUpdateRejectionError } from './types.ts';
 	import type {
@@ -93,22 +98,18 @@
 	<div class="update-group">
 		<h3>Update delivery address</h3>
 
-		<div class="field">
-			<label for="new-street">New street</label>
-			<input id="new-street" type="text" bind:value={newStreet} autocomplete="off" />
-		</div>
-		<div class="field">
-			<label for="new-city">New city</label>
-			<input id="new-city" type="text" bind:value={newCity} autocomplete="off" />
-		</div>
-		<div class="field">
-			<label for="new-state">New state</label>
-			<input id="new-state" type="text" bind:value={newAddressState} autocomplete="off" />
-		</div>
-		<div class="field">
-			<label for="new-postal-code">New postal code</label>
-			<input id="new-postal-code" type="text" bind:value={newPostalCode} autocomplete="off" />
-		</div>
+		<FormField id="new-street" label="New street" class="field">
+			<Input id="new-street" type="text" bind:value={newStreet} autocomplete="off" />
+		</FormField>
+		<FormField id="new-city" label="New city" class="field">
+			<Input id="new-city" type="text" bind:value={newCity} autocomplete="off" />
+		</FormField>
+		<FormField id="new-state" label="New state" class="field">
+			<Input id="new-state" type="text" bind:value={newAddressState} autocomplete="off" />
+		</FormField>
+		<FormField id="new-postal-code" label="New postal code" class="field">
+			<Input id="new-postal-code" type="text" bind:value={newPostalCode} autocomplete="off" />
+		</FormField>
 
 		{#if addressError}
 			<p role="alert" class="inline-error" aria-live="polite">{addressError}</p>
@@ -132,16 +133,15 @@
 	<div class="update-group">
 		<h3>Apply promo code</h3>
 
-		<div class="field">
-			<label for="promo-code">Promo code</label>
-			<input
+		<FormField id="promo-code" label="Promo code" class="field">
+			<Input
 				id="promo-code"
 				type="text"
 				bind:value={promoCode}
 				autocomplete="off"
 				placeholder="e.g. SAVE10"
 			/>
-		</div>
+		</FormField>
 
 		{#if promoError}
 			<p role="alert" class="inline-error" aria-live="polite">{promoError}</p>

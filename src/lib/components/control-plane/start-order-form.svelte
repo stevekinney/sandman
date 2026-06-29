@@ -7,6 +7,15 @@
 	 * can transition to the post-start control panel.
 	 */
 	import Button from '@lostgradient/cinder/button';
+	import FormField from '@lostgradient/cinder/form-field';
+	import Input from '@lostgradient/cinder/input';
+	import NumberInput from '@lostgradient/cinder/number-input';
+	import Select from '@lostgradient/cinder/select';
+	import '@lostgradient/cinder/button/styles';
+	import '@lostgradient/cinder/form-field/styles';
+	import '@lostgradient/cinder/input/styles';
+	import '@lostgradient/cinder/number-input/styles';
+	import '@lostgradient/cinder/select/styles';
 	import type { TemporalController, WorkflowRun } from './types.ts';
 	import type { OrderInput, CustomerTier } from '$lib/contracts/workflow-api';
 	import { CUSTOMER_TIER } from '$lib/contracts/workflow-api';
@@ -24,10 +33,14 @@
 	let restaurantId = $state('');
 	let customerId = $state('');
 	let customerTier = $state<CustomerTier>(CUSTOMER_TIER.Standard);
+	const customerTierOptions = Object.values(CUSTOMER_TIER).map((tier) => ({
+		value: tier,
+		label: tier
+	}));
 
 	// Single item for the demo
 	let itemName = $state('');
-	let itemPriceCents = $state(0);
+	let itemPriceCents = $state<number | null>(0);
 
 	// Delivery address
 	let street = $state('');
@@ -55,7 +68,7 @@
 					itemId: crypto.randomUUID(),
 					name: itemName,
 					quantity: 1,
-					unitPriceCents: itemPriceCents
+					unitPriceCents: itemPriceCents ?? 0
 				}
 			],
 			deliveryAddress: {
@@ -86,74 +99,49 @@
 	<fieldset>
 		<legend>Order details</legend>
 
-		<div class="field">
-			<label for="restaurant-id">Restaurant ID</label>
-			<input id="restaurant-id" type="text" bind:value={restaurantId} required autocomplete="off" />
-		</div>
+		<FormField id="restaurant-id" label="Restaurant ID" required class="field">
+			<Input id="restaurant-id" type="text" bind:value={restaurantId} autocomplete="off" />
+		</FormField>
 
-		<div class="field">
-			<label for="customer-id">Customer ID</label>
-			<input id="customer-id" type="text" bind:value={customerId} required autocomplete="off" />
-		</div>
+		<FormField id="customer-id" label="Customer ID" required class="field">
+			<Input id="customer-id" type="text" bind:value={customerId} autocomplete="off" />
+		</FormField>
 
-		<div class="field">
-			<label for="customer-tier">Customer tier</label>
-			<select id="customer-tier" bind:value={customerTier}>
-				{#each Object.values(CUSTOMER_TIER) as tier (tier)}
-					<option value={tier}>{tier}</option>
-				{/each}
-			</select>
-		</div>
+		<FormField id="customer-tier" label="Customer tier" class="field">
+			<Select id="customer-tier" bind:value={customerTier} options={customerTierOptions} />
+		</FormField>
 	</fieldset>
 
 	<fieldset>
 		<legend>Item</legend>
 
-		<div class="field">
-			<label for="item-name">Item name</label>
-			<input id="item-name" type="text" bind:value={itemName} required autocomplete="off" />
-		</div>
+		<FormField id="item-name" label="Item name" required class="field">
+			<Input id="item-name" type="text" bind:value={itemName} autocomplete="off" />
+		</FormField>
 
-		<div class="field">
-			<label for="item-price">Item price (cents)</label>
-			<input id="item-price" type="number" min="1" bind:value={itemPriceCents} required />
-		</div>
+		<FormField id="item-price" label="Item price (cents)" required class="field">
+			<NumberInput id="item-price" min={1} bind:value={itemPriceCents} />
+		</FormField>
 	</fieldset>
 
 	<fieldset>
 		<legend>Delivery address</legend>
 
-		<div class="field">
-			<label for="street">Street</label>
-			<input id="street" type="text" bind:value={street} required autocomplete="street-address" />
-		</div>
+		<FormField id="street" label="Street" required class="field">
+			<Input id="street" type="text" bind:value={street} autocomplete="street-address" />
+		</FormField>
 
-		<div class="field">
-			<label for="city">City</label>
-			<input id="city" type="text" bind:value={city} required autocomplete="address-level2" />
-		</div>
+		<FormField id="city" label="City" required class="field">
+			<Input id="city" type="text" bind:value={city} autocomplete="address-level2" />
+		</FormField>
 
-		<div class="field">
-			<label for="addr-state">State</label>
-			<input
-				id="addr-state"
-				type="text"
-				bind:value={addressState}
-				required
-				autocomplete="address-level1"
-			/>
-		</div>
+		<FormField id="addr-state" label="State" required class="field">
+			<Input id="addr-state" type="text" bind:value={addressState} autocomplete="address-level1" />
+		</FormField>
 
-		<div class="field">
-			<label for="postal-code">Postal code</label>
-			<input
-				id="postal-code"
-				type="text"
-				bind:value={postalCode}
-				required
-				autocomplete="postal-code"
-			/>
-		</div>
+		<FormField id="postal-code" label="Postal code" required class="field">
+			<Input id="postal-code" type="text" bind:value={postalCode} autocomplete="postal-code" />
+		</FormField>
 	</fieldset>
 
 	{#if error}

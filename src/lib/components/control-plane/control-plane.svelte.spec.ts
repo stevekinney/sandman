@@ -447,6 +447,21 @@ describe('accessibility', () => {
 		await expect.element(page.getByRole('textbox', { name: 'Postal code' })).toBeInTheDocument();
 	});
 
+	it('renders control-plane fields with Cinder form primitives', async () => {
+		const controller = new MockTemporalController();
+		const { container } = render(ControlPlane, { props: { controller } });
+
+		await expect.element(page.getByLabelText('Restaurant ID')).toBeInTheDocument();
+		expect(container.querySelector('.cinder-input')).not.toBeNull();
+		expect(container.querySelector('.cinder-number-input')).not.toBeNull();
+		expect(container.querySelector('.cinder-select-field')).not.toBeNull();
+
+		await startWorkflow(controller);
+
+		expect(container.querySelector('.cinder-textarea')).not.toBeNull();
+		expect(container.querySelector('.cinder-form-field')).not.toBeNull();
+	});
+
 	it('worker status is communicated by text, not just color', async () => {
 		const controller = new MockTemporalController();
 		render(ControlPlane, { props: { controller } });

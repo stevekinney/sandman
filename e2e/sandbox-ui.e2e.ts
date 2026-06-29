@@ -42,6 +42,13 @@ test('editor panel is rendered and labelled', async ({ page }) => {
 	await expect(page.locator('[aria-label="Code editor"]')).toBeVisible();
 });
 
+test('editor file navigation uses Cinder tabs', async ({ page }) => {
+	await page.goto(`/${TEST_SESSION_ID}`);
+	await expect(page.locator('.cinder-tabs')).toBeVisible();
+	await expect(page.getByRole('tablist', { name: 'Editor files' })).toHaveClass(/cinder-tab-list/);
+	await expect(page.getByRole('tab', { name: 'workflows.ts' })).toHaveClass(/cinder-tab/);
+});
+
 test('control plane panel is rendered and labelled', async ({ page }) => {
 	await page.goto(`/${TEST_SESSION_ID}`);
 	await expect(page.locator('[aria-label="Control plane and guided tour"]')).toBeVisible();

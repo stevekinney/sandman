@@ -8,6 +8,8 @@
 	 * When E2B_API_KEY is not set the server returns 503 and the error is
 	 * surfaced inline so the user can diagnose and retry.
 	 */
+	import Button from '@lostgradient/cinder/button';
+	import '@lostgradient/cinder/button/styles';
 
 	let provisioning = $state(false);
 	let provisionError = $state<string | null>(null);
@@ -46,14 +48,16 @@
 		<p role="alert" class="error">{provisionError}</p>
 	{/if}
 
-	<button
+	<Button
 		class="start-button"
 		onclick={startSession}
 		disabled={provisioning}
 		aria-busy={provisioning}
-	>
-		{provisioning ? 'Provisioning sandbox…' : 'New Session'}
-	</button>
+		loading={provisioning}
+		variant="primary"
+		size="lg"
+		label={provisioning ? 'Provisioning sandbox…' : 'New Session'}
+	/>
 </main>
 
 <style>
@@ -94,24 +98,7 @@
 		max-width: 480px;
 	}
 
-	.start-button {
-		padding: 0.75rem 2rem;
-		background: #111827;
-		color: #fff;
-		border: none;
-		border-radius: 0.5rem;
-		font-size: 1rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: background 0.15s;
-	}
-
-	.start-button:hover:not(:disabled) {
-		background: #1f2937;
-	}
-
-	.start-button:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
+	.landing :global(.start-button) {
+		min-width: 9rem;
 	}
 </style>
