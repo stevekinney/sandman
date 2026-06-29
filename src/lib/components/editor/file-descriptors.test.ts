@@ -47,3 +47,40 @@ describe('FILE_DESCRIPTORS', () => {
 		}
 	});
 });
+
+describe('FILE_DESCRIPTORS — contents reflect the real deployed sandbox-template files', () => {
+	it('workflows.ts initialContents uses the real camelCase export name orderFoodWorkflow', () => {
+		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'workflows.ts');
+		expect(descriptor).toBeDefined();
+		// The deployed sandbox-template/workflows.ts uses `orderFoodWorkflow` (camelCase).
+		// The old hand-written stub used `OrderFoodWorkflow` (PascalCase). This
+		// assertion is red on the stub and green on the real file.
+		expect(descriptor?.initialContents).toContain('orderFoodWorkflow');
+	});
+
+	it('workflows.ts initialContents is substantially longer than the ~70-line stub', () => {
+		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'workflows.ts');
+		expect(descriptor).toBeDefined();
+		// The real file is ~870 lines. The stub was ~70 lines. Any value over 200
+		// lines distinguishes the two unambiguously.
+		const lineCount = (descriptor?.initialContents ?? '').split('\n').length;
+		expect(lineCount).toBeGreaterThan(200);
+	});
+
+	it('activities.ts initialContents comes from the deployed sandbox-template file', () => {
+		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'activities.ts');
+		expect(descriptor).toBeDefined();
+		// The real activities.ts imports Context heartbeat and uses it.
+		// The stub comment said "replace with your real provider" — use the absence
+		// of that stub-only phrase as the discriminator.
+		expect(descriptor?.initialContents).not.toContain('replace with your real provider');
+	});
+
+	it('shared.ts initialContents comes from the deployed sandbox-template file', () => {
+		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === SHARED_FILE_NAME);
+		expect(descriptor).toBeDefined();
+		// The real shared.ts does not re-export from a non-existent ./workflow-api-types
+		// module — the stub had a bogus `export type ... from './workflow-api-types'` line.
+		expect(descriptor?.initialContents).not.toContain('./workflow-api-types');
+	});
+});
