@@ -46,7 +46,7 @@ import type {
 	OrderSnapshot,
 	SubscriptionInput
 } from './shared.ts';
-import { CUSTOMER_TIER, ORDER_STATUS, TASK_QUEUE } from './shared.ts';
+import { CUSTOMER_TIER, FEATURE_ID, ORDER_STATUS, TASK_QUEUE } from './shared.ts';
 import * as activities from './activities.ts';
 
 // ---------------------------------------------------------------------------
@@ -922,6 +922,15 @@ describe('contract parity', () => {
 			);
 			void value;
 		}
+	});
+
+	it('shared.ts FEATURE_ID values match workflow-api.ts FeatureId (via FEATURES)', async () => {
+		// The contract has no runtime array for FeatureId itself, but FEATURES is typed
+		// so that every entry.id is a FeatureId — it's the canonical witness.
+		const { FEATURES } = await import('../src/lib/contracts/workflow-api.ts');
+		const contractIds = new Set(FEATURES.map((f) => f.id));
+		const sharedIds = new Set(Object.values(FEATURE_ID));
+		expect(sharedIds).toEqual(contractIds);
 	});
 });
 

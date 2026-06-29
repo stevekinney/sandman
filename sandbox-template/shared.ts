@@ -187,7 +187,8 @@ export type TimelineEntry = {
 	timestamp: string;
 	description: string;
 	status: OrderStatus;
-	featureId?: string;
+	/** Optional feature identifier for guided-tour highlighting. */
+	featureId?: FeatureId;
 };
 
 export type QueryReturnMap = {
@@ -262,6 +263,37 @@ export type SubscriptionInput = {
 	/** Maximum number of cycles before the subscription ends (0 = unlimited). */
 	maxCycles?: number;
 };
+
+// ---------------------------------------------------------------------------
+// Feature IDs — mirrors src/lib/contracts/workflow-api.ts FeatureId
+// ---------------------------------------------------------------------------
+
+/**
+ * Stable identifiers for each Temporal feature demonstrated by the
+ * Sandman food-ordering workflow.  This const mirrors the `FeatureId`
+ * union in `src/lib/contracts/workflow-api.ts` — keep the two in sync.
+ * Having a runtime constant enables parity assertions in workflow tests
+ * (the VM has no access to the app layer).
+ */
+export const FEATURE_ID = {
+	ActivitiesRetry: 'activities-retry',
+	NonRetryableFailure: 'non-retryable-failure',
+	SagaCompensation: 'saga-compensation',
+	Signals: 'signals',
+	Queries: 'queries',
+	UpdatesValidators: 'updates-validators',
+	TimersDurableSleep: 'timers-durable-sleep',
+	ChildWorkflow: 'child-workflow',
+	HeartbeatsCancellation: 'heartbeats-cancellation',
+	ContinueAsNew: 'continue-as-new',
+	SearchAttributes: 'search-attributes',
+	LocalActivities: 'local-activities',
+	ReplaySafety: 'replay-safety',
+	DurableRecovery: 'durable-recovery'
+} as const;
+
+/** Union of all feature-identifier strings. Structurally equal to `FeatureId` in workflow-api.ts. */
+export type FeatureId = (typeof FEATURE_ID)[keyof typeof FEATURE_ID];
 
 // ---------------------------------------------------------------------------
 // Known promo codes (deterministic — no I/O in workflow)

@@ -45,6 +45,7 @@ import type {
 	CourierLocationUpdate,
 	DeliveryInput,
 	DeliveryResult,
+	FeatureId,
 	FoodReadySignal,
 	MoneyCents,
 	OrderInput,
@@ -243,7 +244,7 @@ export async function orderFoodWorkflow(
 	// -----------------------------------------------------------------------
 	// Timeline helper
 	// -----------------------------------------------------------------------
-	function addTimeline(description: string, featureId?: string): void {
+	function addTimeline(description: string, featureId?: FeatureId): void {
 		timeline.push({
 			index: timeline.length,
 			timestamp: now(),
