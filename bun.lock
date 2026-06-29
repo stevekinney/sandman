@@ -5,7 +5,7 @@
     "": {
       "name": "sandman",
       "dependencies": {
-        "@lostgradient/cinder": "^0.4.0",
+        "@lostgradient/cinder": "0.4.1",
         "@temporalio/activity": "^1.18.1",
         "@temporalio/client": "^1.18.1",
         "@temporalio/common": "^1.18.1",
@@ -251,7 +251,7 @@
 
     "@libsql/win32-x64-msvc": ["@libsql/win32-x64-msvc@0.5.29", "", { "os": "win32", "cpu": "x64" }, "sha512-4/0CvEdhi6+KjMxMaVbFM2n2Z44escBRoEYpR+gZg64DdetzGnYm8mcNLcoySaDJZNaBd6wz5DNdgRmcI4hXcg=="],
 
-    "@lostgradient/cinder": ["@lostgradient/cinder@0.4.0", "", { "dependencies": { "@floating-ui/dom": "1.7.6", "@lasercat/homogenaize": "^1.2.41", "@milkdown/ctx": "^7.17.3", "@milkdown/kit": "^7.17.3", "@milkdown/prose": "^7.17.3", "@shikijs/rehype": "^3.21.0", "@tanstack/virtual-core": "^3.17.1", "ajv": "^8", "comlink": "^4.4.2", "diff-match-patch": "^1.0.5", "esm-env": "^1.2.0", "hast-util-sanitize": "^5.0.0", "js-yaml": "^4.1.0", "libphonenumber-js": "^1.13.3", "prosemirror-inputrules": "^1.5.1", "prosemirror-model": "^1.25.4", "prosemirror-state": "^1.4.4", "prosemirror-view": "^1.41.3", "rehype-katex": "^7.0.1", "rehype-sanitize": "^6.0.0", "rehype-stringify": "^10.0.1", "remark-gfm": "^4.0.1", "remark-html": "^16.0.1", "remark-math": "^6.0.0", "remark-parse": "^11.0.0", "remark-rehype": "^11.1.2", "remark-stringify": "^11.0.0", "shiki": "^3.21.0", "unified": "^11.0.5", "unist-util-remove": "^4.0.0", "unist-util-visit": "^5.0.0" }, "peerDependencies": { "lucide-svelte": ">=0.400.0 <1", "svelte": ">=5.55.0 <6" } }, "sha512-dIEWXNBSfd71vBV6jOdU7m3rlAfC6vZs3YFXqm41tyuKVYR2I8dHVGOagjsOSaXJEx1Xlp/OMiRxcYz6CN7IYA=="],
+    "@lostgradient/cinder": ["@lostgradient/cinder@0.4.1", "", { "dependencies": { "@floating-ui/dom": "1.7.6", "@lasercat/homogenaize": "^1.2.41", "@milkdown/ctx": "^7.17.3", "@milkdown/kit": "^7.17.3", "@milkdown/prose": "^7.17.3", "@shikijs/rehype": "^3.21.0", "@tanstack/virtual-core": "^3.17.1", "ajv": "^8", "comlink": "^4.4.2", "diff-match-patch": "^1.0.5", "esm-env": "^1.2.0", "hast-util-sanitize": "^5.0.0", "js-yaml": "^4.1.0", "libphonenumber-js": "^1.13.3", "prosemirror-inputrules": "^1.5.1", "prosemirror-model": "^1.25.4", "prosemirror-state": "^1.4.4", "prosemirror-view": "^1.41.3", "rehype-katex": "^7.0.1", "rehype-sanitize": "^6.0.0", "rehype-stringify": "^10.0.1", "remark-gfm": "^4.0.1", "remark-html": "^16.0.1", "remark-math": "^6.0.0", "remark-parse": "^11.0.0", "remark-rehype": "^11.1.2", "remark-stringify": "^11.0.0", "shiki": "^3.21.0", "unified": "^11.0.5", "unist-util-remove": "^4.0.0", "unist-util-visit": "^5.0.0" }, "peerDependencies": { "lucide-svelte": ">=0.400.0 <1", "svelte": ">=5.55.0 <6" } }, "sha512-Gk2so7/9BMpZv4frCGTzP0sPzwqHu439IDs23iJE7XZE4oterwDMTv+fWyG47ZDqjcs/a9eAmGRsaezH6cO+mQ=="],
 
     "@marijn/find-cluster-break": ["@marijn/find-cluster-break@1.0.2", "", {}, "sha512-l0h88YhZFyKdXIFNfSWpyjStDjGHwZ/U7iobcK1cQQD8sejsONdQtTVU+1wVN1PBw40PiiHB1vA5S7VTfQiP9g=="],
 

@@ -54,7 +54,7 @@
 		"vitest-browser-svelte": "^2.1.1"
 	},
 	"dependencies": {
-		"@lostgradient/cinder": "^0.4.0",
+		"@lostgradient/cinder": "0.4.1",
 		"@temporalio/activity": "^1.18.1",
 		"@temporalio/client": "^1.18.1",
 		"@temporalio/common": "^1.18.1",

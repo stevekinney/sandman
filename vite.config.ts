@@ -36,6 +36,8 @@ export default defineConfig({
 	// vite-plugin-svelte transform (which strips TS first), fixing the dev/test
 	// optimizer crash that otherwise blocks importing `RunStepTimeline`.
 	// Upstream packaging bug: https://github.com/stevekinney/cinder/issues/534
+	// Still unresolved in @lostgradient/cinder@0.4.1 (browser export condition
+	// still points to ./src/index.ts uncompiled source).
 	optimizeDeps: {
 		exclude: ['@lostgradient/cinder']
 	},
