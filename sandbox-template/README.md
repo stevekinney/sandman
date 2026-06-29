@@ -50,7 +50,22 @@ Helper functions for driving the workflow from the CLI demo script. Exports `sta
 
 Standalone Vitest configuration for this directory. Uses a plain `node` environment (no SvelteKit/Vite stack) so `@temporalio/testing` loads correctly.
 
-## Running the worker
+### `package.json`
+
+Declares the worker's runtime dependencies — `@temporalio/{worker,workflow,activity,client,common}` and `tsx` — pinned to the same versions as the host app so workflow behavior and replay stay consistent. The bootstrap copies this file into the sandbox at `/app` and runs `npm install`; without it the worker has no dependencies and never starts.
+
+## How this runs inside the E2B sandbox
+
+Sandman's sandbox service (`src/lib/server/sandbox/`) boots a fresh MicroVM and:
+
+1. Copies every `.ts`/`.json` file in this directory into the VM's `/app`.
+2. Ensures the Temporal CLI is present — the E2B base image ships Node but **not** the Temporal CLI, so it is installed on demand (download + symlink onto `PATH`), or baked into a prebuilt template.
+3. Runs `npm install` in `/app` against this `package.json`.
+4. Starts `temporal server start-dev`, then the worker (`tsx worker.ts`), as separate supervised processes. The server keeps running across worker restarts — this is what makes the kill-worker durable-recovery demo work.
+
+This whole flow is exercised against real E2B by `bun run smoke:sandbox` and `bun run smoke:e2e` (see the root README).
+
+## Running the worker (locally)
 
 Start the Temporal dev server first (bundled with the CLI):
 

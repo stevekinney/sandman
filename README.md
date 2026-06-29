@@ -26,7 +26,7 @@ bun run dev
 | Variable                 | Description                                                              |
 | ------------------------ | ------------------------------------------------------------------------ |
 | `E2B_API_KEY`            | Your E2B API key — get one at https://e2b.dev                            |
-| `E2B_TEMPLATE_ID`        | The E2B sandbox template ID pre-loaded with Node.js and the Temporal CLI |
+| `E2B_TEMPLATE_ID`        | _Optional._ ID of a prebuilt E2B template with Node + the Temporal CLI + worker deps baked in. If unset, Sandman uses the default base image and installs the Temporal CLI and worker dependencies on demand during bootstrap. |
 | `SANDMAN_SESSION_TTL_MS` | Sandbox lifetime in milliseconds (default: `300000` / 5 min)             |
 
 ## Verification gates
@@ -39,9 +39,24 @@ bun run lint           # eslint
 bun run check          # svelte-check + TypeScript
 bun run build          # vite production build
 bun run test           # vitest (unit + browser component)
-bun run test:workflows # vitest over sandbox-template/ (passWithNoTests until Track D ships)
+bun run test:workflows # vitest over sandbox-template/ (food-ordering workflow suite, @temporalio/testing time-skipping)
 bun run test:e2e       # Playwright end-to-end
 ```
+
+### Live integration checks (require `E2B_API_KEY`)
+
+These boot real E2B MicroVMs and exercise the live sandbox path. Each skips cleanly
+and exits 0 when `E2B_API_KEY` is unset, and always terminates its sandbox:
+
+```sh
+bun run smoke:sandbox  # provision → bootstrap → `temporal workflow list` → preview URL → terminate
+bun run proof:preview  # prove the proxy injects the access token upstream and never leaks it to the browser
+bun run smoke:e2e      # start an order → worker executes it → kill + restart the worker → cancel → assert the in-flight workflow survives and reaches REFUNDED
+```
+
+`smoke:e2e` is the durable-recovery proof, end to end. Typical boot times: ~13s for
+`smoke:sandbox`, ~50s for `smoke:e2e`.
+
 ## Demo Script
 
 Sandman demonstrates the following Temporal features through a deliberately over-engineered food-ordering workflow.
