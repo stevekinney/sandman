@@ -10,12 +10,16 @@
 
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { Connection, Client } from '@temporalio/client';
-import { Sandbox } from 'e2b';
 import { TASK_QUEUE, ORDER_FOOD_WORKFLOW } from '$lib/contracts/workflow-api';
 import type { OrderInput } from '$lib/contracts/workflow-api';
 import { assertSameOrigin } from '$lib/server/security/origin';
 import { requireOwnedSandbox } from '$lib/server/security/guards';
+import {
+	getTemporalCliTarget,
+	quoteShellArgument,
+	runTemporalJsonCommand,
+	writeTemporalJsonInput
+} from '$lib/server/sandbox/temporal-cli';
 
 export const POST: RequestHandler = async (event) => {
 	const { request, params } = event;
@@ -29,43 +33,58 @@ export const POST: RequestHandler = async (event) => {
 		return json({ error: 'Invalid JSON body' }, { status: 400 });
 	}
 
-	const input = body as OrderInput;
+	if (!isOrderInput(body)) {
+		return json({ error: 'request body must be an OrderInput' }, { status: 400 });
+	}
+	const input = body;
 
-	if (typeof input?.orderId !== 'string' || !input.orderId.trim()) {
+	if (!isNonEmptyString(input.orderId)) {
 		return json({ error: 'orderId is required' }, { status: 400 });
 	}
-	if (typeof input?.restaurantId !== 'string' || !input.restaurantId.trim()) {
+	if (!isNonEmptyString(input.restaurantId)) {
 		return json({ error: 'restaurantId is required' }, { status: 400 });
 	}
-	if (!Array.isArray(input?.items) || input.items.length === 0) {
+	if (!Array.isArray(input.items) || input.items.length === 0) {
 		return json({ error: 'items must be a non-empty array' }, { status: 400 });
 	}
 
-	const connection = await getSandboxConnection(params.id);
-	try {
-		const client = new Client({ connection });
-		const handle = await client.workflow.start(ORDER_FOOD_WORKFLOW, {
-			taskQueue: TASK_QUEUE,
-			workflowId: input.orderId,
-			args: [input]
-		});
-		return json(
-			{ workflowId: handle.workflowId, runId: handle.firstExecutionRunId },
-			{ status: 201 }
-		);
-	} finally {
-		await connection.close();
+	const entry = getTemporalCliTarget(params.id);
+	const inputPath = await writeTemporalJsonInput(entry, 'start-order', input);
+	const result = await runTemporalJsonCommand(
+		entry,
+		[
+			'temporal workflow start',
+			`--task-queue ${quoteShellArgument(TASK_QUEUE)}`,
+			`--type ${quoteShellArgument(ORDER_FOOD_WORKFLOW)}`,
+			`--workflow-id ${quoteShellArgument(input.orderId)}`,
+			`--input-file ${quoteShellArgument(inputPath)}`,
+			'--color never',
+			'-o json'
+		].join(' ')
+	);
+
+	if (!isWorkflowStartResult(result)) {
+		return json({ error: 'Temporal start returned an invalid response' }, { status: 502 });
 	}
+
+	return json({ workflowId: result.workflowId, runId: result.runId }, { status: 201 });
 };
 
-/**
- * Open a Temporal gRPC connection to the Temporal dev server running inside
- * the E2B sandbox on port 7233.
- */
-async function getSandboxConnection(sandboxId: string): Promise<Connection> {
-	const sandbox = await Sandbox.connect(sandboxId);
-	const hostUrl = sandbox.getHost(7233);
-	// E2B getHost returns "hostname:port" or "https://…" — normalise to host string
-	const address = hostUrl.startsWith('http') ? new URL(hostUrl).host : hostUrl;
-	return Connection.connect({ address });
+function isOrderInput(value: unknown): value is OrderInput {
+	return typeof value === 'object' && value !== null;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+	return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isWorkflowStartResult(value: unknown): value is { workflowId: string; runId: string } {
+	if (typeof value !== 'object' || value === null) return false;
+	if (!('workflowId' in value) || !('runId' in value)) return false;
+	return (
+		typeof value.workflowId === 'string' &&
+		value.workflowId.length > 0 &&
+		typeof value.runId === 'string' &&
+		value.runId.length > 0
+	);
 }

@@ -58,7 +58,9 @@ function satisfyingEvent(stepIndex: number): WorkflowEvent {
 		makeEvent('WorkflowExecutionUpdateAccepted', stepIndex * 10 + 5),
 		makeEvent('MarkerRecorded', stepIndex * 10 + 6),
 		makeEvent('WorkflowExecutionContinuedAsNew', stepIndex * 10 + 7),
-		makeEvent('WorkerRestarted', stepIndex * 10 + 8)
+		makeEvent('WorkerRestarted', stepIndex * 10 + 8),
+		makeEvent('QueryCompleted', stepIndex * 10 + 9),
+		makeEvent('WorkflowExecutionCompleted', stepIndex * 10 + 10)
 	];
 
 	const match = candidates.find((e) => step.completes(e));
@@ -145,7 +147,7 @@ describe('TourEngine', () => {
 			expect(engine.isComplete).toBe(true);
 		});
 
-		it('final step does NOT complete on WorkerKilled', () => {
+		it('delivery completion step does NOT complete on WorkerKilled', () => {
 			// Advance to the final step
 			for (let i = 0; i < TOUR.length - 1; i++) {
 				engine.feed(satisfyingEvent(i));
@@ -157,14 +159,26 @@ describe('TourEngine', () => {
 			expect(engine.currentStepIndex).toBe(TOUR.length - 1);
 		});
 
-		it('final step completes on WorkerRestarted', () => {
-			// Advance to the final step
+		it('durable recovery step completes on WorkerRestarted', () => {
+			const recoveryStepIndex = TOUR.findIndex((step) => step.id === 'durable-recovery');
+
+			for (let i = 0; i < recoveryStepIndex; i++) {
+				engine.feed(satisfyingEvent(i));
+			}
+			expect(engine.currentStepIndex).toBe(recoveryStepIndex);
+
+			const advanced = engine.feed(makeEvent('WorkerRestarted', 1000));
+			expect(advanced).toBe(true);
+			expect(engine.currentStepIndex).toBe(recoveryStepIndex + 1);
+		});
+
+		it('final step completes on WorkflowExecutionCompleted', () => {
 			for (let i = 0; i < TOUR.length - 1; i++) {
 				engine.feed(satisfyingEvent(i));
 			}
 			expect(engine.currentStepIndex).toBe(TOUR.length - 1);
 
-			const advanced = engine.feed(makeEvent('WorkerRestarted', 1000));
+			const advanced = engine.feed(makeEvent('WorkflowExecutionCompleted', 1001));
 			expect(advanced).toBe(true);
 			expect(engine.isComplete).toBe(true);
 		});

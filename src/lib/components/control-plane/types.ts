@@ -27,6 +27,35 @@ export type WorkflowRun = {
 	runId: string;
 };
 
+/** Kind of Temporal interaction shown in the teaching command log. */
+export type CommandLogPrimitive = 'workflow' | 'signal' | 'query' | 'update' | 'worker';
+
+/** Status of a command recorded by the control plane. */
+export type CommandLogStatus = 'running' | 'succeeded' | 'failed';
+
+/**
+ * One UI action mapped to the API route and Temporal CLI primitive it drives.
+ * The log is intentionally serializable so it can be rendered, tested, and
+ * copied into workshop notes without keeping controller instances around.
+ */
+export type CommandLogEntry = {
+	id: number;
+	label: string;
+	primitive: CommandLogPrimitive;
+	apiRoute: string;
+	temporalCommand: string;
+	workflowId?: string;
+	runId?: string;
+	payload?: unknown;
+	result?: unknown;
+	error?: string;
+	status: CommandLogStatus;
+	timestamp: string;
+};
+
+/** Partial command metadata emitted before a controller call is executed. */
+export type CommandLogDraft = Omit<CommandLogEntry, 'id' | 'status' | 'timestamp'>;
+
 // ---------------------------------------------------------------------------
 // Update rejection
 // ---------------------------------------------------------------------------

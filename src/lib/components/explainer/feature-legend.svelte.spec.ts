@@ -35,8 +35,8 @@ describe('FeatureLegend', () => {
 	it('renders every feature id as a table cell', async () => {
 		render(FeatureLegend);
 		for (const entry of featureEntries) {
-			// ID cell accessible name is exactly the id string.
-			const cell = page.getByRole('cell', { name: entry.id, exact: true });
+			// ID column uses row headers so screen readers preserve the feature-to-row relationship.
+			const cell = page.getByRole('rowheader', { name: entry.id, exact: true });
 			await expect.element(cell).toBeInTheDocument();
 		}
 	});

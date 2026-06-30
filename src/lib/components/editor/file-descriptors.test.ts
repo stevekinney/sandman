@@ -39,9 +39,11 @@ describe('FILE_DESCRIPTORS', () => {
 		}
 	});
 
-	it('each descriptor has a name, language, and initialContents string', () => {
+	it('each descriptor has a name, purpose, language, and initialContents string', () => {
 		for (const f of FILE_DESCRIPTORS) {
 			expect(typeof f.name, 'name').toBe('string');
+			expect(typeof f.purpose, 'purpose').toBe('string');
+			expect(f.purpose.length, `${f.name} purpose`).toBeGreaterThan(0);
 			expect(typeof f.language, 'language').toBe('string');
 			expect(typeof f.initialContents, 'initialContents').toBe('string');
 		}

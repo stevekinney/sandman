@@ -121,7 +121,7 @@ Tests use `@temporalio/testing`'s `TestWorkflowEnvironment.createTimeSkipping()`
 | **Add Tip**                     | Signals                     | `addTip` mutates `tipCents` and `totalCents` in real time                                                                                                  |
 | **Update Address**              | Updates + Validators        | Accepted before IN_DELIVERY; the validator rejects the update with `order-already-in-delivery` once delivery starts                                        |
 | **Apply Promo**                 | Updates + Validators        | Validates the code synchronously, applies discount, returns new total                                                                                      |
-| **Query Status**                | Queries + Search Attributes | `getStatus` returns live `OrderSnapshot`; `searchAttributes` reflects current state                                                                        |
+| **Query Status**                | Queries + Business Snapshot | `getStatus` returns live `OrderSnapshot`; snapshot fields show the business dimensions a production app could index for visibility                         |
 | **Query Timeline**              | Queries + Replay Safety     | `getTimeline` returns annotated event log; same history used by the replay-safety test                                                                     |
 | **Kill Worker**                 | Durable Recovery            | Terminating the Node.js worker process mid-flight leaves in-flight workflows intact on the server; restarting the worker resumes exactly where it left off |
 

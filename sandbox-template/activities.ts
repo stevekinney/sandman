@@ -169,7 +169,9 @@ export async function chargePayment(
 	// In real code this would call the payment processor API.
 	if (paymentMethod.type === 'wallet' && paymentMethod.provider === 'google-pay') {
 		// Simulate a hard decline (for non-retryable test)
-		throw ApplicationFailure.nonRetryable('Payment method declined by issuer', 'PAYMENT_DECLINED');
+		throw ApplicationFailure.nonRetryable('Payment method declined by issuer', 'PAYMENT_DECLINED', {
+			attempts: info.attempt
+		});
 	}
 
 	// Simulate transient failure on first attempt to exercise retry

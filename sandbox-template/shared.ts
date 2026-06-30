@@ -104,6 +104,7 @@ export type OrderInput = {
 	customerId: string;
 	promoCode?: string;
 	restaurantAcceptTimeoutMinutes?: number;
+	historyCompactionThreshold?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -116,7 +117,8 @@ export type SignalName =
 	| 'restaurantRejected'
 	| 'foodReady'
 	| 'courierLocationUpdate'
-	| 'addTip';
+	| 'addTip'
+	| 'deliveryCompleted';
 
 export type CancelOrderSignal = { reason: string };
 export type RestaurantAcceptedSignal = { estimatedPrepMinutes: number };
@@ -124,6 +126,7 @@ export type RestaurantRejectedSignal = { reason: string; retryable: boolean };
 export type FoodReadySignal = Record<string, never>;
 export type CourierLocationUpdate = { lat: number; lng: number; speedKmh?: number };
 export type AddTipSignal = { amountCents: MoneyCents };
+export type DeliveryCompletedSignal = Record<string, never>;
 
 export type SignalPayloadMap = {
 	cancelOrder: CancelOrderSignal;
@@ -132,6 +135,7 @@ export type SignalPayloadMap = {
 	foodReady: FoodReadySignal;
 	courierLocationUpdate: CourierLocationUpdate;
 	addTip: AddTipSignal;
+	deliveryCompleted: DeliveryCompletedSignal;
 };
 
 // ---------------------------------------------------------------------------
@@ -181,6 +185,36 @@ export type OrderSnapshot = {
 	};
 };
 
+export const WORKFLOW_EVENT_TYPE = {
+	WorkflowExecutionStarted: 'WorkflowExecutionStarted',
+	WorkflowExecutionCompleted: 'WorkflowExecutionCompleted',
+	WorkflowExecutionFailed: 'WorkflowExecutionFailed',
+	WorkflowExecutionCanceled: 'WorkflowExecutionCanceled',
+	WorkflowExecutionTerminated: 'WorkflowExecutionTerminated',
+	WorkflowExecutionContinuedAsNew: 'WorkflowExecutionContinuedAsNew',
+	ActivityTaskScheduled: 'ActivityTaskScheduled',
+	ActivityTaskStarted: 'ActivityTaskStarted',
+	ActivityTaskCompleted: 'ActivityTaskCompleted',
+	ActivityTaskFailed: 'ActivityTaskFailed',
+	ActivityTaskTimedOut: 'ActivityTaskTimedOut',
+	ActivityTaskCancelRequested: 'ActivityTaskCancelRequested',
+	ActivityTaskCanceled: 'ActivityTaskCanceled',
+	TimerStarted: 'TimerStarted',
+	TimerFired: 'TimerFired',
+	TimerCanceled: 'TimerCanceled',
+	WorkflowExecutionSignaled: 'WorkflowExecutionSignaled',
+	WorkflowExecutionUpdateAccepted: 'WorkflowExecutionUpdateAccepted',
+	WorkflowExecutionUpdateCompleted: 'WorkflowExecutionUpdateCompleted',
+	WorkflowExecutionUpdateRejected: 'WorkflowExecutionUpdateRejected',
+	ChildWorkflowExecutionStarted: 'ChildWorkflowExecutionStarted',
+	ChildWorkflowExecutionCompleted: 'ChildWorkflowExecutionCompleted',
+	ChildWorkflowExecutionFailed: 'ChildWorkflowExecutionFailed',
+	StartChildWorkflowExecutionInitiated: 'StartChildWorkflowExecutionInitiated',
+	MarkerRecorded: 'MarkerRecorded'
+} as const;
+
+export type WorkflowEventType = (typeof WORKFLOW_EVENT_TYPE)[keyof typeof WORKFLOW_EVENT_TYPE];
+
 /** A single annotated entry in the order event timeline. */
 export type TimelineEntry = {
 	index: number;
@@ -189,6 +223,8 @@ export type TimelineEntry = {
 	status: OrderStatus;
 	/** Optional feature identifier for guided-tour highlighting. */
 	featureId?: FeatureId;
+	/** Optional Temporal or UI event type that advances the guided tour. */
+	eventType?: WorkflowEventType | 'QueryCompleted' | 'WorkerRestarted';
 };
 
 export type QueryReturnMap = {
@@ -295,6 +331,187 @@ export const FEATURE_ID = {
 /** Union of all feature-identifier strings. Structurally equal to `FeatureId` in workflow-api.ts. */
 export type FeatureId = (typeof FEATURE_ID)[keyof typeof FEATURE_ID];
 
+export const SCENARIO_ID = {
+	HappyPath: 'happy-path',
+	Retry: 'retry',
+	TimeoutRefund: 'timeout-refund',
+	UpdateRejection: 'update-rejection',
+	ChildDelivery: 'child-delivery',
+	WorkerRecovery: 'worker-recovery',
+	ContinueAsNew: 'continue-as-new',
+	ReplaySafety: 'replay-safety'
+} as const;
+
+export type ScenarioId = (typeof SCENARIO_ID)[keyof typeof SCENARIO_ID];
+
+export type ScenarioStep = {
+	id: string;
+	control?: ControlId;
+	featureId: FeatureId;
+	completesOn: WorkflowEventType | 'QueryCompleted' | 'WorkerRestarted';
+};
+
+export type Scenario = {
+	id: ScenarioId;
+	title: string;
+	summary: string;
+	steps: readonly ScenarioStep[];
+};
+
+export type ControlId =
+	| 'start-order'
+	| 'cancel-order'
+	| 'accept-restaurant'
+	| 'reject-restaurant'
+	| 'food-ready'
+	| 'update-location'
+	| 'add-tip'
+	| 'update-address'
+	| 'apply-promo'
+	| 'complete-delivery'
+	| 'kill-worker'
+	| 'query-status'
+	| 'query-timeline';
+
+export const SCENARIOS = [
+	{
+		id: SCENARIO_ID.HappyPath,
+		title: 'Deliver one order',
+		summary:
+			'Start the workflow, accept the order, update it, start the delivery child workflow, and complete delivery.',
+		steps: [
+			{
+				id: 'start-workflow',
+				control: 'start-order',
+				featureId: 'activities-retry',
+				completesOn: 'WorkflowExecutionStarted'
+			},
+			{
+				id: 'restaurant-accepts',
+				control: 'accept-restaurant',
+				featureId: 'signals',
+				completesOn: 'WorkflowExecutionSignaled'
+			},
+			{
+				id: 'address-update',
+				control: 'update-address',
+				featureId: 'updates-validators',
+				completesOn: 'WorkflowExecutionUpdateAccepted'
+			},
+			{
+				id: 'delivery-child',
+				control: 'food-ready',
+				featureId: 'child-workflow',
+				completesOn: 'ChildWorkflowExecutionStarted'
+			},
+			{
+				id: 'complete-delivery',
+				control: 'complete-delivery',
+				featureId: 'child-workflow',
+				completesOn: 'WorkflowExecutionCompleted'
+			}
+		]
+	},
+	{
+		id: SCENARIO_ID.Retry,
+		title: 'Watch activity retry',
+		summary:
+			'Use the transient-failure payment fixture to show Temporal retrying an activity without workflow-side retry loops.',
+		steps: [
+			{
+				id: 'activity-completes-after-retry',
+				control: 'start-order',
+				featureId: 'activities-retry',
+				completesOn: 'ActivityTaskCompleted'
+			}
+		]
+	},
+	{
+		id: SCENARIO_ID.TimeoutRefund,
+		title: 'Let the restaurant timeout refund the order',
+		summary:
+			'Start an order and do not accept it; the durable timer fires and compensation refunds the payment.',
+		steps: [
+			{
+				id: 'restaurant-deadline',
+				control: 'start-order',
+				featureId: 'timers-durable-sleep',
+				completesOn: 'TimerStarted'
+			}
+		]
+	},
+	{
+		id: SCENARIO_ID.UpdateRejection,
+		title: 'Reject an invalid update',
+		summary:
+			'Try to change the address after delivery begins so the update validator rejects before the handler mutates state.',
+		steps: [
+			{
+				id: 'validator-rejects',
+				control: 'update-address',
+				featureId: 'updates-validators',
+				completesOn: 'WorkflowExecutionUpdateRejected'
+			}
+		]
+	},
+	{
+		id: SCENARIO_ID.ChildDelivery,
+		title: 'Inspect the delivery child workflow',
+		summary:
+			'Start delivery and inspect the child workflow as a separate execution in Temporal Web.',
+		steps: [
+			{
+				id: 'child-started',
+				control: 'food-ready',
+				featureId: 'child-workflow',
+				completesOn: 'ChildWorkflowExecutionStarted'
+			}
+		]
+	},
+	{
+		id: SCENARIO_ID.WorkerRecovery,
+		title: 'Kill and restart the worker',
+		summary:
+			'Stop the worker while the workflow is waiting, then restart it and watch history replay restore execution.',
+		steps: [
+			{
+				id: 'worker-restarted',
+				control: 'kill-worker',
+				featureId: 'durable-recovery',
+				completesOn: 'WorkerRestarted'
+			}
+		]
+	},
+	{
+		id: SCENARIO_ID.ContinueAsNew,
+		title: 'Compact a long history',
+		summary:
+			'Run with a low history-compaction threshold and send courier location updates until ContinueAsNew starts a fresh run.',
+		steps: [
+			{
+				id: 'continued-as-new',
+				control: 'update-location',
+				featureId: 'continue-as-new',
+				completesOn: 'WorkflowExecutionContinuedAsNew'
+			}
+		]
+	},
+	{
+		id: SCENARIO_ID.ReplaySafety,
+		title: 'Replay the recorded history',
+		summary:
+			'Use the workflow test replayer to prove the workflow code is deterministic against a real event history.',
+		steps: [
+			{
+				id: 'query-timeline',
+				control: 'query-timeline',
+				featureId: 'replay-safety',
+				completesOn: 'QueryCompleted'
+			}
+		]
+	}
+] as const satisfies readonly Scenario[];
+
 // ---------------------------------------------------------------------------
 // Known promo codes (deterministic — no I/O in workflow)
 // ---------------------------------------------------------------------------
@@ -333,12 +550,14 @@ declare global {
 	type FoodReadySignal = import('./shared.ts').FoodReadySignal;
 	type CourierLocationUpdate = import('./shared.ts').CourierLocationUpdate;
 	type AddTipSignal = import('./shared.ts').AddTipSignal;
+	type DeliveryCompletedSignal = import('./shared.ts').DeliveryCompletedSignal;
 	type SignalPayloadMap = import('./shared.ts').SignalPayloadMap;
 	type QueryName = import('./shared.ts').QueryName;
 	type CourierInfo = import('./shared.ts').CourierInfo;
 	type CompensationRecord = import('./shared.ts').CompensationRecord;
 	type OrderSnapshot = import('./shared.ts').OrderSnapshot;
 	type TimelineEntry = import('./shared.ts').TimelineEntry;
+	type WorkflowEventType = import('./shared.ts').WorkflowEventType;
 	type QueryReturnMap = import('./shared.ts').QueryReturnMap;
 	type UpdateName = import('./shared.ts').UpdateName;
 	type UpdateDeliveryAddressInput = import('./shared.ts').UpdateDeliveryAddressInput;
@@ -352,4 +571,8 @@ declare global {
 	type SubscriptionInput = import('./shared.ts').SubscriptionInput;
 	type FeatureId = import('./shared.ts').FeatureId;
 	type PromoCodeKey = import('./shared.ts').PromoCodeKey;
+	type ControlId = import('./shared.ts').ControlId;
+	type ScenarioId = import('./shared.ts').ScenarioId;
+	type ScenarioStep = import('./shared.ts').ScenarioStep;
+	type Scenario = import('./shared.ts').Scenario;
 }

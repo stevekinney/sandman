@@ -19,10 +19,12 @@
 
 	let {
 		controller,
-		workflowId
+		workflowId,
+		deliveryWorkflowId
 	}: {
 		controller: TemporalController;
 		workflowId: string;
+		deliveryWorkflowId?: string;
 	} = $props();
 
 	// --- per-signal state -----------------------------------------------------
@@ -144,4 +146,14 @@
 				send(() => controller.signal(workflowId, 'addTip', { amountCents: tipAmountCents ?? 0 }))}
 		/>
 	</div>
+
+	{#if deliveryWorkflowId !== undefined}
+		<div class="signal-group">
+			<Button
+				label="Complete Delivery"
+				variant="primary"
+				onclick={() => send(() => controller.signal(deliveryWorkflowId, 'deliveryCompleted', {}))}
+			/>
+		</div>
+	{/if}
 </section>

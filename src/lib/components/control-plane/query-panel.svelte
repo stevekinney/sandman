@@ -12,10 +12,12 @@
 
 	let {
 		controller,
-		workflowId
+		workflowId,
+		onqueried
 	}: {
 		controller: TemporalController;
 		workflowId: string;
+		onqueried?: (name: QueryName) => void;
 	} = $props();
 
 	let loading = $state(false);
@@ -29,6 +31,7 @@
 		try {
 			const value = await controller.query(workflowId, name);
 			queryResult = { name, value };
+			onqueried?.(name);
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
 		} finally {

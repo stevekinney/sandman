@@ -11,10 +11,13 @@
 
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { Connection, Client } from '@temporalio/client';
-import { Sandbox } from 'e2b';
 import type { QueryName } from '$lib/contracts/workflow-api';
 import { requireOwnedSandbox } from '$lib/server/security/guards';
+import {
+	getTemporalCliTarget,
+	quoteShellArgument,
+	runTemporalJsonCommand
+} from '$lib/server/sandbox/temporal-cli';
 
 export const GET: RequestHandler = async (event) => {
 	const { url, params } = event;
@@ -30,20 +33,27 @@ export const GET: RequestHandler = async (event) => {
 		return json({ error: 'name query param is required' }, { status: 400 });
 	}
 
-	const connection = await getSandboxConnection(params.id);
-	try {
-		const client = new Client({ connection });
-		const handle = client.workflow.getHandle(workflowId);
-		const result = await handle.query(name);
-		return json(result);
-	} finally {
-		await connection.close();
-	}
+	const entry = getTemporalCliTarget(params.id);
+	const result = await runTemporalJsonCommand(
+		entry,
+		[
+			'temporal workflow query',
+			`--workflow-id ${quoteShellArgument(workflowId)}`,
+			`--type ${quoteShellArgument(name)}`,
+			'--color never',
+			'-o json'
+		].join(' ')
+	);
+
+	const queryResult = getQueryResult(result);
+	return json(queryResult);
 };
 
-async function getSandboxConnection(sandboxId: string): Promise<Connection> {
-	const sandbox = await Sandbox.connect(sandboxId);
-	const hostUrl = sandbox.getHost(7233);
-	const address = hostUrl.startsWith('http') ? new URL(hostUrl).host : hostUrl;
-	return Connection.connect({ address });
+function getQueryResult(value: unknown): unknown {
+	if (typeof value !== 'object' || value === null || !('queryResult' in value)) {
+		return value;
+	}
+	const queryResult = value.queryResult;
+	if (!Array.isArray(queryResult)) return value;
+	return queryResult[0] ?? null;
 }

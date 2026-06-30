@@ -18,7 +18,7 @@ import { describe, it, expect } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import { MockTemporalController } from './mock-controller.ts';
-import type { WorkflowRun } from './types.ts';
+import type { CommandLogEntry, WorkflowRun } from './types.ts';
 import type { WorkflowEvent } from '$lib/contracts/events';
 import type { TimelineEntry } from '$lib/contracts/workflow-api';
 import ControlPlane from './control-plane.svelte';
@@ -99,6 +99,52 @@ describe('start-order form', () => {
 			.toBeInTheDocument();
 		await expect.element(page.getByText('wf-display-test')).toBeInTheDocument();
 	});
+
+	it('renders the current recommended next action after a workflow starts', async () => {
+		const controller = new MockTemporalController();
+		render(ControlPlane, {
+			props: { controller, recommendedControl: 'accept-restaurant' }
+		});
+
+		await startWorkflow(controller);
+
+		await expect.element(page.getByText('Recommended next action')).toBeInTheDocument();
+		await expect
+			.element(page.getByLabelText('Recommended next action').getByText('Restaurant Accepted'))
+			.toBeInTheDocument();
+	});
+
+	it('emits command-log entries for start and query operations', async () => {
+		const controller = new MockTemporalController();
+		const commandEntries: CommandLogEntry[] = [];
+		controller.queryResults.set('getStatus', { status: 'PREPARING' });
+		render(ControlPlane, {
+			props: {
+				controller,
+				oncommand: (entry: CommandLogEntry) => commandEntries.push(entry)
+			}
+		});
+
+		await startWorkflow(controller);
+		await page.getByRole('button', { name: 'Get Status' }).click();
+
+		expect(commandEntries).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					label: 'Place Order',
+					apiRoute: 'POST /api/sandbox/[id]/workflow',
+					temporalCommand: expect.stringContaining('temporal workflow start'),
+					status: 'succeeded'
+				}),
+				expect.objectContaining({
+					label: 'Get Status',
+					apiRoute: 'GET /api/sandbox/[id]/workflow/query',
+					temporalCommand: 'temporal workflow query --type getStatus',
+					status: 'succeeded'
+				})
+			])
+		);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -178,6 +224,21 @@ describe('signal controls', () => {
 		expect(controller.signalCalls[0]).toMatchObject({
 			name: 'addTip',
 			payload: { amountCents: 300 }
+		});
+	});
+
+	it('calls controller.signal on the delivery child workflow when delivery is completed', async () => {
+		const controller = new MockTemporalController();
+		render(ControlPlane, { props: { controller } });
+		await startWorkflow(controller);
+
+		await page.getByRole('button', { name: 'Complete Delivery' }).click();
+
+		expect(controller.signalCalls).toHaveLength(1);
+		expect(controller.signalCalls[0]).toMatchObject({
+			workflowId: `delivery-${controller.startCalls[0].orderId}`,
+			name: 'deliveryCompleted',
+			payload: {}
 		});
 	});
 

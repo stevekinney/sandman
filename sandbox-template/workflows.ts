@@ -9,14 +9,18 @@
 
 import {
 	ActivityCancellationType,
+	ActivityFailure,
 	ApplicationFailure,
+	ChildWorkflowCancellationType,
 	CancellationScope,
+	ParentClosePolicy,
 	allHandlersFinished,
 	condition,
 	continueAsNew,
 	defineQuery,
 	defineUpdate,
 	executeChild,
+	getExternalWorkflowHandle,
 	isCancellation,
 	proxyActivities,
 	proxyLocalActivities,
@@ -35,7 +39,7 @@ import {
 	restaurantAcceptedSignal,
 	restaurantRejectedSignal
 } from './signals.ts';
-import { ORDER_STATUS, PROMO_CODES, TASK_QUEUE } from './shared.ts';
+import { ORDER_STATUS, PROMO_CODES, TASK_QUEUE, WORKFLOW_EVENT_TYPE } from './shared.ts';
 
 export {
 	addTipSignal,
@@ -103,6 +107,19 @@ function getPromo(code: string): (typeof PROMO_CODES)[PromoCode] | undefined {
 	return undefined;
 }
 
+function getChargePaymentAttemptCount(error: unknown): number | undefined {
+	if (!(error instanceof ActivityFailure)) return undefined;
+	if (!(error.cause instanceof ApplicationFailure)) return undefined;
+	const [detail] = error.cause.details ?? [];
+	if (!isAttemptCountDetail(detail)) return undefined;
+	return detail.attempts;
+}
+
+function isAttemptCountDetail(value: unknown): value is { attempts: number } {
+	if (typeof value !== 'object' || value === null || !('attempts' in value)) return false;
+	return typeof value.attempts === 'number';
+}
+
 export async function orderFoodWorkflow(
 	input: OrderInput,
 	seed?: OrderSnapshot
@@ -120,7 +137,8 @@ export async function orderFoodWorkflow(
 	let deliveryDeadline: string | undefined = seed?.deliveryDeadline;
 	let completedAt: string | undefined = seed?.completedAt;
 	let continueAsNewPending = false;
-	let deliveryScope: CancellationScope | null = null;
+	let deliveryWorkflowId: string | undefined;
+	let deliveryChildStarted = false;
 
 	const startedAt = seed?.startedAt ?? now();
 	let updatedAt = seed?.updatedAt ?? startedAt;
@@ -132,10 +150,23 @@ export async function orderFoodWorkflow(
 	let restaurantAccepted = false;
 	let restaurantRejectedReason = '';
 	let foodReady = false;
+	const historyCompactionThreshold = currentInput.historyCompactionThreshold ?? 100;
 
-	function transition(nextStatus: OrderStatus, description: string, featureId?: FeatureId): void {
+	function transition(
+		nextStatus: OrderStatus,
+		description: string,
+		featureId?: FeatureId,
+		eventType?: WorkflowEventType
+	): void {
 		status = nextStatus;
-		timeline.push({ index: timeline.length, timestamp: now(), description, status, featureId });
+		timeline.push({
+			index: timeline.length,
+			timestamp: now(),
+			description,
+			status,
+			featureId,
+			eventType
+		});
 		updatedAt = now();
 	}
 
@@ -170,18 +201,23 @@ export async function orderFoodWorkflow(
 		nextStatus: OrderStatus,
 		description: string
 	): Promise<OrderSnapshot> {
-		await refundPayment(currentInput.orderId, totalCents);
-		compensations.push({ action: 'refund-payment', timestamp: now(), ok: true });
 		if (courier) {
 			await releaseCourier(currentInput.orderId, courier.courierId);
 			compensations.push({ action: 'release-courier', timestamp: now(), ok: true });
 		}
+		await refundPayment(currentInput.orderId, totalCents);
+		compensations.push({ action: 'refund-payment', timestamp: now(), ok: true });
 		completedAt = now();
 		transition(nextStatus, description, 'saga-compensation');
 		return snapshot();
 	}
 
-	setHandler(cancelOrderSignal, (payload) => {
+	async function cancelDeliveryChild(): Promise<void> {
+		if (deliveryWorkflowId === undefined || !deliveryChildStarted) return;
+		await getExternalWorkflowHandle(deliveryWorkflowId).cancel();
+	}
+
+	setHandler(cancelOrderSignal, async (payload) => {
 		cancelReason = payload.reason;
 		timeline.push({
 			index: timeline.length,
@@ -190,7 +226,7 @@ export async function orderFoodWorkflow(
 			status,
 			featureId: 'signals'
 		});
-		deliveryScope?.cancel();
+		await cancelDeliveryChild();
 	});
 	setHandler(restaurantAcceptedSignal, (payload) => {
 		restaurantAccepted = true;
@@ -199,7 +235,8 @@ export async function orderFoodWorkflow(
 			timestamp: now(),
 			description: `Restaurant accepted, prep ${payload.estimatedPrepMinutes}m`,
 			status,
-			featureId: 'signals'
+			featureId: 'signals',
+			eventType: WORKFLOW_EVENT_TYPE.WorkflowExecutionSignaled
 		});
 	});
 	setHandler(restaurantRejectedSignal, (payload) => {
@@ -211,6 +248,9 @@ export async function orderFoodWorkflow(
 	setHandler(courierLocationUpdateSignal, (location) => {
 		courier = courier ? { ...courier, location } : courier;
 		locationUpdateCount++;
+		if (locationUpdateCount >= historyCompactionThreshold) {
+			continueAsNewPending = true;
+		}
 	});
 	setHandler(addTipSignal, (payload) => {
 		tipCents += payload.amountCents;
@@ -229,7 +269,8 @@ export async function orderFoodWorkflow(
 				timestamp: now(),
 				description: 'Delivery address updated',
 				status,
-				featureId: 'updates-validators'
+				featureId: 'updates-validators',
+				eventType: WORKFLOW_EVENT_TYPE.WorkflowExecutionUpdateAccepted
 			});
 			return { updated: true, effectiveAddress: currentInput.deliveryAddress };
 		},
@@ -268,6 +309,26 @@ export async function orderFoodWorkflow(
 		}
 	);
 
+	if (seed?.continueAsNewPending && seed.status === ORDER_STATUS.InDelivery) {
+		continueAsNewPending = false;
+		completedAt = now();
+		transition(
+			ORDER_STATUS.Delivered,
+			'Order delivered after ContinueAsNew history compaction',
+			'continue-as-new',
+			WORKFLOW_EVENT_TYPE.WorkflowExecutionCompleted
+		);
+		await writeAuditLog({ orderId: currentInput.orderId, event: 'delivered', timestamp: now() });
+		await condition(allHandlersFinished);
+		return snapshot();
+	}
+
+	transition(
+		ORDER_STATUS.Created,
+		'Workflow execution started',
+		'activities-retry',
+		WORKFLOW_EVENT_TYPE.WorkflowExecutionStarted
+	);
 	transition(ORDER_STATUS.Validating, 'Validating order', 'local-activities');
 	await validateOrder(currentInput);
 	const pricing = await calculatePricing(currentInput.items, currentInput.promoCode);
@@ -284,13 +345,26 @@ export async function orderFoodWorkflow(
 			totalCents
 		);
 		attemptCounts['chargePayment'] = charge.attempts;
-	} catch {
+	} catch (err) {
+		const attempts = getChargePaymentAttemptCount(err);
+		if (attempts !== undefined) attemptCounts['chargePayment'] = attempts;
 		completedAt = now();
 		transition(ORDER_STATUS.Cancelled, 'Payment declined', 'non-retryable-failure');
 		return snapshot();
 	}
 
-	transition(ORDER_STATUS.AwaitingRestaurant, 'Waiting for restaurant', 'timers-durable-sleep');
+	transition(
+		ORDER_STATUS.Validating,
+		'Payment charged',
+		'activities-retry',
+		WORKFLOW_EVENT_TYPE.ActivityTaskCompleted
+	);
+	transition(
+		ORDER_STATUS.AwaitingRestaurant,
+		'Waiting for restaurant',
+		'timers-durable-sleep',
+		WORKFLOW_EVENT_TYPE.TimerStarted
+	);
 	await notifyRestaurant(currentInput.orderId, currentInput.restaurantId, currentInput.items);
 	const accepted = await condition(
 		() => restaurantAccepted || Boolean(restaurantRejectedReason) || Boolean(cancelReason),
@@ -309,43 +383,64 @@ export async function orderFoodWorkflow(
 	transition(ORDER_STATUS.AwaitingCourier, 'Assigning courier', 'child-workflow');
 	courier = await assignCourier(currentInput.orderId, currentInput.deliveryAddress);
 	await dispatchCourier(currentInput.orderId, courier.courierId, currentInput.deliveryAddress);
+	if (cancelReason) return refundAndFinish(ORDER_STATUS.Cancelled, `Cancelled: ${cancelReason}`);
 
-	transition(ORDER_STATUS.InDelivery, 'Delivery child workflow started', 'child-workflow');
 	deliveryDeadline = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
+	transition(ORDER_STATUS.InDelivery, 'Starting delivery child workflow', 'child-workflow');
 
 	try {
-		deliveryScope = new CancellationScope({ cancellable: true });
-		await deliveryScope.run(async () => {
-			const child = await startChild<typeof deliveryWorkflow>(deliveryWorkflow, {
-				workflowId: `delivery-${currentInput.orderId}`,
-				args: [
-					{
-						orderId: currentInput.orderId,
-						courierId: courier?.courierId ?? '',
-						courierName: courier?.name ?? '',
-						deliveryAddress: currentInput.deliveryAddress,
-						heartbeatIntervalMs: 500
-					}
-				],
-				taskQueue: TASK_QUEUE
-			});
-			await child.result();
+		deliveryWorkflowId = `delivery-${currentInput.orderId}`;
+		const child = await startChild<typeof deliveryWorkflow>(deliveryWorkflow, {
+			workflowId: deliveryWorkflowId,
+			args: [
+				{
+					orderId: currentInput.orderId,
+					courierId: courier?.courierId ?? '',
+					courierName: courier?.name ?? '',
+					deliveryAddress: currentInput.deliveryAddress,
+					heartbeatIntervalMs: 500
+				}
+			],
+			taskQueue: TASK_QUEUE,
+			cancellationType: ChildWorkflowCancellationType.WAIT_CANCELLATION_COMPLETED,
+			parentClosePolicy: ParentClosePolicy.REQUEST_CANCEL
 		});
+		deliveryChildStarted = true;
+		transition(
+			ORDER_STATUS.InDelivery,
+			'Delivery child workflow started',
+			'child-workflow',
+			WORKFLOW_EVENT_TYPE.ChildWorkflowExecutionStarted
+		);
+		if (cancelReason) await cancelDeliveryChild();
+		await child.result();
 	} catch (err) {
 		if (isCancellation(err)) return refundAndFinish(ORDER_STATUS.Cancelled, 'Delivery cancelled');
 		throw err;
 	} finally {
-		deliveryScope = null;
+		deliveryWorkflowId = undefined;
+		deliveryChildStarted = false;
 	}
 
-	if (locationUpdateCount >= 100) {
+	if (locationUpdateCount >= historyCompactionThreshold) {
 		continueAsNewPending = true;
+		transition(
+			ORDER_STATUS.InDelivery,
+			`History compaction threshold reached after ${locationUpdateCount} courier location updates`,
+			'continue-as-new',
+			WORKFLOW_EVENT_TYPE.WorkflowExecutionContinuedAsNew
+		);
 		await condition(allHandlersFinished);
 		await continueAsNew<typeof orderFoodWorkflow>(currentInput, snapshot());
 	}
 
 	completedAt = now();
-	transition(ORDER_STATUS.Delivered, 'Order delivered', 'durable-recovery');
+	transition(
+		ORDER_STATUS.Delivered,
+		'Order delivered',
+		'durable-recovery',
+		WORKFLOW_EVENT_TYPE.WorkflowExecutionCompleted
+	);
 	await writeAuditLog({ orderId: currentInput.orderId, event: 'delivered', timestamp: now() });
 	await condition(allHandlersFinished);
 	return snapshot();
@@ -367,13 +462,18 @@ export async function deliveryWorkflow(input: DeliveryInput): Promise<DeliveryRe
 		})
 	);
 
-	await condition(() => deliveredOnTime, input.slaTimeout ?? '2h');
-	trackingScope.cancel();
+	let trackingError: unknown;
 	try {
-		await tracking;
-	} catch (err) {
-		if (!isCancellation(err)) throw err;
+		await condition(() => deliveredOnTime, input.slaTimeout ?? '2h');
+	} finally {
+		trackingScope.cancel();
+		try {
+			await tracking;
+		} catch (err) {
+			if (!isCancellation(err)) trackingError = err;
+		}
 	}
+	if (trackingError) throw trackingError;
 	return { deliveredOnTime, courierId: input.courierId };
 }
 

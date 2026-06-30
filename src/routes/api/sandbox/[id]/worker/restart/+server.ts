@@ -10,28 +10,19 @@
 
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { Sandbox } from 'e2b';
 import { assertSameOrigin } from '$lib/server/security/origin';
 import { requireOwnedSandbox } from '$lib/server/security/guards';
-
-/**
- * Re-launch the worker in the background. The exact start command depends
- * on how Track A bootstrapped the sandbox; `start-worker.sh` is the
- * conventional entry-point script placed there during provisioning.
- */
-const RESTART_COMMAND = 'nohup bash /home/user/start-worker.sh > /tmp/worker.log 2>&1 &';
+import { getTemporalCliTarget } from '$lib/server/sandbox/temporal-cli';
 
 export const POST: RequestHandler = async (event) => {
 	const { params } = event;
 	assertSameOrigin(event);
 	await requireOwnedSandbox(event, params.id);
 
-	try {
-		const sandbox = await Sandbox.connect(params.id);
-		await sandbox.commands.run(RESTART_COMMAND);
-		return new Response(null, { status: 204 });
-	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		return json({ error: `Failed to restart worker: ${message}` }, { status: 500 });
+	const entry = getTemporalCliTarget(params.id);
+	const status = await entry.client.restartWorker(entry.handle);
+	if (!status.ok) {
+		return json({ error: status.stderr ?? 'Failed to restart worker' }, { status: 500 });
 	}
+	return new Response(null, { status: 204 });
 };

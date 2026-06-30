@@ -19,7 +19,10 @@ import {
 
 import {
 	ORDER_STATUS,
+	SCENARIOS,
+	SCENARIO_ID,
 	type OrderStatus,
+	type ScenarioId,
 	type SignalName,
 	type QueryName,
 	type UpdateName,
@@ -167,6 +170,7 @@ describe('SignalName / QueryName / UpdateName types', () => {
 			| 'foodReady'
 			| 'courierLocationUpdate'
 			| 'addTip'
+			| 'deliveryCompleted'
 		>();
 		expectTypeOf<QueryName>().toEqualTypeOf<'getStatus' | 'getTimeline'>();
 		expectTypeOf<UpdateName>().toEqualTypeOf<'updateDeliveryAddress' | 'applyPromoCode'>();
@@ -201,6 +205,45 @@ describe('FeatureId type', () => {
 			| 'replay-safety'
 			| 'durable-recovery'
 		>();
+	});
+});
+
+describe('SCENARIOS', () => {
+	it('defines the guided workshop scenario ids', () => {
+		expect(Object.values(SCENARIO_ID)).toEqual([
+			'happy-path',
+			'retry',
+			'timeout-refund',
+			'update-rejection',
+			'child-delivery',
+			'worker-recovery',
+			'continue-as-new',
+			'replay-safety'
+		]);
+		expectTypeOf<ScenarioId>().toEqualTypeOf<
+			| 'happy-path'
+			| 'retry'
+			| 'timeout-refund'
+			| 'update-rejection'
+			| 'child-delivery'
+			| 'worker-recovery'
+			| 'continue-as-new'
+			| 'replay-safety'
+		>();
+	});
+
+	it('has mechanically verifiable steps for every scenario', () => {
+		expect(SCENARIOS).toHaveLength(8);
+		for (const scenario of SCENARIOS) {
+			expect(scenario.title.length).toBeGreaterThan(0);
+			expect(scenario.summary.length).toBeGreaterThan(0);
+			expect(scenario.steps.length).toBeGreaterThan(0);
+			for (const step of scenario.steps) {
+				expect(step.id.length).toBeGreaterThan(0);
+				expect(step.featureId.length).toBeGreaterThan(0);
+				expect(step.completesOn.length).toBeGreaterThan(0);
+			}
+		}
 	});
 });
 

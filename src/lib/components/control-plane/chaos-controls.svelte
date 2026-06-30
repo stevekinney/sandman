@@ -14,7 +14,13 @@
 	import StatusDot from '@lostgradient/cinder/status-dot';
 	import type { TemporalController } from './types.ts';
 
-	let { controller }: { controller: TemporalController } = $props();
+	let {
+		controller,
+		onrestarted
+	}: {
+		controller: TemporalController;
+		onrestarted?: () => void;
+	} = $props();
 
 	type WorkerState = 'running' | 'killed' | 'restarting';
 
@@ -37,6 +43,7 @@
 		try {
 			await controller.restartWorker();
 			workerState = 'running';
+			onrestarted?.();
 		} catch (err) {
 			error = err instanceof Error ? err.message : String(err);
 			workerState = 'killed';

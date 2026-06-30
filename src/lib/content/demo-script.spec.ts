@@ -175,14 +175,17 @@ describe('TOUR', () => {
 		expect(unique.size).toBe(ids.length);
 	});
 
-	it('final step completes only on WorkerRestarted, not WorkerKilled', () => {
-		const finalStep = TOUR[TOUR.length - 1];
-		const killed = finalStep.completes({
+	it('durable-recovery step completes only on WorkerRestarted, not WorkerKilled', () => {
+		const durableRecoveryStep = TOUR.find((step) => step.id === 'durable-recovery');
+		expect(durableRecoveryStep).toBeDefined();
+		if (durableRecoveryStep === undefined) return;
+
+		const killed = durableRecoveryStep.completes({
 			sequence: 99,
 			type: 'WorkerKilled',
 			timestamp: new Date().toISOString()
 		});
-		const restarted = finalStep.completes({
+		const restarted = durableRecoveryStep.completes({
 			sequence: 100,
 			type: 'WorkerRestarted',
 			timestamp: new Date().toISOString()

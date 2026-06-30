@@ -17,9 +17,22 @@
 	 */
 	import Badge from '@lostgradient/cinder/badge';
 	import '@lostgradient/cinder/badge/styles';
-	import type { TemporalController, WorkflowRun } from './types.ts';
+	import type {
+		CommandLogDraft,
+		CommandLogEntry,
+		CommandLogPrimitive,
+		TemporalController,
+		WorkflowRun
+	} from './types.ts';
 	import type { WorkflowEvent } from '$lib/contracts/events';
-	import type { OrderInput, TimelineEntry } from '$lib/contracts/workflow-api';
+	import type {
+		ControlId,
+		OrderInput,
+		QueryName,
+		SignalName,
+		TimelineEntry,
+		UpdateName
+	} from '$lib/contracts/workflow-api';
 	import StartOrderForm from './start-order-form.svelte';
 	import SignalControls from './signal-controls.svelte';
 	import QueryPanel from './query-panel.svelte';
@@ -32,7 +45,10 @@
 		controller,
 		events = [],
 		timelineEntries = [],
-		onstarted
+		recommendedControl,
+		onstarted,
+		onworkflowevent,
+		oncommand
 	}: {
 		controller: TemporalController;
 		/**
@@ -46,12 +62,20 @@
 		 * and pre-start states render nothing.
 		 */
 		timelineEntries?: TimelineEntry[];
+		/** Current guided-tour action, rendered as the primary next step. */
+		recommendedControl?: ControlId;
 		/** Called once when a workflow run starts, so the parent can scope its poll. */
 		onstarted?: (run: WorkflowRun) => void;
+		/** Emits UI-only workflow events, such as successful queries and worker restarts. */
+		onworkflowevent?: (event: WorkflowEvent) => void;
+		/** Emits a command-log entry for every control-plane operation. */
+		oncommand?: (entry: CommandLogEntry) => void;
 	} = $props();
 
 	let workflowRun = $state<WorkflowRun | null>(null);
 	let activeOrder = $state<OrderInput | null>(null);
+	let nextControlEventSequence = $state(10_000);
+	let nextCommandId = $state(1);
 	const deliveryFeeCents = 299;
 	const progressSteps = [
 		{ label: 'Placed', statuses: ['CREATED', 'VALIDATING', 'PAYMENT_CHARGED'] },
@@ -68,6 +92,11 @@
 		const index = progressSteps.findIndex((step) => step.statuses.includes(status));
 		return index === -1 ? 0 : index;
 	});
+	const deliveryWorkflowId = $derived(
+		activeOrder === null ? undefined : `delivery-${activeOrder.orderId}`
+	);
+	const nextActionLabel = $derived(getControlLabel(recommendedControl));
+	const loggingController = $derived(createLoggingController(controller));
 
 	function formatMoney(cents: number): string {
 		return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(
@@ -86,13 +115,266 @@
 		workflowRun = run;
 		activeOrder = order;
 		onstarted?.(run);
+		emitControlEvent('WorkflowExecutionStarted', run.workflowId);
+	}
+
+	function emitControlEvent(type: string, workflowId = workflowRun?.workflowId): void {
+		onworkflowevent?.({
+			sequence: nextControlEventSequence++,
+			type,
+			timestamp: new Date().toISOString(),
+			workflowId
+		});
+	}
+
+	function recordCommand(
+		draft: CommandLogDraft,
+		status: CommandLogEntry['status']
+	): CommandLogEntry {
+		const entry = {
+			...draft,
+			id: nextCommandId++,
+			status,
+			timestamp: new Date().toISOString()
+		};
+		oncommand?.(entry);
+		return entry;
+	}
+
+	function recordCommandResult(
+		entry: CommandLogEntry,
+		result: unknown,
+		status: CommandLogEntry['status']
+	): void {
+		oncommand?.({
+			...entry,
+			status,
+			result,
+			error: undefined,
+			timestamp: new Date().toISOString()
+		});
+	}
+
+	function recordCommandError(entry: CommandLogEntry, error: unknown): void {
+		oncommand?.({
+			...entry,
+			status: 'failed',
+			error: error instanceof Error ? error.message : String(error),
+			timestamp: new Date().toISOString()
+		});
+	}
+
+	function createLoggingController(baseController: TemporalController): TemporalController {
+		return {
+			start: async (input) => {
+				const entry = recordCommand(
+					buildCommandDraft('Place Order', 'workflow', 'POST /api/sandbox/[id]/workflow', {
+						temporalCommand: 'temporal workflow start --type orderFoodWorkflow',
+						workflowId: input.orderId,
+						payload: input
+					}),
+					'running'
+				);
+				try {
+					const result = await baseController.start(input);
+					recordCommandResult(entry, result, 'succeeded');
+					return result;
+				} catch (error) {
+					recordCommandError(entry, error);
+					throw error;
+				}
+			},
+			signal: async (workflowId, name, payload) => {
+				const entry = recordCommand(
+					buildCommandDraft(
+						getSignalControlLabel(name),
+						'signal',
+						'POST /api/sandbox/[id]/workflow/signal',
+						{
+							temporalCommand: `temporal workflow signal --name ${name}`,
+							workflowId,
+							payload
+						}
+					),
+					'running'
+				);
+				try {
+					await baseController.signal(workflowId, name, payload);
+					recordCommandResult(entry, { ok: true }, 'succeeded');
+				} catch (error) {
+					recordCommandError(entry, error);
+					throw error;
+				}
+			},
+			query: async (workflowId, name) => {
+				const entry = recordCommand(
+					buildCommandDraft(
+						getQueryControlLabel(name),
+						'query',
+						'GET /api/sandbox/[id]/workflow/query',
+						{
+							temporalCommand: `temporal workflow query --type ${name}`,
+							workflowId
+						}
+					),
+					'running'
+				);
+				try {
+					const result = await baseController.query(workflowId, name);
+					recordCommandResult(entry, result, 'succeeded');
+					return result;
+				} catch (error) {
+					recordCommandError(entry, error);
+					throw error;
+				}
+			},
+			update: async (workflowId, name, input) => {
+				const entry = recordCommand(
+					buildCommandDraft(
+						getUpdateControlLabel(name),
+						'update',
+						'POST /api/sandbox/[id]/workflow/update',
+						{
+							temporalCommand: `temporal workflow update execute --name ${name}`,
+							workflowId,
+							payload: input
+						}
+					),
+					'running'
+				);
+				try {
+					const result = await baseController.update(workflowId, name, input);
+					recordCommandResult(entry, result, 'succeeded');
+					return result;
+				} catch (error) {
+					recordCommandError(entry, error);
+					throw error;
+				}
+			},
+			killWorker: async () => {
+				const entry = recordCommand(
+					buildCommandDraft('Kill Worker', 'worker', 'POST /api/sandbox/[id]/worker/kill', {
+						temporalCommand: 'pkill -f sandbox-template/worker.ts'
+					}),
+					'running'
+				);
+				try {
+					await baseController.killWorker();
+					recordCommandResult(entry, { ok: true }, 'succeeded');
+				} catch (error) {
+					recordCommandError(entry, error);
+					throw error;
+				}
+			},
+			restartWorker: async () => {
+				const entry = recordCommand(
+					buildCommandDraft('Restart Worker', 'worker', 'POST /api/sandbox/[id]/worker/restart', {
+						temporalCommand: 'bun run sandbox-template/worker.ts'
+					}),
+					'running'
+				);
+				try {
+					await baseController.restartWorker();
+					recordCommandResult(entry, { ok: true }, 'succeeded');
+				} catch (error) {
+					recordCommandError(entry, error);
+					throw error;
+				}
+			}
+		};
+	}
+
+	function buildCommandDraft(
+		label: string,
+		primitive: CommandLogPrimitive,
+		apiRoute: string,
+		options: {
+			temporalCommand: string;
+			workflowId?: string;
+			runId?: string;
+			payload?: unknown;
+		}
+	): CommandLogDraft {
+		return {
+			label,
+			primitive,
+			apiRoute,
+			temporalCommand: options.temporalCommand,
+			workflowId: options.workflowId,
+			runId: options.runId,
+			payload: options.payload
+		};
+	}
+
+	function getSignalControlLabel(name: SignalName): string {
+		switch (name) {
+			case 'cancelOrder':
+				return 'Cancel Order';
+			case 'restaurantAccepted':
+				return 'Restaurant Accepted';
+			case 'restaurantRejected':
+				return 'Restaurant Rejected';
+			case 'foodReady':
+				return 'Food Ready';
+			case 'courierLocationUpdate':
+				return 'Update Courier Location';
+			case 'addTip':
+				return 'Add Tip';
+			case 'deliveryCompleted':
+				return 'Complete Delivery';
+		}
+	}
+
+	function getQueryControlLabel(name: QueryName): string {
+		return name === 'getStatus' ? 'Get Status' : 'Get Timeline';
+	}
+
+	function getUpdateControlLabel(name: UpdateName): string {
+		return name === 'updateDeliveryAddress' ? 'Update Address' : 'Apply Promo';
+	}
+
+	function getControlLabel(control: ControlId | undefined): string {
+		if (control === undefined) return 'Place Order';
+		switch (control) {
+			case 'start-order':
+				return 'Place Order';
+			case 'cancel-order':
+				return 'Cancel Order';
+			case 'accept-restaurant':
+				return 'Restaurant Accepted';
+			case 'reject-restaurant':
+				return 'Restaurant Rejected';
+			case 'food-ready':
+				return 'Food Ready';
+			case 'update-location':
+				return 'Update Courier Location';
+			case 'add-tip':
+				return 'Add Tip';
+			case 'update-address':
+				return 'Update Address';
+			case 'apply-promo':
+				return 'Apply Promo';
+			case 'complete-delivery':
+				return 'Complete Delivery';
+			case 'kill-worker':
+				return 'Kill Worker';
+			case 'query-status':
+				return 'Get Status';
+			case 'query-timeline':
+				return 'Get Timeline';
+		}
 	}
 </script>
 
 <div class="control-plane">
 	{#if workflowRun === null}
-		<StartOrderForm {controller} onstarted={handleStarted} />
+		<StartOrderForm controller={loggingController} onstarted={handleStarted} />
 	{:else}
+		<section class="next-action" aria-label="Recommended next action">
+			<p class="eyebrow">Recommended next action</p>
+			<p>{nextActionLabel}</p>
+		</section>
+
 		{#if activeOrder}
 			<section class="order-tracker" aria-labelledby="active-order-title">
 				<div class="tracker-heading">
@@ -143,13 +425,26 @@
 			</dl>
 		</header>
 
-		<SignalControls {controller} workflowId={workflowRun.workflowId} />
+		<SignalControls
+			controller={loggingController}
+			workflowId={workflowRun.workflowId}
+			{deliveryWorkflowId}
+		/>
 
-		<QueryPanel {controller} workflowId={workflowRun.workflowId} />
+		<QueryPanel
+			controller={loggingController}
+			workflowId={workflowRun.workflowId}
+			onqueried={(name) => {
+				if (name === 'getStatus') emitControlEvent('QueryCompleted');
+			}}
+		/>
 
-		<UpdateControls {controller} workflowId={workflowRun.workflowId} />
+		<UpdateControls controller={loggingController} workflowId={workflowRun.workflowId} />
 
-		<ChaosControls {controller} />
+		<ChaosControls
+			controller={loggingController}
+			onrestarted={() => emitControlEvent('WorkerRestarted')}
+		/>
 
 		<EventRail {events} />
 
@@ -158,6 +453,19 @@
 </div>
 
 <style>
+	.next-action {
+		padding: 0.875rem 1rem;
+		border: 1px solid #38bdf8;
+		border-radius: 0.5rem;
+		background: #082f49;
+	}
+
+	.next-action p:last-child {
+		margin: 0;
+		color: #f0f9ff;
+		font-weight: 800;
+	}
+
 	.order-tracker {
 		padding: 1rem;
 		border: 1px solid var(--cinder-border, #334155);

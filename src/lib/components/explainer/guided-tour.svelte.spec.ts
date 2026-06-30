@@ -68,7 +68,7 @@ describe('GuidedTour', () => {
 			completedStepIds: TOUR.map((s) => s.id)
 		};
 		render(GuidedTour, { props: { progress: completeProgress } });
-		await expect.element(page.getByText(/complete|finished|done/i)).toBeInTheDocument();
+		await expect.element(page.getByText('Tour complete', { exact: false })).toBeInTheDocument();
 	});
 
 	it('concept is conveyed by text, not color alone', async () => {

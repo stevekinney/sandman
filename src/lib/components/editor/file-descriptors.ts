@@ -26,6 +26,8 @@ export const SHARED_FILE_NAME = 'shared.ts' as const;
 export type FileDescriptor = {
 	/** File name shown in the tab bar. */
 	name: string;
+	/** Short teaching label shown above the editor. */
+	purpose: string;
 	/** Monaco language identifier (e.g. "typescript"). */
 	language: string;
 	/** Starter content rendered when the file is first loaded. */
@@ -41,30 +43,40 @@ export type FileDescriptor = {
 export const FILE_DESCRIPTORS: FileDescriptor[] = [
 	{
 		name: 'workflows.ts',
+		purpose:
+			'Workflow definitions: deterministic orchestration, signals, queries, updates, timers, and child workflow calls.',
 		language: 'typescript',
 		initialContents: workflowsRaw,
 		readOnly: false
 	},
 	{
 		name: 'signals.ts',
+		purpose:
+			'Signal definitions: the external events this workflow can receive while it is running.',
 		language: 'typescript',
 		initialContents: signalsRaw,
 		readOnly: true
 	},
 	{
 		name: 'activities.ts',
+		purpose:
+			'Activity implementations: side effects, retries, heartbeats, and cancellation outside the workflow sandbox.',
 		language: 'typescript',
 		initialContents: activitiesRaw,
 		readOnly: false
 	},
 	{
 		name: 'worker.ts',
+		purpose:
+			'Worker bootstrap: connects to Temporal and polls the task queue for workflow and activity tasks.',
 		language: 'typescript',
 		initialContents: workerRaw,
 		readOnly: false
 	},
 	{
 		name: SHARED_FILE_NAME,
+		purpose:
+			'Sandbox-local contract mirror: shared types and scenario metadata copied into the E2B template.',
 		language: 'typescript',
 		initialContents: sharedRaw,
 		readOnly: true

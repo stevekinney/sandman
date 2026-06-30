@@ -131,6 +131,12 @@ export type OrderInput = {
 	promoCode?: string;
 	/** Override: maximum minutes the workflow waits for restaurant acceptance. Defaults to 10. */
 	restaurantAcceptTimeoutMinutes?: number;
+	/**
+	 * Demo-only override for the number of courier location updates that triggers
+	 * ContinueAsNew. Defaults to 100 so normal runs keep a production-shaped
+	 * history-compaction threshold.
+	 */
+	historyCompactionThreshold?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -144,7 +150,8 @@ export type SignalName =
 	| 'restaurantRejected'
 	| 'foodReady'
 	| 'courierLocationUpdate'
-	| 'addTip';
+	| 'addTip'
+	| 'deliveryCompleted';
 
 /** Payload for the `cancelOrder` signal. */
 export type CancelOrderSignal = {
@@ -185,6 +192,9 @@ export type AddTipSignal = {
 	amountCents: MoneyCents;
 };
 
+/** Payload for the `deliveryCompleted` signal. */
+export type DeliveryCompletedSignal = Record<string, never>;
+
 /**
  * Maps each {@link SignalName} to its payload type.
  * Use this to build type-safe signal-dispatch helpers and `setHandler` calls.
@@ -196,6 +206,7 @@ export type SignalPayloadMap = {
 	foodReady: FoodReadySignal;
 	courierLocationUpdate: CourierLocationUpdate;
 	addTip: AddTipSignal;
+	deliveryCompleted: DeliveryCompletedSignal;
 };
 
 // ---------------------------------------------------------------------------
@@ -293,6 +304,8 @@ export type TimelineEntry = {
 	status: OrderStatus;
 	/** Optional feature identifier for guided-tour highlighting. */
 	featureId?: FeatureId;
+	/** Optional Temporal or UI event type that advances the guided tour. */
+	eventType?: WorkflowEventType | 'QueryCompleted' | 'WorkerRestarted';
 };
 
 /**
@@ -424,6 +437,7 @@ export type ControlId =
 	| 'add-tip'
 	| 'update-address'
 	| 'apply-promo'
+	| 'complete-delivery'
 	| 'kill-worker'
 	| 'query-status'
 	| 'query-timeline';
@@ -517,8 +531,8 @@ export const FEATURES = [
 		concept: 'Child Workflows',
 		mechanic:
 			'Once a courier is assigned, the delivery leg is handed off to a DeliveryWorkflow child workflow. Its lifecycle is independently visible in the Temporal Web UI, demonstrating workflow composition.',
-		control: 'food-ready',
-		signal: 'foodReady'
+		control: 'complete-delivery',
+		signal: 'deliveryCompleted'
 	},
 	{
 		id: 'heartbeats-cancellation',
@@ -537,9 +551,9 @@ export const FEATURES = [
 	},
 	{
 		id: 'search-attributes',
-		concept: 'Search Attributes',
+		concept: 'Queryable Business Snapshot',
 		mechanic:
-			'Order status, customer tier, and restaurant ID are upserted as typed search attributes on every status transition, enabling Temporal list queries (e.g. "all PREPARING orders for restaurant X").',
+			'The getStatus query returns the business fields you would normally index as Temporal search attributes: OrderStatus, CustomerTier, and RestaurantId. This keeps the v1 demo honest while still teaching which dimensions make executions searchable.',
 		control: 'query-status',
 		query: 'getStatus'
 	},
@@ -568,6 +582,189 @@ export const FEATURES = [
 
 /** Inferred type of the {@link FEATURES} constant. */
 export type FeatureMap = typeof FEATURES;
+
+// ---------------------------------------------------------------------------
+// Teaching scenarios
+// ---------------------------------------------------------------------------
+
+/**
+ * Stable identifiers for guided workshop scenarios. The IDs are shared by the
+ * UI, documentation, and sandbox-template parity tests so the teaching path
+ * cannot drift silently from the workflow contract.
+ */
+export const SCENARIO_ID = {
+	HappyPath: 'happy-path',
+	Retry: 'retry',
+	TimeoutRefund: 'timeout-refund',
+	UpdateRejection: 'update-rejection',
+	ChildDelivery: 'child-delivery',
+	WorkerRecovery: 'worker-recovery',
+	ContinueAsNew: 'continue-as-new',
+	ReplaySafety: 'replay-safety'
+} as const;
+
+/** Union of all guided workshop scenario identifiers. */
+export type ScenarioId = (typeof SCENARIO_ID)[keyof typeof SCENARIO_ID];
+
+/** A mechanically verifiable step in a guided scenario. */
+export type ScenarioStep = {
+	/** Stable step identifier within the scenario. */
+	id: string;
+	/** Control-plane action that drives the step, when the step is interactive. */
+	control?: ControlId;
+	/** Temporal concept the step is meant to teach. */
+	featureId: FeatureId;
+	/** Binary completion signal used by the UI and tests. */
+	completesOn: WorkflowEventType | 'QueryCompleted' | 'WorkerRestarted';
+};
+
+/** One guided scenario exposed in the workshop UI. */
+export type Scenario = {
+	id: ScenarioId;
+	title: string;
+	summary: string;
+	steps: readonly ScenarioStep[];
+};
+
+/** Canonical guided workshop scenarios for the Sandman demo. */
+export const SCENARIOS = [
+	{
+		id: SCENARIO_ID.HappyPath,
+		title: 'Deliver one order',
+		summary:
+			'Start the workflow, accept the order, update it, start the delivery child workflow, and complete delivery.',
+		steps: [
+			{
+				id: 'start-workflow',
+				control: 'start-order',
+				featureId: 'activities-retry',
+				completesOn: 'WorkflowExecutionStarted'
+			},
+			{
+				id: 'restaurant-accepts',
+				control: 'accept-restaurant',
+				featureId: 'signals',
+				completesOn: 'WorkflowExecutionSignaled'
+			},
+			{
+				id: 'address-update',
+				control: 'update-address',
+				featureId: 'updates-validators',
+				completesOn: 'WorkflowExecutionUpdateAccepted'
+			},
+			{
+				id: 'delivery-child',
+				control: 'food-ready',
+				featureId: 'child-workflow',
+				completesOn: 'ChildWorkflowExecutionStarted'
+			},
+			{
+				id: 'complete-delivery',
+				control: 'complete-delivery',
+				featureId: 'child-workflow',
+				completesOn: 'WorkflowExecutionCompleted'
+			}
+		]
+	},
+	{
+		id: SCENARIO_ID.Retry,
+		title: 'Watch activity retry',
+		summary:
+			'Use the transient-failure payment fixture to show Temporal retrying an activity without workflow-side retry loops.',
+		steps: [
+			{
+				id: 'activity-completes-after-retry',
+				control: 'start-order',
+				featureId: 'activities-retry',
+				completesOn: 'ActivityTaskCompleted'
+			}
+		]
+	},
+	{
+		id: SCENARIO_ID.TimeoutRefund,
+		title: 'Let the restaurant timeout refund the order',
+		summary:
+			'Start an order and do not accept it; the durable timer fires and compensation refunds the payment.',
+		steps: [
+			{
+				id: 'restaurant-deadline',
+				control: 'start-order',
+				featureId: 'timers-durable-sleep',
+				completesOn: 'TimerStarted'
+			}
+		]
+	},
+	{
+		id: SCENARIO_ID.UpdateRejection,
+		title: 'Reject an invalid update',
+		summary:
+			'Try to change the address after delivery begins so the update validator rejects before the handler mutates state.',
+		steps: [
+			{
+				id: 'validator-rejects',
+				control: 'update-address',
+				featureId: 'updates-validators',
+				completesOn: 'WorkflowExecutionUpdateRejected'
+			}
+		]
+	},
+	{
+		id: SCENARIO_ID.ChildDelivery,
+		title: 'Inspect the delivery child workflow',
+		summary:
+			'Start delivery and inspect the child workflow as a separate execution in Temporal Web.',
+		steps: [
+			{
+				id: 'child-started',
+				control: 'food-ready',
+				featureId: 'child-workflow',
+				completesOn: 'ChildWorkflowExecutionStarted'
+			}
+		]
+	},
+	{
+		id: SCENARIO_ID.WorkerRecovery,
+		title: 'Kill and restart the worker',
+		summary:
+			'Stop the worker while the workflow is waiting, then restart it and watch history replay restore execution.',
+		steps: [
+			{
+				id: 'worker-restarted',
+				control: 'kill-worker',
+				featureId: 'durable-recovery',
+				completesOn: 'WorkerRestarted'
+			}
+		]
+	},
+	{
+		id: SCENARIO_ID.ContinueAsNew,
+		title: 'Compact a long history',
+		summary:
+			'Run with a low history-compaction threshold and send courier location updates until ContinueAsNew starts a fresh run.',
+		steps: [
+			{
+				id: 'continued-as-new',
+				control: 'update-location',
+				featureId: 'continue-as-new',
+				completesOn: 'WorkflowExecutionContinuedAsNew'
+			}
+		]
+	},
+	{
+		id: SCENARIO_ID.ReplaySafety,
+		title: 'Replay the recorded history',
+		summary:
+			'Use the workflow test replayer to prove the workflow code is deterministic against a real event history.',
+		steps: [
+			{
+				id: 'query-timeline',
+				control: 'query-timeline',
+				featureId: 'replay-safety',
+				completesOn: 'QueryCompleted'
+			}
+		]
+	}
+] as const satisfies readonly Scenario[];
 
 // ---------------------------------------------------------------------------
 // Workflow event types (live event rail)

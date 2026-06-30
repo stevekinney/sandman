@@ -7,14 +7,30 @@
  *  - The editor panel is present.
  *  - The control plane panel is present.
  *
- * These tests do NOT require a live E2B sandbox — they verify structure only.
- * The iframe will contain the proxy's 502 error page when no sandbox is
- * registered, which is the expected state during CI without E2B credentials.
+ * These tests do NOT require a live E2B sandbox — they verify structure only,
+ * and mock the Temporal UI proxy when asserting iframe behavior.
  */
 
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 const TEST_SESSION_ID = 'e2e-test-session-iframe';
+
+async function mockReadySandbox(page: Page): Promise<void> {
+	await page.route(new RegExp(`/api/sandbox/${TEST_SESSION_ID}/status$`), async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ status: 'ready', errorMessage: null })
+		});
+	});
+	await page.route(`**/sbx/${TEST_SESSION_ID}/ui/`, async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'text/html',
+			body: '<!doctype html><title>Temporal Web UI</title>'
+		});
+	});
+}
 
 test('session page renders the Sandman heading', async ({ page }) => {
 	await page.goto(`/${TEST_SESSION_ID}`);
@@ -27,6 +43,7 @@ test('session page shows the sandbox ID in the header', async ({ page }) => {
 });
 
 test('TemporalUiFrame renders an iframe whose src is the proxied path', async ({ page }) => {
+	await mockReadySandbox(page);
 	await page.goto(`/${TEST_SESSION_ID}`);
 
 	// The iframe must be present in the DOM with the correct same-origin proxy src.

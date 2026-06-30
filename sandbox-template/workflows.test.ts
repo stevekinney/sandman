@@ -46,7 +46,15 @@ import type {
 	OrderSnapshot,
 	SubscriptionInput
 } from './shared.ts';
-import { CUSTOMER_TIER, FEATURE_ID, ORDER_STATUS, TASK_QUEUE } from './shared.ts';
+import {
+	CUSTOMER_TIER,
+	FEATURE_ID,
+	ORDER_STATUS,
+	SCENARIOS,
+	SCENARIO_ID,
+	TASK_QUEUE,
+	WORKFLOW_EVENT_TYPE
+} from './shared.ts';
 import * as activities from './activities.ts';
 
 // ---------------------------------------------------------------------------
@@ -467,7 +475,18 @@ describe('queries', () => {
 		await handle.signal(restaurantAcceptedSignal, { estimatedPrepMinutes: 2 });
 		await handle.signal(foodReadySignal, {});
 
-		const timeline = await handle.query(getTimelineQuery);
+		let timeline = await handle.query(getTimelineQuery);
+		for (let i = 0; i < 20; i++) {
+			if (
+				timeline.some(
+					(entry) => entry.eventType === WORKFLOW_EVENT_TYPE.ChildWorkflowExecutionStarted
+				)
+			) {
+				break;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			timeline = await handle.query(getTimelineQuery);
+		}
 		expect(timeline.length).toBeGreaterThan(0);
 		// Each entry has required fields
 		for (const entry of timeline) {
@@ -478,6 +497,12 @@ describe('queries', () => {
 				status: expect.any(String)
 			});
 		}
+		const eventTypes = timeline.map((entry) => entry.eventType).filter((eventType) => eventType);
+		expect(eventTypes).toContain(WORKFLOW_EVENT_TYPE.WorkflowExecutionStarted);
+		expect(eventTypes).toContain(WORKFLOW_EVENT_TYPE.ActivityTaskCompleted);
+		expect(eventTypes).toContain(WORKFLOW_EVENT_TYPE.TimerStarted);
+		expect(eventTypes).toContain(WORKFLOW_EVENT_TYPE.WorkflowExecutionSignaled);
+		expect(eventTypes).toContain(WORKFLOW_EVENT_TYPE.ChildWorkflowExecutionStarted);
 
 		// Complete delivery
 		await driveToDelivered(handle, input);
@@ -827,6 +852,43 @@ describe('replay safety', () => {
 });
 
 // ---------------------------------------------------------------------------
+// ContinueAsNew — order history compaction scenario
+// ---------------------------------------------------------------------------
+
+describe('orderFoodWorkflow – continueAsNew', () => {
+	it('uses a demo threshold to continue as new without re-running payment', async () => {
+		const input = makeInput({
+			historyCompactionThreshold: 2
+		});
+		const [handle] = await startOrder(input);
+
+		await handle.signal(restaurantAcceptedSignal, { estimatedPrepMinutes: 2 });
+		await handle.signal(foodReadySignal, {});
+
+		const deliveryWorkflowId = `delivery-${input.orderId}`;
+		for (let i = 0; i < 20; i++) {
+			try {
+				await env.client.workflow.getHandle(deliveryWorkflowId).describe();
+				break;
+			} catch {
+				await new Promise((resolve) => setTimeout(resolve, 200));
+			}
+		}
+
+		await handle.signal(courierLocationUpdateSignal, { lat: 39.7392, lng: -104.9903 });
+		await handle.signal(courierLocationUpdateSignal, { lat: 39.7393, lng: -104.9904 });
+		await env.client.workflow.getHandle(deliveryWorkflowId).signal(deliveryCompletedSignal);
+
+		const result = await handle.result();
+
+		expect(result.status).toBe(ORDER_STATUS.Delivered);
+		expect(result.locationUpdateCount).toBe(2);
+		expect(result.continueAsNewPending).toBe(false);
+		expect(result.attemptCounts['chargePayment']).toBe(1);
+	}, 30_000);
+});
+
+// ---------------------------------------------------------------------------
 // Subscription workflow — continueAsNew carrying state
 // ---------------------------------------------------------------------------
 
@@ -931,6 +993,13 @@ describe('contract parity', () => {
 		const contractIds = new Set(FEATURES.map((f) => f.id));
 		const sharedIds = new Set(Object.values(FEATURE_ID));
 		expect(sharedIds).toEqual(contractIds);
+	});
+
+	it('shared.ts scenario ids and scenario list match workflow-api.ts', async () => {
+		const { SCENARIOS: contractScenarios, SCENARIO_ID: contractScenarioId } =
+			await import('../src/lib/contracts/workflow-api.ts');
+		expect(SCENARIO_ID).toEqual(contractScenarioId);
+		expect(SCENARIOS).toEqual(contractScenarios);
 	});
 });
 

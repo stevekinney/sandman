@@ -12,11 +12,13 @@
 	 * API calls show errors).
 	 */
 	import type { PageData } from './$types';
-	import type { WorkflowRun } from '$lib/components/control-plane/types';
+	import type { CommandLogEntry, WorkflowRun } from '$lib/components/control-plane/types';
 	import type { TimelineEntry } from '$lib/contracts/workflow-api';
+	import type { WorkflowEvent } from '$lib/contracts/events';
 	import Editor from '$lib/components/editor/editor.svelte';
 	import TemporalUiFrame from '$lib/components/temporal-ui/temporal-ui-frame.svelte';
 	import ControlPlane from '$lib/components/control-plane/control-plane.svelte';
+	import CommandInspector from '$lib/components/control-plane/command-inspector.svelte';
 	import { FetchController } from '$lib/components/control-plane/fetch-controller';
 	import { GuidedTour, TourState } from '$lib/components/explainer';
 	import Button from '@lostgradient/cinder/button';
@@ -38,13 +40,19 @@
 	// run via `onstarted` since it owns the start-order form.
 	let run = $state<WorkflowRun | null>(null);
 	let timelineEntries = $state<TimelineEntry[]>([]);
+	let workflowEvents = $state<WorkflowEvent[]>([]);
+	let commandLogEntries = $state<CommandLogEntry[]>([]);
 	let sandboxStatus = $state<string>('provisioning');
 	let sandboxStatusError = $state<string | null>(null);
+	let lastFedTimelineWorkflowId: string | null = null;
+	let lastFedTimelineEntryIndex = -1;
 	const sandboxFailureMessage = $derived(
 		getSandboxStatusFailureMessage(sandboxStatus, sandboxStatusError)
 	);
 	const sandboxUnusable = $derived(isSandboxUnusable(sandboxStatus));
 	const inviteRequired = $derived(sandboxStatus === 'authentication-required');
+	const latestWorkflowEvent = $derived(workflowEvents.at(-1));
+	const recommendedControl = $derived(tourState.currentStep?.control ?? 'start-order');
 
 	$effect(() => {
 		const sandboxId = data.sandboxId;
@@ -90,13 +98,17 @@
 		// re-subscribes if the sandbox (and thus the controller) identity changes.
 		const activeController = controller;
 		if (run === null) return;
-		const workflowId = run.workflowId;
+		const activeRun = run;
+		const workflowId = activeRun.workflowId;
 		let cancelled = false;
 
 		async function poll(): Promise<void> {
 			try {
 				const entries = await activeController.query(workflowId, 'getTimeline');
-				if (!cancelled && Array.isArray(entries)) timelineEntries = entries;
+				if (!cancelled && Array.isArray(entries)) {
+					timelineEntries = entries;
+					feedTimelineEvents(activeRun, entries);
+				}
 			} catch {
 				// No live sandbox / worker yet — keep the last known entries.
 			}
@@ -109,6 +121,54 @@
 			clearInterval(handle);
 		};
 	});
+
+	function feedTimelineEvents(activeRun: WorkflowRun, entries: TimelineEntry[]): void {
+		if (lastFedTimelineWorkflowId !== activeRun.workflowId) {
+			lastFedTimelineWorkflowId = activeRun.workflowId;
+			lastFedTimelineEntryIndex = -1;
+		}
+
+		for (const entry of entries) {
+			if (entry.index <= lastFedTimelineEntryIndex || entry.eventType === undefined) continue;
+			handleWorkflowEvent({
+				sequence: entry.index,
+				type: entry.eventType,
+				timestamp: entry.timestamp,
+				workflowId: activeRun.workflowId,
+				payload: {
+					description: entry.description,
+					status: entry.status,
+					featureId: entry.featureId
+				}
+			});
+			lastFedTimelineEntryIndex = entry.index;
+		}
+	}
+
+	function handleRunStarted(nextRun: WorkflowRun): void {
+		run = nextRun;
+		timelineEntries = [];
+		workflowEvents = [];
+		commandLogEntries = [];
+		lastFedTimelineWorkflowId = nextRun.workflowId;
+		lastFedTimelineEntryIndex = -1;
+	}
+
+	function handleWorkflowEvent(event: WorkflowEvent): void {
+		tourState.feed(event);
+		workflowEvents = [...workflowEvents, event];
+	}
+
+	function handleCommandEntry(entry: CommandLogEntry): void {
+		const existingIndex = commandLogEntries.findIndex((candidate) => candidate.id === entry.id);
+		if (existingIndex === -1) {
+			commandLogEntries = [...commandLogEntries, entry];
+			return;
+		}
+		commandLogEntries = commandLogEntries.map((candidate, index) =>
+			index === existingIndex ? entry : candidate
+		);
+	}
 </script>
 
 <div class="sandman-session">
@@ -137,12 +197,24 @@
 			<Editor sandboxId={data.sandboxId} />
 		</section>
 
+		<section class="panel panel--inspector" aria-label="Command and history inspector">
+			<CommandInspector entries={commandLogEntries} latestEvent={latestWorkflowEvent} />
+		</section>
+
 		<section class="panel panel--temporal-ui" aria-label="Temporal Web UI">
 			<TemporalUiFrame sandboxId={data.sandboxId} {sandboxStatus} />
 		</section>
 
 		<aside class="panel panel--control" aria-label="Control plane and guided tour">
-			<ControlPlane {controller} {timelineEntries} onstarted={(r) => (run = r)} />
+			<ControlPlane
+				{controller}
+				{timelineEntries}
+				{recommendedControl}
+				events={workflowEvents}
+				onstarted={handleRunStarted}
+				onworkflowevent={handleWorkflowEvent}
+				oncommand={handleCommandEntry}
+			/>
 			<div class="guided-tour-panel">
 				<GuidedTour
 					progress={{
@@ -239,8 +311,8 @@
 
 	.session-panels {
 		display: grid;
-		grid-template-columns: minmax(22rem, 0.92fr) minmax(32rem, 1.08fr);
-		grid-template-rows: minmax(30rem, 1.2fr) minmax(18rem, 0.8fr);
+		grid-template-columns: minmax(21rem, 0.82fr) minmax(26rem, 1fr) minmax(24rem, 0.88fr);
+		grid-template-rows: minmax(24rem, 1fr) minmax(18rem, 0.72fr);
 		flex: 1;
 		min-height: 0;
 		overflow: hidden;
@@ -254,8 +326,15 @@
 	}
 
 	.panel--editor {
+		grid-column: 1;
 		grid-row: 1 / span 2;
 		overflow: hidden;
+	}
+
+	.panel--inspector {
+		grid-column: 2;
+		grid-row: 1;
+		background: #08111f;
 	}
 
 	.panel--temporal-ui {
@@ -286,8 +365,8 @@
 		--color-border: #334155;
 		min-width: 0;
 		border-right: none;
-		grid-column: 2;
-		grid-row: 1;
+		grid-column: 3;
+		grid-row: 1 / span 2;
 		padding: 1rem 1.125rem;
 		overflow-y: auto;
 		display: flex;
@@ -341,10 +420,15 @@
 	@media (max-width: 64rem) {
 		.session-panels {
 			grid-template-columns: 1fr;
-			grid-template-rows: minmax(22rem, 0.8fr) minmax(28rem, 1fr) minmax(22rem, 0.8fr);
+			grid-template-rows:
+				minmax(22rem, 0.8fr)
+				minmax(20rem, 0.7fr)
+				minmax(28rem, 1fr)
+				minmax(22rem, 0.8fr);
 		}
 
 		.panel--editor,
+		.panel--inspector,
 		.panel--control,
 		.panel--temporal-ui {
 			grid-column: auto;

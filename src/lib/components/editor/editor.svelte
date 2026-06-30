@@ -262,6 +262,11 @@
 		<div class="editor-saving" aria-live="polite" aria-label="Saving file">Saving…</div>
 	{/if}
 
+	<section class="file-purpose" aria-label="Current file purpose">
+		<strong>{activeFile.name}</strong>
+		<span>{activeFile.purpose}</span>
+	</section>
+
 	<div class="editor-container" bind:this={editorContainer}></div>
 
 	<WorkerStatusStrip {workerStatus} />
@@ -338,6 +343,28 @@
 		color: #999;
 		background: #252525;
 		flex-shrink: 0;
+	}
+
+	.file-purpose {
+		display: flex;
+		gap: 0.5rem;
+		align-items: baseline;
+		padding: 0.5rem 0.75rem;
+		border-bottom: 1px solid #333;
+		background: #252526;
+		color: #d4d4d4;
+		font-size: 0.78rem;
+		line-height: 1.35;
+	}
+
+	.file-purpose strong {
+		color: #fff;
+		white-space: nowrap;
+	}
+
+	.file-purpose span {
+		min-width: 0;
+		color: #b8c0cc;
 	}
 
 	.editor-container {

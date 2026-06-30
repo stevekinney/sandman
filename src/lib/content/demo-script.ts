@@ -149,11 +149,11 @@ export const FEATURE_MAP: Record<FeatureId, FeatureEntry> = {
 	},
 	'search-attributes': {
 		id: 'search-attributes',
-		concept: 'Search Attributes',
+		concept: 'Queryable Business Snapshot',
 		oneLiner:
-			'Search attributes are indexed metadata that make workflow executions queryable by business dimensions.',
+			'The workflow snapshot exposes the business dimensions you would choose for indexed visibility.',
 		mechanic:
-			'Order status, customer tier, and restaurant ID are upserted as typed search attributes on every status transition, enabling Temporal list queries (e.g. "all PREPARING orders for restaurant X").',
+			'getStatus returns OrderStatus, CustomerTier, and RestaurantId in the snapshot. Those are the same dimensions you would promote to real Temporal search attributes when adding a visibility lesson.',
 		control: 'query-status',
 		query: 'getStatus'
 	},
@@ -201,7 +201,8 @@ export const SIGNAL_FEATURE: Record<SignalName, FeatureId> = {
 	restaurantRejected: 'signals',
 	foodReady: 'child-workflow',
 	courierLocationUpdate: 'heartbeats-cancellation',
-	addTip: 'signals'
+	addTip: 'signals',
+	deliveryCompleted: 'child-workflow'
 };
 
 /**
@@ -236,6 +237,7 @@ export const CONTROL_FEATURE: Record<ControlId, FeatureId> = {
 	'add-tip': 'signals',
 	'update-address': 'updates-validators',
 	'apply-promo': 'updates-validators',
+	'complete-delivery': 'child-workflow',
 	'kill-worker': 'durable-recovery',
 	'query-status': 'queries',
 	'query-timeline': 'replay-safety'
@@ -302,7 +304,7 @@ export type TourStep = {
  * Ordered list of guided-tour steps.
  * Each step advances only when its `completes` predicate matches an incoming
  * WorkflowEvent — progress is event-driven, not click-driven.
- * The final step ("durable-recovery") completes ONLY on a WorkerRestarted event.
+ * The durable-recovery step completes ONLY on a WorkerRestarted event.
  */
 export const TOUR: readonly TourStep[] = [
 	{
@@ -338,36 +340,28 @@ export const TOUR: readonly TourStep[] = [
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.WorkflowExecutionSignaled
 	},
 	{
-		id: 'child-workflow',
-		title: 'A child workflow handles delivery',
-		instruction:
-			'Once the food is ready, the delivery leg is handed off to a DeliveryWorkflow child. You can see it listed independently in the Temporal Web UI, demonstrating workflow composition.',
-		control: 'food-ready',
-		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.ChildWorkflowExecutionStarted
-	},
-	{
 		id: 'update-with-validator',
 		title: 'Updates with synchronous validators',
 		instruction:
-			'Try updating the delivery address. The validator runs synchronously before the handler — if the order is already in delivery the update is rejected instantly, with no workflow execution consumed.',
+			'Try updating the delivery address while the order is still preparing. The validator runs synchronously before the handler, so invalid updates are rejected before workflow execution is consumed.',
 		control: 'update-address',
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.WorkflowExecutionUpdateAccepted
 	},
 	{
-		id: 'search-attributes',
-		title: 'Search attributes make workflows queryable',
+		id: 'child-workflow',
+		title: 'A child workflow handles delivery',
 		instruction:
-			'Every status transition upserts typed search attributes (OrderStatus, CustomerTier, RestaurantId). Open the Temporal Web UI to run a list query like "all PREPARING orders for this restaurant".',
-		control: 'query-status',
-		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.MarkerRecorded
+			'Click "Food Ready" to hand the delivery leg off to a DeliveryWorkflow child. You can see it listed independently in the Temporal Web UI, demonstrating workflow composition.',
+		control: 'food-ready',
+		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.ChildWorkflowExecutionStarted
 	},
 	{
-		id: 'continue-as-new',
-		title: 'ContinueAsNew keeps event history bounded',
+		id: 'search-attributes',
+		title: 'Read the queryable business snapshot',
 		instruction:
-			'After 100 courier location updates the workflow calls continueAsNew, starting a fresh run with the current state. The new run appears as a continuation in the Temporal Web UI.',
-		control: 'update-location',
-		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.WorkflowExecutionContinuedAsNew
+			'Click "Get Status" to read the workflow snapshot, including OrderStatus, CustomerTier, and RestaurantId values that make the execution queryable by business dimensions.',
+		control: 'query-status',
+		completes: (e) => e.type === 'QueryCompleted'
 	},
 	{
 		id: 'durable-recovery',
@@ -377,5 +371,13 @@ export const TOUR: readonly TourStep[] = [
 		control: 'kill-worker',
 		// Completes ONLY on WorkerRestarted — WorkerKilled does not advance this step.
 		completes: (e) => e.type === 'WorkerRestarted'
+	},
+	{
+		id: 'complete-delivery',
+		title: 'Complete the delivery workflow',
+		instruction:
+			'Click "Complete Delivery" to signal the delivery child workflow. The parent workflow observes the child completion and reaches the Delivered terminal state.',
+		control: 'complete-delivery',
+		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.WorkflowExecutionCompleted
 	}
 ];
