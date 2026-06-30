@@ -16,6 +16,9 @@ import type { RequestHandler } from './$types';
 import type { SandboxClient, SandboxHandle } from '$lib/contracts/sandbox';
 import { writeAndRestart } from '$lib/components/editor/write-and-restart';
 import { FILE_DESCRIPTORS } from '$lib/components/editor/file-descriptors';
+import { assertSameOrigin } from '$lib/server/security/origin';
+import { requireOwnedSandbox } from '$lib/server/security/guards';
+import { resolveEntry } from '$lib/server/sandbox/registry';
 
 /** Function that resolves a live sandbox client and handle for a given sandbox ID. */
 export type SandboxResolver = (
@@ -26,10 +29,10 @@ export type SandboxResolver = (
  * Module-level sandbox resolver — injected by Track A via `configureSandboxResolver`.
  * Throws 503 until configured so the server starts cleanly without a real sandbox.
  */
-let _resolve: SandboxResolver = async () => {
-	throw new Error(
-		'Sandbox resolver not configured. Track A must call configureSandboxResolver() from hooks.server.ts.'
-	);
+let _resolve: SandboxResolver = async (id: string) => {
+	const entry = resolveEntry(id);
+	if (!entry) throw new Error(`Sandbox "${id}" is not registered.`);
+	return entry;
 };
 
 /**
@@ -58,8 +61,11 @@ function isFilesRequestBody(value: unknown): value is FilesRequestBody {
 	);
 }
 
-export const POST: RequestHandler = async ({ params, request }) => {
+export const POST: RequestHandler = async (event) => {
+	const { params, request } = event;
 	const { id } = params;
+	assertSameOrigin(event);
+	await requireOwnedSandbox(event, id);
 
 	let body: unknown;
 	try {

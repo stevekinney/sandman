@@ -11,6 +11,7 @@
 	import Button from '@lostgradient/cinder/button';
 	import '@lostgradient/cinder/button/styles';
 
+	let demoToken = $state('');
 	let provisioning = $state(false);
 	let provisionError = $state<string | null>(null);
 
@@ -19,6 +20,16 @@
 		provisionError = null;
 
 		try {
+			const sessionResponse = await fetch('/api/session', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ token: demoToken })
+			});
+			if (!sessionResponse.ok) {
+				provisionError = await sessionResponse.text();
+				return;
+			}
+
 			const response = await fetch('/api/sandbox', { method: 'POST' });
 			if (!response.ok) {
 				const text = await response.text();
@@ -48,10 +59,21 @@
 		<p role="alert" class="error">{provisionError}</p>
 	{/if}
 
+	<label class="token-field">
+		<span>Demo token</span>
+		<input
+			type="password"
+			autocomplete="off"
+			bind:value={demoToken}
+			disabled={provisioning}
+			placeholder="Enter demo token"
+		/>
+	</label>
+
 	<Button
 		class="start-button"
 		onclick={startSession}
-		disabled={provisioning}
+		disabled={provisioning || demoToken.trim().length === 0}
 		aria-busy={provisioning}
 		loading={provisioning}
 		variant="primary"
@@ -96,6 +118,24 @@
 		color: #dc2626;
 		font-size: 0.875rem;
 		max-width: 480px;
+	}
+
+	.token-field {
+		display: grid;
+		gap: 0.35rem;
+		width: min(100%, 22rem);
+		text-align: left;
+		color: #374151;
+		font-size: 0.875rem;
+	}
+
+	.token-field input {
+		width: 100%;
+		box-sizing: border-box;
+		border: 1px solid #d1d5db;
+		border-radius: 6px;
+		padding: 0.65rem 0.75rem;
+		font: inherit;
 	}
 
 	.landing :global(.start-button) {

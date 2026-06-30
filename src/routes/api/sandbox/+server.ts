@@ -13,24 +13,163 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { getSandboxRegistry, registerHandle } from '$lib/server/sandbox/registry';
+import { getProductionConfiguration } from '$lib/server/configuration';
+import { getDatabase } from '$lib/server/database/connection';
+import {
+	countActiveSandboxes,
+	countActiveSandboxesForSession,
+	createSandboxSession,
+	incrementRateLimitBucket,
+	updateSandboxStatus
+} from '$lib/server/database/repository';
+import { SANDBOX_SESSION_STATUS } from '$lib/server/database/schema';
+import { requireAuthenticatedDemoSession } from '$lib/server/security/guards';
+import { assertSameOrigin } from '$lib/server/security/origin';
+import { logError, logInfo, logWarning } from '$lib/server/logging';
 
-export const POST: RequestHandler = async () => {
-	const apiKey = process.env['E2B_API_KEY'];
-	if (!apiKey) {
+export const POST: RequestHandler = async (event) => {
+	assertSameOrigin(event);
+	const configuration = getProductionConfiguration();
+	const session = await requireAuthenticatedDemoSession(event);
+
+	if (!configuration.e2bApiKey) {
 		throw error(
 			503,
 			'E2B_API_KEY is not set — live sandboxes are unavailable. ' +
 				'Set E2B_API_KEY in your environment to enable provisioning.'
 		);
 	}
+	if (configuration.isProduction && !configuration.e2bTemplateId) {
+		throw error(503, 'E2B_TEMPLATE_ID is required in production');
+	}
+
+	const database = getDatabase();
+	const now = new Date();
+	const activeForSession = await countActiveSandboxesForSession(database, {
+		sessionId: session.id,
+		now
+	});
+	if (activeForSession >= configuration.maxActiveSandboxesPerSession) {
+		logWarning({
+			event: 'sandbox.provision.blocked',
+			sessionId: session.id,
+			status: 'session-limit'
+		});
+		throw error(429, 'This demo session already has an active sandbox');
+	}
+
+	const activeGlobal = await countActiveSandboxes(database, now);
+	if (activeGlobal >= configuration.maxActiveSandboxes) {
+		logWarning({
+			event: 'sandbox.provision.blocked',
+			sessionId: session.id,
+			status: 'global-limit'
+		});
+		throw error(429, 'Sandman is at its active sandbox limit');
+	}
+
+	const rateLimitCount = await incrementRateLimitBucket(database, {
+		key: `session-create:${session.tokenHash}`,
+		windowStart: getHourWindowStart(now),
+		now
+	});
+	if (rateLimitCount > configuration.sessionCreationsPerTokenPerHour) {
+		logWarning({ event: 'sandbox.provision.blocked', sessionId: session.id, status: 'rate-limit' });
+		throw error(429, 'This demo token has reached its hourly session creation limit');
+	}
 
 	const registry = getSandboxRegistry();
-	const handle = await registry.client.provision();
-	registerHandle(handle.id, handle);
+	const startedAt = performance.now();
+	let handle: Awaited<ReturnType<typeof registry.client.provision>> | undefined;
+	try {
+		handle = await registry.client.provision();
+		registerHandle(handle.id, handle);
+		await createSandboxSession(database, {
+			sessionId: session.id,
+			sandboxId: handle.id,
+			now,
+			expiresAt: new Date(now.getTime() + configuration.sessionTtlMs)
+		});
+	} catch (err) {
+		if (handle !== undefined) {
+			try {
+				await registry.client.terminate(handle);
+			} catch (terminationError) {
+				logError({
+					event: 'sandbox.provision_cleanup.failed',
+					sessionId: session.id,
+					sandboxId: handle.id,
+					status: 'error',
+					error: terminationError
+				});
+			}
+		}
+		logError({
+			event: 'sandbox.provision.failed',
+			sessionId: session.id,
+			sandboxId: handle?.id,
+			status: 'error',
+			durationMs: Math.round(performance.now() - startedAt),
+			error: err
+		});
+		throw error(503, 'Failed to provision sandbox');
+	}
+
+	logInfo({
+		event: 'sandbox.provision.succeeded',
+		sessionId: session.id,
+		sandboxId: handle.id,
+		status: 'provisioning',
+		durationMs: Math.round(performance.now() - startedAt)
+	});
 
 	// Bootstrap runs asynchronously so the page can render while the sandbox
 	// warms up. The worker status strip will reflect readiness.
-	void registry.client.bootstrap(handle);
+	void (async () => {
+		const bootstrapStartedAt = performance.now();
+		try {
+			await updateSandboxStatus(database, {
+				sandboxId: handle.id,
+				status: SANDBOX_SESSION_STATUS.Bootstrapping,
+				now: new Date()
+			});
+			const result = await registry.client.bootstrap(handle);
+			await updateSandboxStatus(database, {
+				sandboxId: handle.id,
+				status: result.ready ? SANDBOX_SESSION_STATUS.Ready : SANDBOX_SESSION_STATUS.Error,
+				now: new Date(),
+				errorMessage: result.ready ? undefined : 'Temporal server did not become ready'
+			});
+			logInfo({
+				event: 'sandbox.bootstrap.completed',
+				sessionId: session.id,
+				sandboxId: handle.id,
+				status: result.ready ? 'ready' : 'not-ready',
+				durationMs: Math.round(performance.now() - bootstrapStartedAt)
+			});
+		} catch (err) {
+			await updateSandboxStatus(database, {
+				sandboxId: handle.id,
+				status: SANDBOX_SESSION_STATUS.Error,
+				now: new Date(),
+				errorMessage: err instanceof Error ? err.message : String(err)
+			});
+			logError({
+				event: 'sandbox.bootstrap.failed',
+				sessionId: session.id,
+				sandboxId: handle.id,
+				status: 'error',
+				durationMs: Math.round(performance.now() - bootstrapStartedAt),
+				error: err
+			});
+		}
+	})();
 
 	return json({ sandboxId: handle.id });
 };
+
+function getHourWindowStart(now: Date): Date {
+	const windowStart = new Date(now);
+	windowStart.setUTCMinutes(0, 0, 0);
+	return windowStart;
+}

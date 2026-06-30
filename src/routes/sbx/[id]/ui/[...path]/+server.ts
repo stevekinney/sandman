@@ -17,6 +17,8 @@ import type { SandboxHandle } from '$lib/contracts/sandbox';
 import { PROXIED_UI_PORT, type AllowedUpstreamPort } from '$lib/contracts/proxy';
 import { proxyRequest } from '$lib/server/proxy/proxy';
 import type { ProxyError } from '$lib/contracts/proxy';
+import { requireOwnedSandbox } from '$lib/server/security/guards';
+import { resolveHandle } from '$lib/server/sandbox/registry';
 
 /** Resolves a live sandbox handle for the given sandbox ID. */
 export type SandboxResolver = (id: string) => Promise<SandboxHandle | null>;
@@ -26,7 +28,8 @@ export type SandboxResolver = (id: string) => Promise<SandboxHandle | null>;
  * `_configureSandboxResolver`. Returns `null` for all IDs until configured,
  * which causes the route to respond with 502.
  */
-let resolve: SandboxResolver = async (_id: string): Promise<SandboxHandle | null> => null;
+let resolve: SandboxResolver = async (id: string): Promise<SandboxHandle | null> =>
+	resolveHandle(id);
 
 /**
  * Wire up the sandbox handle resolver.
@@ -42,6 +45,7 @@ export function _configureSandboxResolver(resolver: SandboxResolver): void {
 
 async function handleRequest(event: Parameters<RequestHandler>[0]): Promise<Response> {
 	const { id, path } = event.params;
+	await requireOwnedSandbox(event, id);
 
 	let handle: SandboxHandle | null;
 	try {

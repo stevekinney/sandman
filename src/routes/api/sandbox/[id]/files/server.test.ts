@@ -12,6 +12,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { _configureSandboxResolver as configureSandboxResolver, POST } from './+server.ts';
 import type { SandboxClient, SandboxHandle, WorkerStatus } from '$lib/contracts/sandbox';
 
+vi.mock('$lib/server/security/origin', () => ({
+	assertSameOrigin: vi.fn()
+}));
+
+vi.mock('$lib/server/security/guards', () => ({
+	requireOwnedSandbox: vi.fn().mockResolvedValue('session-id')
+}));
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

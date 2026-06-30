@@ -73,6 +73,7 @@ export function createReaper(maxAgeMs: number, now: () => number = Date.now): Re
 				// Fire-and-forget; errors are swallowed in tick().
 				void tick();
 			}, intervalMs);
+			handle.unref?.();
 			return () => clearInterval(handle);
 		}
 	};

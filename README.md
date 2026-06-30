@@ -27,7 +27,14 @@ bun run dev
 | ------------------------ | ------------------------------------------------------------------------ |
 | `E2B_API_KEY`            | Your E2B API key — get one at https://e2b.dev                            |
 | `E2B_TEMPLATE_ID`        | _Optional._ ID of a prebuilt E2B template with Node + the Temporal CLI + worker deps baked in. If unset, Sandman uses the default base image and installs the Temporal CLI and worker dependencies on demand during bootstrap. |
+| `DATABASE_URL`           | Pooled Neon Postgres runtime connection string for demo sessions, sandbox ownership, and rate limits. |
+| `MIGRATION_DATABASE_URL` | Direct Neon Postgres connection string for `bun run db:migrate`; do not set as a Fly runtime secret. |
+| `SANDMAN_DEMO_TOKEN_SHA256` | SHA-256 hash of the shared demo token. Store the raw token outside the repo. |
+| `SANDMAN_SESSION_SECRET` | Signing secret for the HttpOnly demo session cookie. |
 | `SANDMAN_SESSION_TTL_MS` | Sandbox lifetime in milliseconds (default: `300000` / 5 min)             |
+| `SANDMAN_MAX_ACTIVE_SANDBOXES` | Global active sandbox limit (default: `20`) |
+| `SANDMAN_MAX_ACTIVE_SANDBOXES_PER_SESSION` | Active sandbox limit per browser session (default: `1`) |
+| `SANDMAN_SESSION_CREATIONS_PER_TOKEN_PER_HOUR` | Hourly sandbox creation limit per demo token (default: `5`) |
 
 ## Prebuilt E2B template (optional)
 
@@ -54,6 +61,9 @@ Sandman reads `E2B_TEMPLATE_ID` at startup. When set, it passes the template ID
 to `Sandbox.create()` so each session boots from the prebuilt image. When unset,
 it falls back to the default base image with on-demand install—no other config
 change required.
+
+`E2B_TEMPLATE_ID` is optional for local development but required when
+`NODE_ENV=production`.
 
 The template definition lives in `e2b.Dockerfile` at the repo root. Re-run
 `e2b template build` after updating Node, the Temporal CLI version, or the
@@ -97,6 +107,10 @@ node build/index.js   # run it; provide the same env vars (E2B_API_KEY, …)
 Sandman uses `@sveltejs/adapter-node` (pinned to the SvelteKit 3 `next` line to match
 `@sveltejs/kit`). It must be deployed as a Node **server**, not a static site — the
 `E2B_API_KEY` stays server-side and the reverse-proxy routes run on the server.
+
+Production deployment uses Fly.io and Neon. See `DEPLOYMENT.md` for the setup
+checklist and `documentation/deployment/containers.md` for the command-level
+runbook.
 
 ## Demo Script
 

@@ -3,8 +3,7 @@
  *
  * Tests what is verifiable without a live E2B sandbox:
  *  - The route exists and responds at the expected path.
- *  - When no sandbox is registered (default state), the route returns a typed
- *    502 ProxyError with the correct JSON shape.
+ *  - Unauthenticated browser requests cannot reach the proxy.
  *  - The error response never includes `e2b-traffic-access-token`.
  *
  * Full proxy round-trip tests (with a live upstream) are covered by the unit
@@ -14,32 +13,16 @@
  */
 
 import { expect, test } from '@playwright/test';
-import type { ProxyError } from '../src/lib/contracts/proxy';
-
-test('GET /sbx/[id]/ui/ returns 502 ProxyError when sandbox is not registered', async ({
-	request
-}) => {
+test('GET /sbx/[id]/ui/ rejects requests without a demo session', async ({ request }) => {
 	const response = await request.get('/sbx/nonexistent-sandbox/ui/');
-	expect(response.status()).toBe(502);
-
-	const body = (await response.json()) as ProxyError;
-	expect(body.status).toBe(502);
-	expect(typeof body.message).toBe('string');
-	expect(body.sandboxId).toBe('nonexistent-sandbox');
-	expect(typeof body.timestamp).toBe('string');
-	// Timestamp must be valid ISO-8601.
-	expect(new Date(body.timestamp).toISOString()).toBe(body.timestamp);
+	expect(response.status()).toBe(401);
 });
 
-test('GET /sbx/[id]/ui/nested/path returns 502 ProxyError with correct sandboxId', async ({
+test('GET /sbx/[id]/ui/nested/path rejects requests without a demo session', async ({
 	request
 }) => {
 	const response = await request.get('/sbx/sbx-test-id/ui/api/namespaces');
-	expect(response.status()).toBe(502);
-
-	const body = (await response.json()) as ProxyError;
-	expect(body.status).toBe(502);
-	expect(body.sandboxId).toBe('sbx-test-id');
+	expect(response.status()).toBe(401);
 });
 
 test('proxy error response never exposes e2b-traffic-access-token header', async ({ request }) => {
@@ -49,16 +32,10 @@ test('proxy error response never exposes e2b-traffic-access-token header', async
 	expect(tokenHeader).toBeUndefined();
 });
 
-test('POST /sbx/[id]/ui/ also returns 502 ProxyError when sandbox is not registered', async ({
-	request
-}) => {
+test('POST /sbx/[id]/ui/ rejects requests without a demo session', async ({ request }) => {
 	const response = await request.post('/sbx/no-sandbox/ui/', {
 		data: JSON.stringify({}),
 		headers: { 'content-type': 'application/json' }
 	});
-	expect(response.status()).toBe(502);
-
-	const body = (await response.json()) as ProxyError;
-	expect(body.status).toBe(502);
-	expect(body.sandboxId).toBe('no-sandbox');
+	expect(response.status()).toBe(401);
 });

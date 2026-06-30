@@ -12,6 +12,8 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { Sandbox } from 'e2b';
+import { assertSameOrigin } from '$lib/server/security/origin';
+import { requireOwnedSandbox } from '$lib/server/security/guards';
 
 /**
  * The worker process is a Node.js script started by the sandbox bootstrap.
@@ -21,7 +23,11 @@ import { Sandbox } from 'e2b';
  */
 const KILL_COMMAND = 'pkill -SIGTERM -f temporal-worker || true';
 
-export const POST: RequestHandler = async ({ params }) => {
+export const POST: RequestHandler = async (event) => {
+	const { params } = event;
+	assertSameOrigin(event);
+	await requireOwnedSandbox(event, params.id);
+
 	try {
 		const sandbox = await Sandbox.connect(params.id);
 		await sandbox.commands.run(KILL_COMMAND);

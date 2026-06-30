@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sandman Production Operations"
+  short_description: "Deploy and triage Sandman production."
+  default_prompt: "Use $sandman-production-operations to deploy Sandman or triage production deployment issues."

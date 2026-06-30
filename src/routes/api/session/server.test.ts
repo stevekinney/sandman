@@ -1,0 +1,65 @@
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { POST } from './+server.ts';
+import { hashDemoToken, SESSION_COOKIE_NAME } from '$lib/server/security/session';
+import { createDemoSession } from '$lib/server/database/repository';
+
+vi.mock('$lib/server/database/connection', () => ({
+	getDatabase: vi.fn(() => ({}))
+}));
+
+vi.mock('$lib/server/database/repository', () => ({
+	createDemoSession: vi.fn().mockResolvedValue(undefined)
+}));
+
+function makeEvent(body: unknown, origin = 'http://localhost') {
+	const event = {
+		url: new URL('http://localhost/api/session'),
+		request: new Request('http://localhost/api/session', {
+			method: 'POST',
+			headers: { origin, 'content-type': 'application/json' },
+			body: JSON.stringify(body)
+		}),
+		cookies: {
+			set: vi.fn()
+		}
+	};
+	return event as Parameters<typeof POST>[0] & typeof event;
+}
+
+describe('POST /api/session', () => {
+	beforeEach(() => {
+		vi.stubEnv('DATABASE_URL', 'postgres://example');
+		vi.stubEnv('SANDMAN_SESSION_SECRET', 'secret');
+		vi.stubEnv('SANDMAN_DEMO_TOKEN_SHA256', hashDemoToken('demo-token'));
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+		vi.clearAllMocks();
+	});
+
+	it('rejects invalid demo tokens', async () => {
+		await expect(POST(makeEvent({ token: 'wrong-token' }))).rejects.toMatchObject({ status: 401 });
+	});
+
+	it('rejects mismatched origins', async () => {
+		await expect(
+			POST(makeEvent({ token: 'demo-token' }, 'https://evil.example'))
+		).rejects.toMatchObject({
+			status: 403
+		});
+	});
+
+	it('creates a session and sets a signed HttpOnly cookie for a valid token', async () => {
+		const event = makeEvent({ token: 'demo-token' });
+		const response = await POST(event);
+
+		expect(response.status).toBe(201);
+		expect(createDemoSession).toHaveBeenCalledOnce();
+		expect(event.cookies.set).toHaveBeenCalledWith(
+			SESSION_COOKIE_NAME,
+			expect.any(String),
+			expect.objectContaining({ httpOnly: true, sameSite: 'lax', path: '/' })
+		);
+	});
+});

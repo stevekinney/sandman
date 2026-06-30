@@ -14,8 +14,12 @@ import type { RequestHandler } from './$types';
 import { Connection, Client } from '@temporalio/client';
 import { Sandbox } from 'e2b';
 import type { QueryName } from '$lib/contracts/workflow-api';
+import { requireOwnedSandbox } from '$lib/server/security/guards';
 
-export const GET: RequestHandler = async ({ url, params }) => {
+export const GET: RequestHandler = async (event) => {
+	const { url, params } = event;
+	await requireOwnedSandbox(event, params.id);
+
 	const workflowId = url.searchParams.get('workflowId');
 	const name = url.searchParams.get('name') as QueryName | null;
 

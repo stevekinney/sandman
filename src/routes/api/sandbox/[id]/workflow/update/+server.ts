@@ -15,8 +15,14 @@ import type { RequestHandler } from './$types';
 import { Connection, Client } from '@temporalio/client';
 import { Sandbox } from 'e2b';
 import type { UpdateName } from '$lib/contracts/workflow-api';
+import { assertSameOrigin } from '$lib/server/security/origin';
+import { requireOwnedSandbox } from '$lib/server/security/guards';
 
-export const POST: RequestHandler = async ({ request, params }) => {
+export const POST: RequestHandler = async (event) => {
+	const { request, params } = event;
+	assertSameOrigin(event);
+	await requireOwnedSandbox(event, params.id);
+
 	let body: unknown;
 	try {
 		body = await request.json();

@@ -11,6 +11,8 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { Sandbox } from 'e2b';
+import { assertSameOrigin } from '$lib/server/security/origin';
+import { requireOwnedSandbox } from '$lib/server/security/guards';
 
 /**
  * Re-launch the worker in the background. The exact start command depends
@@ -19,7 +21,11 @@ import { Sandbox } from 'e2b';
  */
 const RESTART_COMMAND = 'nohup bash /home/user/start-worker.sh > /tmp/worker.log 2>&1 &';
 
-export const POST: RequestHandler = async ({ params }) => {
+export const POST: RequestHandler = async (event) => {
+	const { params } = event;
+	assertSameOrigin(event);
+	await requireOwnedSandbox(event, params.id);
+
 	try {
 		const sandbox = await Sandbox.connect(params.id);
 		await sandbox.commands.run(RESTART_COMMAND);

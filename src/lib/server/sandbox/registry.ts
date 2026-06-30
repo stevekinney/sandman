@@ -10,6 +10,12 @@
 
 import type { SandboxClient, SandboxHandle } from '$lib/contracts/sandbox';
 import { createSandboxClient } from './client.ts';
+import { createReaper, type Reaper } from './reaper.ts';
+import { getProductionConfiguration } from '$lib/server/configuration';
+import { getDatabase } from '$lib/server/database/connection';
+import { updateSandboxStatus } from '$lib/server/database/repository';
+import { SANDBOX_SESSION_STATUS } from '$lib/server/database/schema';
+import { logError, logInfo } from '$lib/server/logging';
 
 /** An active sandbox session: its handle + the client that owns it. */
 export type SandboxEntry = {
@@ -23,6 +29,8 @@ type Registry = {
 	client: SandboxClient;
 	/** Map from sandbox ID to live handle. */
 	handles: Map<string, SandboxHandle>;
+	reaper: Reaper;
+	stopReaper: () => void;
 };
 
 let _registry: Registry | undefined;
@@ -35,9 +43,13 @@ let _registry: Registry | undefined;
  */
 export function getSandboxRegistry(): Registry {
 	if (!_registry) {
+		const configuration = getProductionConfiguration();
+		const reaper = createReaper(configuration.sessionTtlMs);
 		_registry = {
 			client: createSandboxClient(),
-			handles: new Map()
+			handles: new Map(),
+			reaper,
+			stopReaper: reaper.start(Math.min(configuration.sessionTtlMs, 60_000))
 		};
 	}
 	return _registry;
@@ -49,7 +61,35 @@ export function getSandboxRegistry(): Registry {
  * Call this after `client.provision()` succeeds.
  */
 export function registerHandle(sandboxId: string, handle: SandboxHandle): void {
-	getSandboxRegistry().handles.set(sandboxId, handle);
+	const registry = getSandboxRegistry();
+	registry.handles.set(sandboxId, handle);
+	registry.reaper.register(sandboxId, Date.now(), async () => {
+		const startedAt = performance.now();
+		try {
+			await registry.client.terminate(handle);
+			deregisterHandle(sandboxId);
+			await updateSandboxStatus(getDatabase(), {
+				sandboxId,
+				status: SANDBOX_SESSION_STATUS.Expired,
+				now: new Date()
+			});
+			logInfo({
+				event: 'sandbox.reaper.terminated',
+				sandboxId,
+				status: 'expired',
+				durationMs: Math.round(performance.now() - startedAt)
+			});
+		} catch (err) {
+			logError({
+				event: 'sandbox.reaper.failed',
+				sandboxId,
+				status: 'error',
+				durationMs: Math.round(performance.now() - startedAt),
+				error: err
+			});
+			throw err;
+		}
+	});
 }
 
 /**
@@ -57,7 +97,9 @@ export function registerHandle(sandboxId: string, handle: SandboxHandle): void {
  * Call this after `client.terminate()` succeeds.
  */
 export function deregisterHandle(sandboxId: string): void {
-	getSandboxRegistry().handles.delete(sandboxId);
+	const registry = getSandboxRegistry();
+	registry.handles.delete(sandboxId);
+	registry.reaper.unregister(sandboxId);
 }
 
 /**
