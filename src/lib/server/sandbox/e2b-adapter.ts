@@ -50,6 +50,7 @@ export type E2bSandboxSession = {
 
 /** Options for creating a new E2B sandbox session. */
 export type E2bCreateOpts = {
+	apiKey?: string;
 	timeoutMs?: number;
 	network?: {
 		allowPublicTraffic?: boolean;
@@ -160,7 +161,7 @@ export function wrapSandbox(sandbox: SandboxType): E2bSandboxSession {
 export function createRealE2bAdapter(): E2bAdapter {
 	return {
 		async create(opts = {}) {
-			const sandboxOpts = { timeoutMs: opts.timeoutMs, network: opts.network };
+			const sandboxOpts = { apiKey: opts.apiKey, timeoutMs: opts.timeoutMs, network: opts.network };
 			const sandbox =
 				opts.templateId !== undefined
 					? await Sandbox.create(opts.templateId, sandboxOpts)

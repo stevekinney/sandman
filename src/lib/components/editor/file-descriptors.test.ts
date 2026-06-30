@@ -7,26 +7,32 @@ import { describe, expect, it } from 'vitest';
 import { FILE_DESCRIPTORS, SHARED_FILE_NAME } from './file-descriptors.ts';
 
 describe('FILE_DESCRIPTORS', () => {
-	it('contains exactly four files', () => {
-		expect(FILE_DESCRIPTORS).toHaveLength(4);
+	it('contains exactly five files', () => {
+		expect(FILE_DESCRIPTORS).toHaveLength(5);
 	});
 
-	it('includes workflows.ts, activities.ts, worker.ts, and shared.ts', () => {
+	it('includes workflows.ts, signals.ts, activities.ts, worker.ts, and shared.ts', () => {
 		const names = FILE_DESCRIPTORS.map((f) => f.name);
 		expect(names).toContain('workflows.ts');
+		expect(names).toContain('signals.ts');
 		expect(names).toContain('activities.ts');
 		expect(names).toContain('worker.ts');
 		expect(names).toContain('shared.ts');
 	});
 
-	it('shared.ts is readOnly', () => {
+	it('shared.ts and signals.ts are readOnly', () => {
 		const shared = FILE_DESCRIPTORS.find((f) => f.name === SHARED_FILE_NAME);
+		const signals = FILE_DESCRIPTORS.find((f) => f.name === 'signals.ts');
 		expect(shared).toBeDefined();
+		expect(signals).toBeDefined();
 		expect(shared?.readOnly).toBe(true);
+		expect(signals?.readOnly).toBe(true);
 	});
 
 	it('workflows.ts, activities.ts, and worker.ts are NOT readOnly', () => {
-		const editables = FILE_DESCRIPTORS.filter((f) => f.name !== SHARED_FILE_NAME);
+		const editables = FILE_DESCRIPTORS.filter((f) =>
+			['workflows.ts', 'activities.ts', 'worker.ts'].includes(f.name)
+		);
 		expect(editables).toHaveLength(3);
 		for (const f of editables) {
 			expect(f.readOnly, `${f.name} should not be readOnly`).toBe(false);
@@ -65,6 +71,12 @@ describe('FILE_DESCRIPTORS — contents reflect the real deployed sandbox-templa
 		// lines distinguishes the two unambiguously.
 		const lineCount = (descriptor?.initialContents ?? '').split('\n').length;
 		expect(lineCount).toBeGreaterThan(200);
+	});
+
+	it('signals.ts initialContents comes from the deployed sandbox-template file', () => {
+		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'signals.ts');
+		expect(descriptor).toBeDefined();
+		expect(descriptor?.initialContents).toContain('defineSignal<[CancelOrderSignal]>');
 	});
 
 	it('activities.ts initialContents comes from the deployed sandbox-template file', () => {

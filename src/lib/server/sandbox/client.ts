@@ -31,7 +31,17 @@ const TEMPORAL_UI_PORT = 8233;
  * Command that starts the Temporal dev server inside the sandbox.
  * Must bind to 0.0.0.0 so it is reachable from outside the VM.
  */
-const TEMPORAL_SERVER_CMD = 'temporal server start-dev --ip 0.0.0.0 --db-filename /tmp/sandman.db';
+function getTemporalServerCommand(sandboxId: string): string {
+	return (
+		'temporal server start-dev ' +
+		'--ip 0.0.0.0 ' +
+		'--port 7233 ' +
+		'--ui-ip 0.0.0.0 ' +
+		'--ui-port 8233 ' +
+		`--ui-public-path /sbx/${sandboxId}/ui ` +
+		'--db-filename /tmp/sandman.db'
+	);
+}
 
 /** Command used to run the TypeScript worker inside the sandbox. */
 const WORKER_CMD = 'cd /app && node_modules/.bin/tsx worker.ts';
@@ -76,6 +86,10 @@ type InternalSandboxState = {
 export type SandboxClientOpts = {
 	/** E2B adapter to use. Defaults to the real adapter. */
 	adapter?: E2bAdapter;
+	/** API key passed directly to the E2B SDK. */
+	apiKey?: string;
+	/** Fetch implementation used to probe the public E2B Web UI host. */
+	publicUiFetch?: typeof fetch;
 	/**
 	 * Pre-loaded files to write into every sandbox during bootstrap.
 	 * If omitted, files are read from `sandbox-template/` at runtime.
@@ -201,6 +215,62 @@ async function waitForTemporal(
 	return false;
 }
 
+/**
+ * Polls the Temporal Web UI until it responds inside the sandbox.
+ * A sandbox is not user-ready unless both the gRPC API and Web UI are up.
+ */
+async function waitForTemporalUi(
+	session: E2bSandboxSession,
+	maxRetries: number,
+	delayMs: number
+): Promise<boolean> {
+	for (let attempt = 0; attempt < maxRetries; attempt++) {
+		const result = await session.commands.run(
+			`curl -fsS http://127.0.0.1:${TEMPORAL_UI_PORT}/ >/dev/null`,
+			{ timeoutMs: 5_000 }
+		);
+		if (result.exitCode === 0) return true;
+		if (delayMs > 0 && attempt < maxRetries - 1) {
+			await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+		}
+	}
+	return false;
+}
+
+/**
+ * Polls the public E2B host until the same URL the iframe uses serves the
+ * Temporal UI instead of E2B's transient closed-port placeholder.
+ */
+async function waitForPublicTemporalUi(
+	uiUrl: string,
+	accessToken: string,
+	publicUiFetch: typeof fetch,
+	maxRetries: number,
+	delayMs: number
+): Promise<boolean> {
+	for (let attempt = 0; attempt < maxRetries; attempt++) {
+		try {
+			const headers = new Headers();
+			if (accessToken.length > 0) headers.set('e2b-traffic-access-token', accessToken);
+			const response = await publicUiFetch(uiUrl, { cache: 'no-store', headers });
+			const text = await response.text();
+			if (
+				response.ok &&
+				!text.includes('Closed Port Error') &&
+				!text.includes('Connection refused')
+			) {
+				return true;
+			}
+		} catch {
+			// Keep polling until the E2B public proxy can reach the sandbox port.
+		}
+		if (delayMs > 0 && attempt < maxRetries - 1) {
+			await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+		}
+	}
+	return false;
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -213,6 +283,8 @@ async function waitForTemporal(
 export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient {
 	const {
 		adapter = createRealE2bAdapter(),
+		apiKey,
+		publicUiFetch = fetch,
 		sandboxTimeoutMs = DEFAULT_SANDBOX_TIMEOUT_MS,
 		maxReadinessRetries = DEFAULT_READINESS_RETRIES,
 		readinessDelayMs = DEFAULT_READINESS_DELAY_MS
@@ -232,8 +304,9 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 
 	async function provision(provisionOpts?: { timeoutMs?: number }): Promise<SandboxHandle> {
 		const session = await adapter.create({
+			apiKey,
 			timeoutMs: provisionOpts?.timeoutMs ?? sandboxTimeoutMs,
-			network: { allowPublicTraffic: false },
+			network: { allowPublicTraffic: true },
 			templateId
 		});
 
@@ -284,13 +357,27 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		await session.commands.run(INSTALL_CMD, { timeoutMs: 120_000 });
 
 		// 4. Start the Temporal dev server in the background.
-		const temporalHandle = await session.commands.start(TEMPORAL_SERVER_CMD, {
+		const temporalHandle = await session.commands.start(getTemporalServerCommand(handle.id), {
 			timeoutMs: 300_000
 		});
 		state.temporalPid = temporalHandle.pid;
 
-		// 5. Wait for gRPC (port 7233) to be reachable.
-		const ready = await waitForTemporal(session, maxReadinessRetries, readinessDelayMs);
+		// 5. Wait for gRPC (7233) and the Web UI (8233) to be reachable.
+		const temporalReady = await waitForTemporal(session, maxReadinessRetries, readinessDelayMs);
+		const localTemporalUiReady = temporalReady
+			? await waitForTemporalUi(session, maxReadinessRetries, readinessDelayMs)
+			: false;
+		const uiUrl = handle.host(TEMPORAL_UI_PORT);
+		const publicTemporalUiReady = localTemporalUiReady
+			? await waitForPublicTemporalUi(
+					uiUrl,
+					handle.accessToken,
+					publicUiFetch,
+					maxReadinessRetries,
+					readinessDelayMs
+				)
+			: false;
+		const ready = temporalReady && localTemporalUiReady && publicTemporalUiReady;
 
 		// 6. Start the worker in its own supervised background process.
 		const workerHandle = await session.commands.start(WORKER_CMD, { timeoutMs: 300_000 });
@@ -298,7 +385,7 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 
 		state.bootstrapped = true;
 
-		return { ready, uiUrl: handle.host(TEMPORAL_UI_PORT) };
+		return { ready, uiUrl };
 	}
 
 	// ------------------------------------------------------------------

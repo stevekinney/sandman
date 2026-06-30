@@ -2,6 +2,7 @@ import { neon } from '@neondatabase/serverless';
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/neon-http';
 import * as schema from './schema.ts';
+import { getProductionConfiguration } from '$lib/server/configuration';
 
 export type Database = ReturnType<typeof createDatabase>;
 
@@ -12,7 +13,7 @@ export function createDatabase(databaseUrl: string) {
 	return drizzle(client, { schema });
 }
 
-export function getDatabase(databaseUrl = process.env.DATABASE_URL): Database {
+export function getDatabase(databaseUrl = getProductionConfiguration().databaseUrl): Database {
 	if (!databaseUrl) {
 		throw new Error('DATABASE_URL is required');
 	}

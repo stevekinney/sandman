@@ -308,3 +308,48 @@ export const PROMO_CODES = {
 
 /** Type of a valid promo code key. */
 export type PromoCodeKey = keyof typeof PROMO_CODES;
+
+// ---------------------------------------------------------------------------
+// Browser demo globals
+// ---------------------------------------------------------------------------
+
+/**
+ * Keep the editable workflow files focused on Temporal behavior instead of long
+ * type-import lists. These aliases are ambient only; runtime values still need
+ * normal imports from this module.
+ */
+declare global {
+	type MoneyCents = import('./shared.ts').MoneyCents;
+	type CustomerTier = import('./shared.ts').CustomerTier;
+	type OrderStatus = import('./shared.ts').OrderStatus;
+	type OrderItem = import('./shared.ts').OrderItem;
+	type DeliveryAddress = import('./shared.ts').DeliveryAddress;
+	type PaymentMethod = import('./shared.ts').PaymentMethod;
+	type OrderInput = import('./shared.ts').OrderInput;
+	type SignalName = import('./shared.ts').SignalName;
+	type CancelOrderSignal = import('./shared.ts').CancelOrderSignal;
+	type RestaurantAcceptedSignal = import('./shared.ts').RestaurantAcceptedSignal;
+	type RestaurantRejectedSignal = import('./shared.ts').RestaurantRejectedSignal;
+	type FoodReadySignal = import('./shared.ts').FoodReadySignal;
+	type CourierLocationUpdate = import('./shared.ts').CourierLocationUpdate;
+	type AddTipSignal = import('./shared.ts').AddTipSignal;
+	type SignalPayloadMap = import('./shared.ts').SignalPayloadMap;
+	type QueryName = import('./shared.ts').QueryName;
+	type CourierInfo = import('./shared.ts').CourierInfo;
+	type CompensationRecord = import('./shared.ts').CompensationRecord;
+	type OrderSnapshot = import('./shared.ts').OrderSnapshot;
+	type TimelineEntry = import('./shared.ts').TimelineEntry;
+	type QueryReturnMap = import('./shared.ts').QueryReturnMap;
+	type UpdateName = import('./shared.ts').UpdateName;
+	type UpdateDeliveryAddressInput = import('./shared.ts').UpdateDeliveryAddressInput;
+	type UpdateDeliveryAddressResult = import('./shared.ts').UpdateDeliveryAddressResult;
+	type UpdateDeliveryAddressRejection = import('./shared.ts').UpdateDeliveryAddressRejection;
+	type ApplyPromoCodeInput = import('./shared.ts').ApplyPromoCodeInput;
+	type ApplyPromoCodeResult = import('./shared.ts').ApplyPromoCodeResult;
+	type ApplyPromoCodeRejection = import('./shared.ts').ApplyPromoCodeRejection;
+	type DeliveryInput = import('./shared.ts').DeliveryInput;
+	type DeliveryResult = import('./shared.ts').DeliveryResult;
+	type SubscriptionInput = import('./shared.ts').SubscriptionInput;
+	type FeatureId = import('./shared.ts').FeatureId;
+	type PromoCodeKey = import('./shared.ts').PromoCodeKey;
+}

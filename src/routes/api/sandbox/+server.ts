@@ -17,6 +17,7 @@ import { getProductionConfiguration } from '$lib/server/configuration';
 import { getDatabase } from '$lib/server/database/connection';
 import {
 	attachSandboxToReservation,
+	decrementRateLimitBucket,
 	incrementRateLimitBucket,
 	markSandboxReservationError,
 	reserveSandboxSlot,
@@ -45,9 +46,11 @@ export const POST: RequestHandler = async (event) => {
 
 	const database = getDatabase();
 	const now = new Date();
+	const rateLimitKey = `session-create:${session.tokenHash}`;
+	const rateLimitWindowStart = getHourWindowStart(now);
 	const rateLimitCount = await incrementRateLimitBucket(database, {
-		key: `session-create:${session.tokenHash}`,
-		windowStart: getHourWindowStart(now),
+		key: rateLimitKey,
+		windowStart: rateLimitWindowStart,
 		now
 	});
 	if (rateLimitCount > configuration.sessionCreationsPerTokenPerHour) {
@@ -63,6 +66,11 @@ export const POST: RequestHandler = async (event) => {
 		perSessionLimit: configuration.maxActiveSandboxesPerSession
 	});
 	if (reservation.status !== 'reserved') {
+		await decrementRateLimitBucket(database, {
+			key: rateLimitKey,
+			windowStart: rateLimitWindowStart,
+			now: new Date()
+		});
 		logWarning({
 			event: 'sandbox.provision.blocked',
 			sessionId: session.id,
@@ -93,6 +101,11 @@ export const POST: RequestHandler = async (event) => {
 			now: new Date(),
 			errorMessage: err instanceof Error ? err.message : String(err)
 		});
+		await decrementRateLimitBucket(database, {
+			key: rateLimitKey,
+			windowStart: rateLimitWindowStart,
+			now: new Date()
+		});
 		if (handle !== undefined) {
 			try {
 				await registry.client.terminate(handle);
@@ -115,7 +128,7 @@ export const POST: RequestHandler = async (event) => {
 			durationMs: Math.round(performance.now() - startedAt),
 			error: err
 		});
-		throw error(503, 'Failed to provision sandbox');
+		throw error(503, getProvisionFailureMessage(err));
 	}
 
 	logInfo({
@@ -175,4 +188,11 @@ function getHourWindowStart(now: Date): Date {
 	const windowStart = new Date(now);
 	windowStart.setUTCMinutes(0, 0, 0);
 	return windowStart;
+}
+
+function getProvisionFailureMessage(err: unknown): string {
+	if (err instanceof Error && err.name === 'AuthenticationError') {
+		return 'E2B_API_KEY is invalid or missing';
+	}
+	return 'Failed to provision sandbox';
 }

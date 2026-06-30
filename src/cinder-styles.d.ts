@@ -1,3 +1,5 @@
+declare module '@lostgradient/cinder/alert/styles';
+declare module '@lostgradient/cinder/badge/styles';
 declare module '@lostgradient/cinder/button/styles';
 declare module '@lostgradient/cinder/checkbox/styles';
 declare module '@lostgradient/cinder/form-field/styles';
@@ -6,5 +8,7 @@ declare module '@lostgradient/cinder/label/styles';
 declare module '@lostgradient/cinder/number-input/styles';
 declare module '@lostgradient/cinder/select/styles';
 declare module '@lostgradient/cinder/table/styles';
+declare module '@lostgradient/cinder/tab/styles';
+declare module '@lostgradient/cinder/tab-list/styles';
 declare module '@lostgradient/cinder/tabs/styles';
 declare module '@lostgradient/cinder/textarea/styles';

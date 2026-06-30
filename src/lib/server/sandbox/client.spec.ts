@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { createSandboxClient, loadDefaultTemplateFiles } from './client.ts';
 import { SANDBOX_STATUS } from '$lib/contracts/sandbox';
-import type { E2bAdapter, E2bSandboxSession } from './e2b-adapter.ts';
+import type { E2bAdapter, E2bCreateOpts, E2bSandboxSession } from './e2b-adapter.ts';
 import type { SandboxHandle } from '$lib/contracts/sandbox';
 
 // ---------------------------------------------------------------------------
@@ -17,6 +17,7 @@ import type { SandboxHandle } from '$lib/contracts/sandbox';
 // ---------------------------------------------------------------------------
 
 type CallRecord =
+	| { method: 'adapter.create'; opts: E2bCreateOpts }
 	| { method: 'files.write'; path: string; data: string }
 	| { method: 'commands.run'; cmd: string }
 	| { method: 'commands.start'; cmd: string; pid: number }
@@ -75,7 +76,8 @@ function createMockAdapter(sandboxId = 'mock-sandbox-id'): {
 	};
 
 	const adapter: E2bAdapter = {
-		async create() {
+		async create(opts = {}) {
+			calls.push({ method: 'adapter.create', opts });
 			return session;
 		}
 	};
@@ -98,6 +100,7 @@ function makeClient(sandboxId?: string): {
 	const { adapter, calls } = createMockAdapter(sandboxId);
 	const client = createSandboxClient({
 		adapter,
+		publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
 		templateFiles: { '/app/worker.ts': '// placeholder worker' },
 		maxReadinessRetries: 1,
 		readinessDelayMs: 0
@@ -130,6 +133,23 @@ describe('provision()', () => {
 		expect(handle.status).toBe(SANDBOX_STATUS.Provisioning);
 	});
 
+	it('passes the configured E2B API key to the adapter', async () => {
+		const { adapter, calls } = createMockAdapter();
+		const client = createSandboxClient({
+			adapter,
+			apiKey: 'e2b-local-key',
+			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
+			templateFiles: {}
+		});
+
+		await client.provision();
+
+		expect(calls).toContainEqual({
+			method: 'adapter.create',
+			opts: expect.objectContaining({ apiKey: 'e2b-local-key' })
+		});
+	});
+
 	it('returns a handle whose host() returns an https:// URL', async () => {
 		const { client } = makeClient('sbx-xyz');
 		const handle = await client.provision();
@@ -149,7 +169,7 @@ describe('provision()', () => {
 		expect(handle.accessToken).toBe('mock-access-token');
 	});
 
-	it('passes allowPublicTraffic:false to the adapter', async () => {
+	it('passes allowPublicTraffic:true to expose proxied Temporal Web UI traffic', async () => {
 		let capturedOpts: Parameters<E2bAdapter['create']>[0] | undefined;
 		const { adapter: baseAdapter } = createMockAdapter();
 		const adapter: E2bAdapter = {
@@ -160,12 +180,13 @@ describe('provision()', () => {
 		};
 		const client = createSandboxClient({
 			adapter,
+			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
 			templateFiles: {},
 			maxReadinessRetries: 1,
 			readinessDelayMs: 0
 		});
 		await client.provision();
-		expect(capturedOpts?.network?.allowPublicTraffic).toBe(false);
+		expect(capturedOpts?.network?.allowPublicTraffic).toBe(true);
 	});
 });
 
@@ -189,6 +210,7 @@ describe('provision() — templateId wiring', () => {
 		};
 		const client = createSandboxClient({
 			adapter,
+			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
 			templateFiles: {},
 			maxReadinessRetries: 1,
 			readinessDelayMs: 0,
@@ -211,6 +233,7 @@ describe('provision() — templateId wiring', () => {
 		// Create client AFTER stubbing the env var so the resolved templateId picks it up.
 		const client = createSandboxClient({
 			adapter,
+			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
 			templateFiles: {},
 			maxReadinessRetries: 1,
 			readinessDelayMs: 0
@@ -251,6 +274,7 @@ describe('provision() — templateId wiring', () => {
 		};
 		const client = createSandboxClient({
 			adapter,
+			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
 			templateFiles: {},
 			maxReadinessRetries: 1,
 			readinessDelayMs: 0,
@@ -345,11 +369,74 @@ describe('bootstrap()', () => {
 		expect(temporalCall?.cmd).toContain('--db-filename /tmp/sandman.db');
 	});
 
+	it('starts Temporal Web UI on 0.0.0.0:8233', () => {
+		const temporalCall = calls.find(
+			(c) => c.method === 'commands.start' && c.cmd.includes('temporal server start-dev')
+		) as Extract<CallRecord, { method: 'commands.start' }> | undefined;
+
+		expect(temporalCall?.cmd).toContain('--ui-ip 0.0.0.0');
+		expect(temporalCall?.cmd).toContain('--ui-port 8233');
+	});
+
+	it('starts Temporal Web UI with the proxied public path for the sandbox', () => {
+		const temporalCall = calls.find(
+			(c) => c.method === 'commands.start' && c.cmd.includes('temporal server start-dev')
+		) as Extract<CallRecord, { method: 'commands.start' }> | undefined;
+
+		expect(temporalCall?.cmd).toContain('--ui-public-path /sbx/mock-sandbox-id/ui ');
+	});
+
 	it('returns ready:true when the Temporal server responds to workflow list', async () => {
 		const { client: c2 } = makeClient('sbx-2');
 		const h2 = await c2.provision();
 		const result = await c2.bootstrap(h2);
 		expect(result.ready).toBe(true);
+	});
+
+	it('returns ready:false when the Temporal Web UI never responds', async () => {
+		const { adapter } = createMockAdapter('sbx-no-ui');
+		const client = createSandboxClient({
+			adapter: {
+				async create(opts) {
+					const session = await adapter.create(opts);
+					return {
+						...session,
+						commands: {
+							...session.commands,
+							async run(cmd, opts) {
+								if (cmd.includes('http://127.0.0.1:8233/')) {
+									return { exitCode: 7, stdout: '', stderr: 'connection refused' };
+								}
+								return session.commands.run(cmd, opts);
+							}
+						}
+					};
+				}
+			},
+			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
+			templateFiles: { '/app/worker.ts': '// placeholder worker' },
+			maxReadinessRetries: 1,
+			readinessDelayMs: 0
+		});
+		const handle = await client.provision();
+		const result = await client.bootstrap(handle);
+		expect(result.ready).toBe(false);
+	});
+
+	it('returns ready:false while the public E2B host still serves the closed-port placeholder', async () => {
+		const { adapter } = createMockAdapter('sbx-public-not-ready');
+		const client = createSandboxClient({
+			adapter,
+			publicUiFetch: async () =>
+				new Response('Closed Port Error: Connection refused on port 8233', { status: 200 }),
+			templateFiles: { '/app/worker.ts': '// placeholder worker' },
+			maxReadinessRetries: 1,
+			readinessDelayMs: 0
+		});
+
+		const handle = await client.provision();
+		const result = await client.bootstrap(handle);
+		expect(result.ready).toBe(false);
 	});
 
 	it('returns a uiUrl on the same host as handle.host(8233)', async () => {
@@ -431,6 +518,7 @@ describe('bootstrap() — Temporal CLI install path', () => {
 					return session;
 				}
 			},
+			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
 			templateFiles: { '/app/worker.ts': '// placeholder' },
 			maxReadinessRetries: 1,
 			readinessDelayMs: 0
@@ -590,6 +678,7 @@ describe('loadDefaultTemplateFiles()', () => {
 		expect(keys).toContain('/app/package.json');
 		expect(keys).toContain('/app/worker.ts');
 		expect(keys).toContain('/app/workflows.ts');
+		expect(keys).toContain('/app/signals.ts');
 		expect(keys).toContain('/app/activities.ts');
 		expect(keys).toContain('/app/shared.ts');
 		expect(keys).toContain('/app/client.ts');

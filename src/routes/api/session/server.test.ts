@@ -28,7 +28,7 @@ function makeEvent(body: unknown, origin = 'http://localhost') {
 
 describe('POST /api/session', () => {
 	beforeEach(() => {
-		vi.stubEnv('DATABASE_URL', 'postgres://example');
+		vi.stubEnv('DATABASE_URL', 'postgresql://user:password@example.com/sandman');
 		vi.stubEnv('SANDMAN_SESSION_SECRET', 'secret');
 		vi.stubEnv('SANDMAN_DEMO_TOKEN_SHA256', hashDemoToken('demo-token'));
 	});
@@ -48,6 +48,18 @@ describe('POST /api/session', () => {
 		).rejects.toMatchObject({
 			status: 403
 		});
+	});
+
+	it('rejects invalid database configuration before creating a session', async () => {
+		vi.stubEnv('DATABASE_URL', 'postgres://example');
+
+		await expect(POST(makeEvent({ token: 'demo-token' }))).rejects.toMatchObject({
+			status: 503,
+			body: {
+				message: 'DATABASE_URL is not a valid Postgres connection string'
+			}
+		});
+		expect(createDemoSession).not.toHaveBeenCalled();
 	});
 
 	it('creates a session and sets a signed HttpOnly cookie for a valid token', async () => {

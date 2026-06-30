@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { POST } from './+server';
 import {
+	decrementRateLimitBucket,
 	incrementRateLimitBucket,
 	markSandboxReservationError,
 	reserveSandboxSlot
@@ -24,6 +25,7 @@ vi.mock('$lib/server/security/guards', () => ({
 
 vi.mock('$lib/server/database/repository', () => ({
 	attachSandboxToReservation: vi.fn().mockResolvedValue(undefined),
+	decrementRateLimitBucket: vi.fn().mockResolvedValue(0),
 	incrementRateLimitBucket: vi.fn().mockResolvedValue(1),
 	markSandboxReservationError: vi.fn().mockResolvedValue(undefined),
 	reserveSandboxSlot: vi.fn().mockResolvedValue({
@@ -87,6 +89,12 @@ describe('POST /api/sandbox', () => {
 		await expect(POST(makeEvent())).rejects.toMatchObject({ status: 429 });
 
 		expect(incrementRateLimitBucket).toHaveBeenCalledOnce();
+		expect(decrementRateLimitBucket).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				key: 'session-create:token-hash'
+			})
+		);
 		expect(vi.mocked(getSandboxRegistry)).not.toHaveBeenCalled();
 	});
 
@@ -120,5 +128,42 @@ describe('POST /api/sandbox', () => {
 				errorMessage: 'provision exploded'
 			})
 		);
+		expect(decrementRateLimitBucket).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({
+				key: 'session-create:token-hash'
+			})
+		);
+	});
+
+	it('reports invalid E2B credentials clearly when provisioning is rejected by E2B', async () => {
+		const authenticationError = new Error('Invalid API key format');
+		authenticationError.name = 'AuthenticationError';
+		const registry = {
+			client: {
+				provision: vi.fn().mockRejectedValue(authenticationError),
+				bootstrap: vi.fn(),
+				exec: vi.fn(),
+				restartWorker: vi.fn(),
+				terminate: vi.fn(),
+				writeFile: vi.fn()
+			},
+			handles: new Map(),
+			reaper: {
+				register: vi.fn(),
+				unregister: vi.fn(),
+				tick: vi.fn(),
+				start: vi.fn()
+			},
+			stopReaper: vi.fn()
+		};
+		vi.mocked(getSandboxRegistry).mockReturnValueOnce(registry);
+
+		await expect(POST(makeEvent())).rejects.toMatchObject({
+			status: 503,
+			body: {
+				message: 'E2B_API_KEY is invalid or missing'
+			}
+		});
 	});
 });

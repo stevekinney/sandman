@@ -34,6 +34,27 @@ describe('TemporalUiFrame', () => {
 		await expect.element(page.getByText('Temporal UI')).toBeInTheDocument();
 	});
 
+	it('shows a Sandman startup state before the Temporal Web UI is reachable', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 502 })));
+		render(TemporalUiFrame, {
+			props: { sandboxId: 'sbx-test-123', sandboxStatus: 'bootstrapping' }
+		});
+
+		await expect.element(page.getByText('Starting Temporal services')).toBeInTheDocument();
+		await expect
+			.element(page.getByText('Temporal server, worker, and Web UI', { exact: false }))
+			.toBeInTheDocument();
+		await expect.element(page.getByTitle('Temporal Web UI')).not.toBeInTheDocument();
+	});
+
+	it('shows a connecting state when the sandbox is ready but the Web UI probe has not succeeded', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 502 })));
+		render(TemporalUiFrame, { props: { sandboxId: 'sbx-test-123', sandboxStatus: 'ready' } });
+
+		await expect.element(page.getByText('Connecting to Temporal UI')).toBeInTheDocument();
+		await expect.element(page.getByTitle('Temporal Web UI')).not.toBeInTheDocument();
+	});
+
 	it('derives the proxied URL from the sandboxId prop', async () => {
 		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 200 })));
 		render(TemporalUiFrame, { props: { sandboxId: 'sbx-custom-id' } });
@@ -55,6 +76,20 @@ describe('TemporalUiFrame', () => {
 		await expect
 			.element(page.getByRole('status'))
 			.toHaveAttribute('data-cinder-state', 'connected');
+	});
+
+	it('uses GET for the reachability probe because Temporal rejects HEAD', async () => {
+		const fetchSpy = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+		vi.stubGlobal('fetch', fetchSpy);
+		render(TemporalUiFrame, { props: { sandboxId: 'sbx-test-123' } });
+
+		await expect
+			.element(page.getByRole('status'))
+			.toHaveAttribute('data-cinder-state', 'connected');
+		expect(fetchSpy).toHaveBeenCalledWith(
+			'/sbx/sbx-test-123/ui/',
+			expect.objectContaining({ cache: 'no-store', method: 'GET' })
+		);
 	});
 
 	it('shows disconnected state when the probe returns 502', async () => {

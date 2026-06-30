@@ -1,5 +1,5 @@
 /**
- * file-descriptors.ts — static description of the four files managed by the Monaco editor.
+ * file-descriptors.ts — static description of the files managed by the Monaco editor.
  *
  * Each descriptor carries the file name, Monaco language identifier, starter
  * content, and a readOnly flag. `shared.ts` is always read-only because it
@@ -14,6 +14,7 @@
  */
 
 import workflowsRaw from '../../../../sandbox-template/workflows.ts?raw';
+import signalsRaw from '../../../../sandbox-template/signals.ts?raw';
 import activitiesRaw from '../../../../sandbox-template/activities.ts?raw';
 import workerRaw from '../../../../sandbox-template/worker.ts?raw';
 import sharedRaw from '../../../../sandbox-template/shared.ts?raw';
@@ -34,7 +35,7 @@ export type FileDescriptor = {
 };
 
 /**
- * The four files surfaced in the Monaco editor.
+ * The files surfaced in the Monaco editor.
  * Order matters: the first entry is selected by default.
  */
 export const FILE_DESCRIPTORS: FileDescriptor[] = [
@@ -43,6 +44,12 @@ export const FILE_DESCRIPTORS: FileDescriptor[] = [
 		language: 'typescript',
 		initialContents: workflowsRaw,
 		readOnly: false
+	},
+	{
+		name: 'signals.ts',
+		language: 'typescript',
+		initialContents: signalsRaw,
+		readOnly: true
 	},
 	{
 		name: 'activities.ts',

@@ -46,7 +46,10 @@ export function getSandboxRegistry(): Registry {
 		const configuration = getProductionConfiguration();
 		const reaper = createReaper(configuration.sessionTtlMs);
 		_registry = {
-			client: createSandboxClient(),
+			client: createSandboxClient({
+				apiKey: configuration.e2bApiKey,
+				templateId: configuration.e2bTemplateId
+			}),
 			handles: new Map(),
 			reaper,
 			stopReaper: reaper.start(Math.min(configuration.sessionTtlMs, 60_000))

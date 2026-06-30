@@ -15,9 +15,11 @@
 	 * surface limited to explicit user actions. The parent learns the active run
 	 * via the `onstarted` callback so it can scope its poll to the workflow ID.
 	 */
+	import Badge from '@lostgradient/cinder/badge';
+	import '@lostgradient/cinder/badge/styles';
 	import type { TemporalController, WorkflowRun } from './types.ts';
 	import type { WorkflowEvent } from '$lib/contracts/events';
-	import type { TimelineEntry } from '$lib/contracts/workflow-api';
+	import type { OrderInput, TimelineEntry } from '$lib/contracts/workflow-api';
 	import StartOrderForm from './start-order-form.svelte';
 	import SignalControls from './signal-controls.svelte';
 	import QueryPanel from './query-panel.svelte';
@@ -49,9 +51,40 @@
 	} = $props();
 
 	let workflowRun = $state<WorkflowRun | null>(null);
+	let activeOrder = $state<OrderInput | null>(null);
+	const deliveryFeeCents = 299;
+	const progressSteps = [
+		{ label: 'Placed', statuses: ['CREATED', 'VALIDATING', 'PAYMENT_CHARGED'] },
+		{ label: 'Confirmed', statuses: ['AWAITING_RESTAURANT', 'RESTAURANT_ACCEPTED'] },
+		{ label: 'Preparing', statuses: ['PREPARING', 'READY_FOR_PICKUP'] },
+		{ label: 'Courier', statuses: ['COURIER_ASSIGNED', 'OUT_FOR_DELIVERY'] },
+		{ label: 'Delivered', statuses: ['DELIVERED', 'COMPLETED'] }
+	];
+	const latestTimelineEntry = $derived(timelineEntries.at(-1));
+	const progressLabel = $derived(latestTimelineEntry?.description ?? 'Workflow started');
+	const activeProgressIndex = $derived.by(() => {
+		const status = latestTimelineEntry?.status;
+		if (!status) return 0;
+		const index = progressSteps.findIndex((step) => step.statuses.includes(status));
+		return index === -1 ? 0 : index;
+	});
 
-	function handleStarted(run: WorkflowRun): void {
+	function formatMoney(cents: number): string {
+		return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(
+			cents / 100
+		);
+	}
+
+	function getOrderTotal(order: OrderInput): number {
+		return (
+			order.items.reduce((sum, item) => sum + item.quantity * item.unitPriceCents, 0) +
+			deliveryFeeCents
+		);
+	}
+
+	function handleStarted(run: WorkflowRun, order: OrderInput): void {
 		workflowRun = run;
+		activeOrder = order;
 		onstarted?.(run);
 	}
 </script>
@@ -60,7 +93,44 @@
 	{#if workflowRun === null}
 		<StartOrderForm {controller} onstarted={handleStarted} />
 	{:else}
-		<header class="run-header">
+		{#if activeOrder}
+			<section class="order-tracker" aria-labelledby="active-order-title">
+				<div class="tracker-heading">
+					<div>
+						<p class="eyebrow">Live order</p>
+						<h2 id="active-order-title">Kitsune Kitchen is working on it</h2>
+					</div>
+					<Badge variant="info">{progressLabel}</Badge>
+				</div>
+
+				<ol class="progress-steps" aria-label="Order progress">
+					{#each progressSteps as step, index (step.label)}
+						<li
+							class:complete={index < activeProgressIndex}
+							class:current={index === activeProgressIndex}
+						>
+							<span>{index + 1}</span>
+							{step.label}
+						</li>
+					{/each}
+				</ol>
+
+				<div class="active-order-line">
+					<div>
+						<p class="active-order-item">
+							{activeOrder.items.map((item) => `${item.quantity}x ${item.name}`).join(', ')}
+						</p>
+						<p class="active-order-detail">
+							{activeOrder.deliveryAddress.street}, {activeOrder.deliveryAddress.city}
+						</p>
+					</div>
+					<p class="active-order-total">{formatMoney(getOrderTotal(activeOrder))}</p>
+				</div>
+			</section>
+		{/if}
+
+		<header class="run-header" aria-label="Temporal workflow run">
+			<h3>Temporal controls</h3>
 			<dl class="run-meta">
 				<div>
 					<dt>Workflow ID</dt>
@@ -86,3 +156,104 @@
 		<OrderTimeline entries={timelineEntries} />
 	{/if}
 </div>
+
+<style>
+	.order-tracker {
+		padding: 1rem;
+		border: 1px solid var(--cinder-border, #334155);
+		border-radius: 0.5rem;
+		background: var(--cinder-surface, #0f172a);
+	}
+
+	.tracker-heading {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+
+	.order-tracker h2,
+	.run-header h3 {
+		margin: 0;
+		font-size: 1rem;
+		line-height: 1.25;
+		color: var(--cinder-text, #e2e8f0);
+	}
+
+	.eyebrow {
+		margin: 0 0 0.25rem;
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: 0;
+		color: var(--cinder-text-muted, #94a3b8);
+	}
+
+	.progress-steps {
+		display: grid;
+		grid-template-columns: repeat(5, minmax(0, 1fr));
+		gap: 0.35rem;
+		margin: 1rem 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.progress-steps li {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+		align-items: center;
+		min-width: 0;
+		color: var(--cinder-text-muted, #94a3b8);
+		font-size: 0.72rem;
+		text-align: center;
+	}
+
+	.progress-steps span {
+		display: grid;
+		place-items: center;
+		width: 1.5rem;
+		height: 1.5rem;
+		border: 1px solid var(--cinder-border, #334155);
+		border-radius: 999px;
+		color: var(--cinder-text-muted, #94a3b8);
+		background: color-mix(in srgb, var(--cinder-surface, #0f172a), #000 12%);
+	}
+
+	.progress-steps li.complete,
+	.progress-steps li.current {
+		color: var(--cinder-text, #e2e8f0);
+	}
+
+	.progress-steps li.complete span,
+	.progress-steps li.current span {
+		border-color: #22c55e;
+		color: #052e16;
+		background: #86efac;
+	}
+
+	.active-order-line {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+
+	.active-order-item,
+	.active-order-total {
+		margin: 0;
+		font-weight: 700;
+		color: var(--cinder-text, #e2e8f0);
+	}
+
+	.active-order-detail {
+		margin: 0.2rem 0 0;
+		color: var(--cinder-text-muted, #94a3b8);
+	}
+
+	.run-header {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		padding-top: 0.5rem;
+	}
+</style>

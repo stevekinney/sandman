@@ -1,5 +1,4 @@
 <script lang="ts">
-	import favicon from '$lib/assets/favicon.svg';
 	// Global Cinder styles — loaded here so all routes get the design tokens.
 	// Individual component /styles sub-paths are not used because svelte-check
 	// cannot resolve them; the root styles import covers all components.
@@ -9,7 +8,7 @@
 </script>
 
 <svelte:head>
-	<link rel="icon" href={favicon} />
+	<link rel="icon" href="https://fav.farm/⏳" />
 </svelte:head>
 
 {@render children()}

@@ -1,15 +1,15 @@
 <script lang="ts">
 	/**
-	 * +page.svelte — three-surface Sandman session layout.
+	 * +page.svelte — two-column Sandman session layout.
 	 *
-	 * Renders the demo side-by-side:
-	 *  - Left:   Monaco editor (code edit → hot-restart worker)
-	 *  - Centre: Temporal Web UI (reverse-proxied iframe via Track B)
-	 *  - Right:  Control plane (signals/queries/updates/chaos) + guided tour
+	 * Renders the demo as a two-column workbench:
+	 *  - Left: code editor (code edit → hot-restart worker)
+	 *  - Right: demo controls and guided tour above the Temporal Web UI
 	 *
 	 * The sandboxId from the URL param drives all three surfaces.
 	 * Components degrade gracefully when no live sandbox is provisioned
-	 * (editor saves fail with 503, iframe shows 502, API calls show errors).
+	 * (editor saves fail with 503, Temporal UI shows startup/error states,
+	 * API calls show errors).
 	 */
 	import type { PageData } from './$types';
 	import type { WorkflowRun } from '$lib/components/control-plane/types';
@@ -19,7 +19,14 @@
 	import ControlPlane from '$lib/components/control-plane/control-plane.svelte';
 	import { FetchController } from '$lib/components/control-plane/fetch-controller';
 	import { GuidedTour, TourState } from '$lib/components/explainer';
-	import { getSandboxStatusFailureMessage, isSandboxUnusable } from './session-status';
+	import Button from '@lostgradient/cinder/button';
+	import '@lostgradient/cinder/button/styles';
+	import {
+		getSandboxStatusDisplayLabel,
+		getSandboxStatusFailureMessage,
+		getSandboxStatusResponseFailureMessage,
+		isSandboxUnusable
+	} from './session-status';
 
 	let { data }: { data: PageData } = $props();
 
@@ -37,6 +44,7 @@
 		getSandboxStatusFailureMessage(sandboxStatus, sandboxStatusError)
 	);
 	const sandboxUnusable = $derived(isSandboxUnusable(sandboxStatus));
+	const inviteRequired = $derived(sandboxStatus === 'authentication-required');
 
 	$effect(() => {
 		const sandboxId = data.sandboxId;
@@ -46,7 +54,14 @@
 			try {
 				const response = await fetch(`/api/sandbox/${sandboxId}/status`);
 				if (!response.ok) {
-					if (!cancelled) sandboxStatusError = await response.text();
+					const responseBody = await response.text();
+					if (!cancelled) {
+						if (response.status === 401) sandboxStatus = 'authentication-required';
+						sandboxStatusError = getSandboxStatusResponseFailureMessage(
+							response.status,
+							responseBody
+						);
+					}
 					return;
 				}
 				const payload = (await response.json()) as {
@@ -100,12 +115,20 @@
 	<header class="session-header">
 		<h1 class="session-title">Sandman</h1>
 		<span class="session-id" title="Sandbox ID">{data.sandboxId}</span>
-		<span class="session-status" data-status={sandboxStatus}>{sandboxStatus}</span>
+		<span class="session-status" data-status={sandboxStatus}>
+			{getSandboxStatusDisplayLabel(sandboxStatus)}
+		</span>
 	</header>
 
 	{#if sandboxFailureMessage}
 		<div class="session-error" role="alert">
-			{sandboxFailureMessage}
+			<div class="session-error__copy">
+				<strong>{inviteRequired ? 'Invite session required' : 'Sandbox unavailable'}</strong>
+				<span>{sandboxFailureMessage}</span>
+			</div>
+			{#if inviteRequired}
+				<Button href="/" label="Enter invite code" variant="secondary" size="sm" />
+			{/if}
 		</div>
 	{/if}
 
@@ -115,7 +138,7 @@
 		</section>
 
 		<section class="panel panel--temporal-ui" aria-label="Temporal Web UI">
-			<TemporalUiFrame sandboxId={data.sandboxId} />
+			<TemporalUiFrame sandboxId={data.sandboxId} {sandboxStatus} />
 		</section>
 
 		<aside class="panel panel--control" aria-label="Control plane and guided tour">
@@ -139,16 +162,18 @@
 		flex-direction: column;
 		height: 100dvh;
 		overflow: hidden;
+		background: #020617;
+		color: var(--cinder-text, #e5e7eb);
 	}
 
 	.session-header {
 		display: flex;
 		align-items: center;
-		gap: 1rem;
-		padding: 0.5rem 1rem;
-		background: #1e1e1e;
-		color: #ccc;
-		border-bottom: 1px solid #333;
+		gap: 0.875rem;
+		padding: 0.625rem 0.875rem;
+		background: #111827;
+		color: var(--cinder-text-subtle, #cbd5e1);
+		border-bottom: 1px solid #334155;
 		flex-shrink: 0;
 	}
 
@@ -162,17 +187,18 @@
 	.session-id {
 		font-family: monospace;
 		font-size: 0.75rem;
-		color: #888;
+		color: var(--cinder-text-muted, #94a3b8);
 	}
 
 	.session-status {
 		margin-left: auto;
-		border: 1px solid #4b5563;
+		border: 1px solid #475569;
 		border-radius: 999px;
-		padding: 0.2rem 0.55rem;
+		padding: 0.25rem 0.65rem;
 		font-size: 0.75rem;
 		text-transform: capitalize;
-		color: #d1d5db;
+		font-weight: 600;
+		color: var(--cinder-text, #e2e8f0);
 	}
 
 	.session-status[data-status='ready'] {
@@ -188,43 +214,87 @@
 	}
 
 	.session-error {
-		background: #fef2f2;
-		border-bottom: 1px solid #fecaca;
-		color: #991b1b;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		background: #2a1113;
+		border-bottom: 1px solid #7f1d1d;
+		color: #fecaca;
 		padding: 0.6rem 1rem;
 		font-size: 0.875rem;
 	}
 
+	.session-error__copy {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.35rem 0.75rem;
+		align-items: baseline;
+		min-width: 0;
+	}
+
+	.session-error__copy strong {
+		color: #fee2e2;
+	}
+
 	.session-panels {
 		display: grid;
-		grid-template-columns: 1fr 1fr 380px;
+		grid-template-columns: minmax(22rem, 0.92fr) minmax(32rem, 1.08fr);
+		grid-template-rows: minmax(30rem, 1.2fr) minmax(18rem, 0.8fr);
 		flex: 1;
 		min-height: 0;
 		overflow: hidden;
+		background: #020617;
 	}
 
 	.panel {
 		min-height: 0;
 		overflow: auto;
-		border-right: 1px solid #333;
+		border-right: 1px solid #1f2937;
 	}
 
 	.panel--editor {
+		grid-row: 1 / span 2;
 		overflow: hidden;
 	}
 
 	.panel--temporal-ui {
+		grid-column: 2;
+		grid-row: 2;
+		min-width: 0;
 		overflow: hidden;
+		border-top: 1px solid #1f2937;
+		background: #020817;
 	}
 
 	.panel--control {
+		--cinder-surface: #0f172a;
+		--cinder-surface-raised: #111f32;
+		--cinder-surface-inset: #0b1422;
+		--cinder-surface-hover: #17263a;
+		--cinder-border: #334155;
+		--cinder-border-muted: #1f2937;
+		--cinder-border-strong: #4b647f;
+		--cinder-text: #e2e8f0;
+		--cinder-text-muted: #94a3b8;
+		--cinder-text-subtle: #64748b;
+		--cinder-text-disabled: #475569;
+		--color-text-primary: #e2e8f0;
+		--color-text-secondary: #cbd5e1;
+		--color-text-muted: #94a3b8;
+		--color-surface-subtle: #111827;
+		--color-border: #334155;
+		min-width: 0;
 		border-right: none;
-		padding: 1rem;
+		grid-column: 2;
+		grid-row: 1;
+		padding: 1rem 1.125rem;
 		overflow-y: auto;
 		display: flex;
 		flex-direction: column;
-		gap: 1.5rem;
-		background: #fafafa;
+		gap: 1.25rem;
+		background: #0f172a;
+		color: var(--cinder-text, #e2e8f0);
 	}
 
 	.session-panels[data-unusable='true'] .panel {
@@ -232,7 +302,58 @@
 	}
 
 	.guided-tour-panel {
-		border-top: 1px solid #e5e7eb;
-		padding-top: 1.5rem;
+		border-top: 1px solid #334155;
+		padding-top: 1.25rem;
+	}
+
+	.panel--control :global(.cinder-input),
+	.panel--control :global(.cinder-number-input),
+	.panel--control :global(.cinder-select) {
+		background: #111f32;
+		border-color: #334155;
+		color: #e2e8f0;
+	}
+
+	.panel--control :global(.cinder-input-field__label),
+	.panel--control :global(.cinder-select-field__label),
+	.panel--control :global(label),
+	.panel--control :global(h2),
+	.panel--control :global(h3) {
+		color: #e2e8f0;
+	}
+
+	.panel--control :global(p),
+	.panel--control :global(li),
+	.panel--control :global(dt),
+	.panel--control :global(dd) {
+		color: #cbd5e1;
+	}
+
+	.panel--control :global(.guided-tour__detail) {
+		background: #111827;
+		border-color: #334155;
+	}
+
+	.panel--control :global(.guided-tour__step--active) {
+		color: #f8fafc;
+	}
+
+	@media (max-width: 64rem) {
+		.session-panels {
+			grid-template-columns: 1fr;
+			grid-template-rows: minmax(22rem, 0.8fr) minmax(28rem, 1fr) minmax(22rem, 0.8fr);
+		}
+
+		.panel--editor,
+		.panel--control,
+		.panel--temporal-ui {
+			grid-column: auto;
+			grid-row: auto;
+		}
+
+		.panel {
+			border-right: none;
+			border-bottom: 1px solid #1f2937;
+		}
 	}
 </style>

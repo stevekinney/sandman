@@ -62,8 +62,17 @@ test('demo token exchange provisions a sandbox and redirects to the session page
 	await tokenInput.fill(DEMO_TOKEN);
 
 	await expect(tokenInput).toHaveValue(DEMO_TOKEN);
-	await expect(tokenInput).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-	await expect(tokenInput).toHaveCSS('color', 'rgb(17, 24, 39)');
+	const tokenInputStyles = await tokenInput.evaluate((element) => {
+		const styles = getComputedStyle(element);
+		return {
+			backgroundColor: styles.backgroundColor,
+			color: styles.color,
+			colorScheme: styles.colorScheme
+		};
+	});
+	expect(tokenInputStyles.colorScheme).toContain('dark');
+	expect(tokenInputStyles.backgroundColor).not.toBe('rgb(255, 255, 255)');
+	expect(tokenInputStyles.color).not.toBe('rgb(17, 24, 39)');
 
 	await page.getByRole('button', { name: 'New Session' }).click();
 
@@ -74,6 +83,20 @@ test('demo token exchange provisions a sandbox and redirects to the session page
 	await expect(page.locator('[aria-label="Code editor"]')).toBeVisible();
 	await expect(page.locator('[aria-label="Temporal Web UI"]')).toBeVisible();
 	await expect(page.locator('[aria-label="Control plane and guided tour"]')).toBeVisible();
+});
+
+test('pressing Enter in the demo token field submits the session form', async ({ page }) => {
+	const { tokenRequests } = await mockSessionExchange(page);
+	await mockSandboxCreation(page);
+	await mockSandboxStatus(page, SANDBOX_ID, 'ready');
+
+	await page.goto('/');
+	const tokenInput = page.getByLabel('Demo token');
+	await tokenInput.fill(DEMO_TOKEN);
+	await tokenInput.press('Enter');
+
+	await expect(page).toHaveURL(`/${SANDBOX_ID}`);
+	expect(tokenRequests).toEqual([DEMO_TOKEN]);
 });
 
 test('invalid demo token keeps the user on the landing page with a clear error', async ({
@@ -92,7 +115,48 @@ test('invalid demo token keeps the user on the landing page with a clear error',
 	await page.getByRole('button', { name: 'New Session' }).click();
 
 	await expect(page).toHaveURL('/');
-	await expect(page.getByRole('alert')).toContainText('Invalid demo token');
+	await expect(page.getByRole('alert')).toContainText(
+		'That invite code did not work. Check the code and try again.'
+	);
+});
+
+test('configuration failures show a user-facing alert instead of raw server JSON', async ({
+	page
+}) => {
+	await page.route('**/api/session', async (route) => {
+		await route.fulfill({
+			status: 503,
+			contentType: 'application/json',
+			body: JSON.stringify({ message: 'SANDMAN_SESSION_SECRET is not configured' })
+		});
+	});
+
+	await page.goto('/');
+	await page.getByLabel('Demo token').fill(DEMO_TOKEN);
+	await page.getByRole('button', { name: 'New Session' }).click();
+
+	const alert = page.getByRole('alert');
+	await expect(alert).toContainText('Sandman is not ready to start new sessions right now.');
+	await expect(alert).not.toContainText('SANDMAN_SESSION_SECRET');
+	await expect(alert).not.toContainText('{"message"');
+});
+
+test('database configuration failures show actionable setup copy', async ({ page }) => {
+	await page.route('**/api/session', async (route) => {
+		await route.fulfill({
+			status: 503,
+			contentType: 'application/json',
+			body: JSON.stringify({ message: 'DATABASE_URL is not a valid Postgres connection string' })
+		});
+	});
+
+	await page.goto('/');
+	await page.getByLabel('Demo token').fill(DEMO_TOKEN);
+	await page.getByRole('button', { name: 'New Session' }).click();
+
+	const alert = page.getByRole('alert');
+	await expect(alert).toContainText('Sandman is not ready to start new sessions right now.');
+	await expect(alert).not.toContainText('DATABASE_URL');
 });
 
 test('sandbox creation failures keep the user on the landing page with the server message', async ({
@@ -113,6 +177,19 @@ test('sandbox creation failures keep the user on the landing page with the serve
 	await expect(page.getByRole('alert')).toContainText(
 		'This demo token has reached its hourly session creation limit'
 	);
+});
+
+test('sandbox E2B configuration failures show actionable setup copy', async ({ page }) => {
+	await mockSessionExchange(page);
+	await mockSandboxCreation(page, 503, { message: 'E2B_API_KEY is invalid or missing' });
+
+	await page.goto('/');
+	await page.getByLabel('Demo token').fill(DEMO_TOKEN);
+	await page.getByRole('button', { name: 'New Session' }).click();
+
+	const alert = page.getByRole('alert');
+	await expect(alert).toContainText('Sandman is not ready to start new sessions right now.');
+	await expect(alert).not.toContainText('E2B_API_KEY');
 });
 
 test('bootstrap failure is displayed on the session page', async ({ page }) => {

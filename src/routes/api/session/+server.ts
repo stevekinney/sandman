@@ -31,6 +31,9 @@ export const POST: RequestHandler = async (event) => {
 	if (!configuration.demoTokenHash) throw error(503, 'SANDMAN_DEMO_TOKEN_SHA256 is not configured');
 	if (!configuration.sessionSecret) throw error(503, 'SANDMAN_SESSION_SECRET is not configured');
 	if (!configuration.databaseUrl) throw error(503, 'DATABASE_URL is not configured');
+	if (!isPostgresConnectionString(configuration.databaseUrl)) {
+		throw error(503, 'DATABASE_URL is not a valid Postgres connection string');
+	}
 
 	let body: unknown;
 	try {
@@ -71,3 +74,12 @@ export const POST: RequestHandler = async (event) => {
 	logInfo({ event: 'demo_session.created', sessionId, status: 'created' });
 	return json({ ok: true }, { status: 201 });
 };
+
+function isPostgresConnectionString(value: string): boolean {
+	try {
+		const url = new URL(value);
+		return url.protocol === 'postgresql:' && url.hostname.length > 0 && url.pathname.length > 1;
+	} catch {
+		return false;
+	}
+}

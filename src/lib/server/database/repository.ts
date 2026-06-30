@@ -334,6 +334,23 @@ export async function incrementRateLimitBucket(
 	return resetRows[0]?.count ?? 1;
 }
 
+export async function decrementRateLimitBucket(
+	database: Database,
+	input: { key: string; windowStart: Date; now: Date }
+): Promise<number> {
+	const rows = await database
+		.update(rateLimitBucket)
+		.set({
+			count: sql`greatest(${rateLimitBucket.count} - 1, 0)`,
+			updatedAt: input.now
+		})
+		.where(
+			and(eq(rateLimitBucket.key, input.key), eq(rateLimitBucket.windowStart, input.windowStart))
+		)
+		.returning({ count: rateLimitBucket.count });
+	return rows[0]?.count ?? 0;
+}
+
 export async function markExpiredSandboxes(
 	database: Database,
 	input: { now: Date }

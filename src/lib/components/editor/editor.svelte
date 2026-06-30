@@ -2,13 +2,17 @@
 	/**
 	 * editor.svelte — multi-file Monaco editor for Sandman.
 	 *
-	 * Surfaces four files (workflows.ts, activities.ts, worker.ts, shared.ts)
+	 * Surfaces the sandbox template files shown in the editor tab strip.
 	 * with tab switching, debounced saves, Cmd/Ctrl+S explicit saves, per-file
 	 * determinism markers, and a WorkerStatusStrip fed by the restart response.
 	 *
 	 * Monaco is loaded lazily in the browser only.
 	 */
+	import Tab from '@lostgradient/cinder/tab';
+	import TabList from '@lostgradient/cinder/tab-list';
 	import Tabs from '@lostgradient/cinder/tabs';
+	import '@lostgradient/cinder/tab/styles';
+	import '@lostgradient/cinder/tab-list/styles';
 	import '@lostgradient/cinder/tabs/styles';
 	import { FILE_DESCRIPTORS } from '$lib/components/editor/file-descriptors';
 	import { getDeterminismMarkers } from '$lib/components/editor/determinism-guard';
@@ -35,6 +39,7 @@
 	);
 	let workerStatus = $state<WorkerStatus | null>(null);
 	let isLoading = $state(false);
+	let isMounted = $derived(false);
 	let editorContainer = $state<HTMLDivElement | undefined>();
 
 	// ---------------------------------------------------------------------------
@@ -98,9 +103,49 @@
 		);
 	}
 
+	function isRecord(value: unknown): value is Record<string, unknown> {
+		return typeof value === 'object' && value !== null;
+	}
+
+	function callMonacoDefaultsMethod(method: unknown, receiver: object, argument: object): void {
+		if (typeof method !== 'function') return;
+		Reflect.apply(method, receiver, [argument]);
+	}
+
+	function configureSandboxTypeScript(monaco: typeof Monaco): void {
+		const maybeTypeScript: unknown = monaco.languages.typescript;
+		if (!isRecord(maybeTypeScript)) return;
+		const maybeDefaults = maybeTypeScript.typescriptDefaults;
+		if (!isRecord(maybeDefaults)) return;
+
+		callMonacoDefaultsMethod(maybeDefaults.setCompilerOptions, maybeDefaults, {
+			target: 99,
+			module: 99,
+			moduleResolution: 2,
+			allowImportingTsExtensions: true,
+			allowNonTsExtensions: true,
+			esModuleInterop: true,
+			skipLibCheck: true,
+			strict: true,
+			noEmit: true
+		});
+
+		// The sandbox worker validates package and relative imports against the real
+		// install. Monaco only has these in-memory files, so semantic validation
+		// produces false module-resolution errors for legitimate sandbox imports.
+		callMonacoDefaultsMethod(maybeDefaults.setDiagnosticsOptions, maybeDefaults, {
+			noSemanticValidation: true,
+			noSyntaxValidation: false
+		});
+	}
+
 	// ---------------------------------------------------------------------------
 	// Monaco lifecycle — runs once when the container div is available
 	// ---------------------------------------------------------------------------
+
+	$effect(() => {
+		isMounted = true;
+	});
 
 	$effect(() => {
 		// Use a native browser check rather than $app/environment (a SvelteKit virtual
@@ -109,9 +154,13 @@
 		const container = editorContainer;
 		let disposed = false;
 
-		import('monaco-editor').then((monaco) => {
+		Promise.all([
+			import('monaco-editor'),
+			import('monaco-editor/esm/vs/language/typescript/monaco.contribution.js')
+		]).then(([monaco]) => {
 			if (disposed) return;
 			_monaco = monaco;
+			configureSandboxTypeScript(monaco);
 
 			// Create one model per file descriptor
 			for (const descriptor of FILE_DESCRIPTORS) {
@@ -187,23 +236,27 @@
 </script>
 
 <div class="sandman-editor">
-	<Tabs bind:value={activeFileName} class="editor-tabs">
-		<Tabs.List label="Editor files" class="editor-tab-list">
-			{#each FILE_DESCRIPTORS as descriptor (descriptor.name)}
-				<Tabs.Trigger
-					value={descriptor.name}
-					class={`editor-tab${activeFile.name === descriptor.name ? ' active' : ''}${
-						descriptor.readOnly ? ' readonly' : ''
-					}`}
-				>
-					{descriptor.name}
-					{#if descriptor.readOnly}
-						<span class="readonly-badge" aria-hidden="true">read-only</span>
-					{/if}
-				</Tabs.Trigger>
-			{/each}
-		</Tabs.List>
-	</Tabs>
+	{#if isMounted}
+		<Tabs bind:value={activeFileName} class="editor-tabs">
+			<TabList label="Editor files" class="editor-tab-list">
+				{#each FILE_DESCRIPTORS as descriptor (descriptor.name)}
+					<Tab
+						value={descriptor.name}
+						class={`editor-tab${activeFile.name === descriptor.name ? ' active' : ''}${
+							descriptor.readOnly ? ' readonly' : ''
+						}`}
+					>
+						{descriptor.name}
+						{#if descriptor.readOnly}
+							<span class="readonly-badge" aria-hidden="true">read-only</span>
+						{/if}
+					</Tab>
+				{/each}
+			</TabList>
+		</Tabs>
+	{:else}
+		<div class="editor-tabs-placeholder" aria-hidden="true"></div>
+	{/if}
 
 	{#if isLoading}
 		<div class="editor-saving" aria-live="polite" aria-label="Saving file">Saving…</div>
@@ -226,6 +279,12 @@
 	.sandman-editor :global(.editor-tabs) {
 		flex-shrink: 0;
 		gap: 0;
+	}
+
+	.editor-tabs-placeholder {
+		min-height: 2.5rem;
+		flex-shrink: 0;
+		border-bottom: 1px solid #333;
 	}
 
 	.sandman-editor :global(.editor-tab-list) {

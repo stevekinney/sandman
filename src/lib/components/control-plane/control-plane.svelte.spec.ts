@@ -33,15 +33,7 @@ import EventRail from './event-rail.svelte';
  * Waits until the returned workflow ID is visible in the DOM.
  */
 async function startWorkflow(controller: MockTemporalController): Promise<void> {
-	await page.getByLabelText('Restaurant ID').fill('restaurant-1');
-	await page.getByLabelText('Customer ID').fill('customer-1');
-	await page.getByLabelText('Item name').fill('Burger');
-	await page.getByLabelText('Item price (cents)').fill('1099');
-	await page.getByLabelText('Street').fill('123 Main St');
-	await page.getByLabelText('City').fill('Anytown');
-	await page.getByLabelText('State').fill('CA');
-	await page.getByLabelText('Postal code').fill('90210');
-	await page.getByRole('button', { name: 'Start Order' }).click();
+	await page.getByRole('button', { name: 'Place Order' }).click();
 	await expect.element(page.getByText(controller.startResult.workflowId)).toBeInTheDocument();
 }
 
@@ -54,30 +46,43 @@ describe('start-order form', () => {
 		const controller = new MockTemporalController();
 		render(ControlPlane, { props: { controller } });
 
-		await page.getByLabelText('Restaurant ID').fill('rest-42');
-		await page.getByLabelText('Customer ID').fill('cust-99');
-		await page.getByLabelText('Item name').fill('Pizza');
-		await page.getByLabelText('Item price (cents)').fill('1500');
-		await page.getByLabelText('Street').fill('1 Infinite Loop');
-		await page.getByLabelText('City').fill('Cupertino');
-		await page.getByLabelText('State').fill('CA');
-		await page.getByLabelText('Postal code').fill('95014');
-		await page.getByRole('button', { name: 'Start Order' }).click();
+		await page.getByRole('button', { name: 'Add Miso caesar salad' }).click();
+		await page.getByRole('button', { name: 'Place Order' }).click();
 
 		expect(controller.startCalls).toHaveLength(1);
 		expect(controller.startCalls[0]).toMatchObject({
-			restaurantId: 'rest-42',
-			customerId: 'cust-99',
+			restaurantId: 'kitchen-44',
+			customerId: 'customer-2187',
 			items: expect.arrayContaining([
-				expect.objectContaining({ name: 'Pizza', unitPriceCents: 1500 })
+				expect.objectContaining({ name: 'Spicy noodles', unitPriceCents: 1295, quantity: 1 }),
+				expect.objectContaining({ name: 'Miso caesar salad', unitPriceCents: 1095, quantity: 1 })
 			]),
 			deliveryAddress: {
-				street: '1 Infinite Loop',
-				city: 'Cupertino',
-				state: 'CA',
-				postalCode: '95014'
+				street: '221 Market Street',
+				city: 'Denver',
+				state: 'CO',
+				postalCode: '80205'
 			}
 		});
+	});
+
+	it('renders a realistic order card instead of a required-field worksheet', async () => {
+		const controller = new MockTemporalController();
+		render(ControlPlane, { props: { controller } });
+
+		await expect.element(page.getByText('Popular items')).toBeInTheDocument();
+		await expect
+			.element(page.getByText('Little gems, furikake crunch, yuzu dressing'))
+			.toBeInTheDocument();
+		await expect.element(page.getByRole('heading', { name: 'Cart' })).toBeInTheDocument();
+		await expect.element(page.getByText('1x Spicy noodles')).toBeInTheDocument();
+		await expect.element(page.getByText('Total', { exact: true })).toBeInTheDocument();
+		await expect.element(page.getByText('Kitsune Kitchen')).toBeInTheDocument();
+		await expect.element(page.getByText('221 Market Street, Denver')).toBeInTheDocument();
+		await expect
+			.element(page.getByRole('textbox', { name: 'Restaurant ID' }))
+			.not.toBeInTheDocument();
+		await expect.element(page.getByRole('textbox', { name: 'Street' })).not.toBeInTheDocument();
 	});
 
 	it('displays the workflow run ID in the UI after a successful start', async () => {
@@ -87,6 +92,11 @@ describe('start-order form', () => {
 
 		await startWorkflow(controller);
 
+		await expect.element(page.getByRole('list', { name: 'Order progress' })).toBeInTheDocument();
+		await expect.element(page.getByText('Kitsune Kitchen is working on it')).toBeInTheDocument();
+		await expect
+			.element(page.getByRole('heading', { name: 'Temporal controls' }))
+			.toBeInTheDocument();
 		await expect.element(page.getByText('wf-display-test')).toBeInTheDocument();
 	});
 });
@@ -260,9 +270,10 @@ describe('order timeline', () => {
 
 		// Cinder's RunStepTimeline renders an <ol aria-label="Order timeline">;
 		// asserting the list role confirms the real component (not a fallback) mounted.
-		await expect.element(page.getByRole('list', { name: 'Order timeline' })).toBeInTheDocument();
+		const timeline = page.getByRole('list', { name: 'Order timeline' });
+		await expect.element(timeline).toBeInTheDocument();
 		await expect.element(page.getByText('Validating order')).toBeInTheDocument();
-		await expect.element(page.getByText('Charging payment')).toBeInTheDocument();
+		await expect.element(timeline.getByText('Charging payment')).toBeInTheDocument();
 	});
 
 	it('invokes onstarted with the run identifiers when an order starts', async () => {
@@ -431,30 +442,21 @@ describe('event rail', () => {
 // ---------------------------------------------------------------------------
 
 describe('accessibility', () => {
-	it('all start-order form inputs have accessible labels', async () => {
+	it('the start-order panel is reachable without filling fixture fields', async () => {
 		const controller = new MockTemporalController();
 		render(ControlPlane, { props: { controller } });
 
-		await expect.element(page.getByRole('textbox', { name: 'Restaurant ID' })).toBeInTheDocument();
-		await expect.element(page.getByRole('textbox', { name: 'Customer ID' })).toBeInTheDocument();
-		await expect.element(page.getByRole('textbox', { name: 'Item name' })).toBeInTheDocument();
-		await expect
-			.element(page.getByRole('spinbutton', { name: 'Item price (cents)' }))
-			.toBeInTheDocument();
-		await expect.element(page.getByRole('textbox', { name: 'Street' })).toBeInTheDocument();
-		await expect.element(page.getByRole('textbox', { name: 'City' })).toBeInTheDocument();
-		await expect.element(page.getByRole('textbox', { name: 'State' })).toBeInTheDocument();
-		await expect.element(page.getByRole('textbox', { name: 'Postal code' })).toBeInTheDocument();
+		await expect.element(page.getByRole('button', { name: 'Place Order' })).toBeInTheDocument();
+		await expect.element(page.getByText('Leave at the front desk')).toBeInTheDocument();
+		await expect.element(page.getByText('Visa ending in 4242')).toBeInTheDocument();
 	});
 
 	it('renders control-plane fields with Cinder form primitives', async () => {
 		const controller = new MockTemporalController();
 		const { container } = render(ControlPlane, { props: { controller } });
 
-		await expect.element(page.getByLabelText('Restaurant ID')).toBeInTheDocument();
-		expect(container.querySelector('.cinder-input')).not.toBeNull();
-		expect(container.querySelector('.cinder-number-input')).not.toBeNull();
-		expect(container.querySelector('.cinder-select-field')).not.toBeNull();
+		expect(container.querySelector('.cinder-badge')).not.toBeNull();
+		expect(container.querySelector('.cinder-button')).not.toBeNull();
 
 		await startWorkflow(controller);
 
@@ -476,11 +478,11 @@ describe('accessibility', () => {
 		await expect.element(page.getByText(/Worker killed/i)).toBeInTheDocument();
 	});
 
-	it('the Start Order submit button is reachable via role=button', async () => {
+	it('the Place Order submit button is reachable via role=button', async () => {
 		const controller = new MockTemporalController();
 		render(ControlPlane, { props: { controller } });
 
-		await expect.element(page.getByRole('button', { name: 'Start Order' })).toBeInTheDocument();
+		await expect.element(page.getByRole('button', { name: 'Place Order' })).toBeInTheDocument();
 	});
 
 	it('signal and chaos buttons are present and reachable after workflow start', async () => {
