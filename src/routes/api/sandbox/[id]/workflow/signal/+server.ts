@@ -10,7 +10,7 @@
 
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import type { SignalName } from '$lib/contracts/workflow-api';
+import { isSignalName } from '$lib/contracts/workflow-api';
 import { assertSameOrigin } from '$lib/server/security/origin';
 import { requireOwnedSandbox } from '$lib/server/security/guards';
 import {
@@ -43,6 +43,9 @@ export const POST: RequestHandler = async (event) => {
 	if (typeof body.name !== 'string' || !body.name.trim()) {
 		return json({ error: 'signal name is required' }, { status: 400 });
 	}
+	if (!isSignalName(body.name)) {
+		return json({ error: `Unknown signal name: ${body.name}` }, { status: 400 });
+	}
 
 	const entry = getTemporalCliTarget(params.id);
 	const inputPath = await writeTemporalJsonInput(entry, 'signal', body.payload ?? {});
@@ -70,7 +73,7 @@ export const POST: RequestHandler = async (event) => {
 
 type SignalRequestBody = {
 	workflowId: string;
-	name: SignalName;
+	name: string;
 	payload?: unknown;
 };
 

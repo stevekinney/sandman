@@ -12,7 +12,7 @@
 
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import type { UpdateName } from '$lib/contracts/workflow-api';
+import { isUpdateName } from '$lib/contracts/workflow-api';
 import { assertSameOrigin } from '$lib/server/security/origin';
 import { requireOwnedSandbox } from '$lib/server/security/guards';
 import {
@@ -44,6 +44,9 @@ export const POST: RequestHandler = async (event) => {
 	}
 	if (typeof body.name !== 'string' || !body.name.trim()) {
 		return json({ error: 'update name is required' }, { status: 400 });
+	}
+	if (!isUpdateName(body.name)) {
+		return json({ error: `Unknown update name: ${body.name}` }, { status: 400 });
 	}
 
 	const entry = getTemporalCliTarget(params.id);
@@ -79,7 +82,7 @@ export const POST: RequestHandler = async (event) => {
 
 type UpdateRequestBody = {
 	workflowId: string;
-	name: UpdateName;
+	name: string;
 	input?: unknown;
 };
 

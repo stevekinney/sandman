@@ -309,13 +309,32 @@ test('guided tour can be completed through the visible workflow controls', async
 					? timeline
 					: {
 							status: 'IN_DELIVERY',
-							searchAttributes: {
+							businessSnapshot: {
 								OrderStatus: 'IN_DELIVERY',
 								CustomerTier: 'standard',
 								RestaurantId: 'kitchen-44'
 							}
 						}
 			)
+		});
+	});
+	await page.route(`**/api/sandbox/${sandboxId}/workflow/visibility**`, async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				workflows: [
+					{
+						workflowId: orderId,
+						runId: 'run-guided-tour',
+						type: 'orderFoodWorkflow',
+						status: 'Running',
+						orderStatus: 'IN_DELIVERY',
+						customerTier: 'standard',
+						restaurantId: 'kitchen-44'
+					}
+				]
+			})
 		});
 	});
 	await page.route(`**/api/sandbox/${sandboxId}/worker/kill`, async (route) => {
@@ -351,6 +370,11 @@ test('guided tour can be completed through the visible workflow controls', async
 	).toBeVisible();
 
 	await page.getByRole('button', { name: 'Get Status' }).click();
+	await expect(
+		page.getByRole('heading', { name: 'Filter with Temporal Visibility' })
+	).toBeVisible();
+
+	await page.getByRole('button', { name: 'List Visibility' }).click();
 	await expect(
 		page.getByRole('heading', { name: 'Kill the worker — watch it recover' })
 	).toBeVisible();

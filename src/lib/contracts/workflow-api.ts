@@ -137,6 +137,11 @@ export type OrderInput = {
 	 * history-compaction threshold.
 	 */
 	historyCompactionThreshold?: number;
+	/**
+	 * Advanced Visibility lesson toggle. When true, the workflow upserts real
+	 * Temporal Search Attributes in addition to returning businessSnapshot from queries.
+	 */
+	visibilitySearchAttributesEnabled?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -240,6 +245,44 @@ export type CompensationRecord = {
 	errorMessage?: string;
 };
 
+/** Business fields exposed through the read-only workflow query. */
+export type BusinessSnapshot = {
+	OrderStatus: OrderStatus;
+	CustomerTier: CustomerTier;
+	RestaurantId: string;
+};
+
+/** Search Attribute metadata used by the workflow, API, UI, and docs. */
+export type SearchAttributeMetadata = {
+	key: keyof BusinessSnapshot;
+	type: 'Keyword';
+	description: string;
+};
+
+/** Filter accepted by the Temporal Visibility list endpoint. */
+export type VisibilityFilter = {
+	status?: OrderStatus;
+	customerTier?: CustomerTier;
+	restaurantId?: string;
+};
+
+/** Summary returned from the Temporal Visibility list endpoint. */
+export type VisibilityWorkflowSummary = {
+	workflowId: string;
+	runId: string;
+	status: string;
+	type?: string;
+	businessSnapshot: Partial<BusinessSnapshot>;
+};
+
+/** Idempotency metadata passed to every side-effecting activity. */
+export type ActivityOperationMetadata = {
+	operationId: string;
+	idempotencyKey: string;
+	workflowId: string;
+	orderId: string;
+};
+
 /**
  * Full queryable state of a live order workflow.
  * Returned by the `getStatus` query — this is what the control plane renders.
@@ -263,6 +306,8 @@ export type OrderSnapshot = {
 	attemptCounts: Record<string, number>;
 	/** Compensation actions executed during any saga rollback. */
 	compensations: CompensationRecord[];
+	/** Idempotency metadata for side-effecting activities that have executed. */
+	activityOperations: Record<string, ActivityOperationMetadata>;
 	/** Courier information, populated once a courier is assigned. */
 	courier?: CourierInfo;
 	/** Number of courier location updates received (used to gate ContinueAsNew). */
@@ -281,13 +326,81 @@ export type OrderSnapshot = {
 	appliedPromoCode?: string;
 	/** Whether this run is about to call `continueAsNew`. */
 	continueAsNewPending: boolean;
-	/** Temporal search attribute values upserted at each status transition. */
-	searchAttributes: {
-		OrderStatus: OrderStatus;
-		CustomerTier: CustomerTier;
-		RestaurantId: string;
-	};
+	/** Queryable business fields also promoted to Temporal Visibility. */
+	businessSnapshot: BusinessSnapshot;
+	/** Teaching-only description list for key internal timeline entries. */
+	timelineDescriptions: string[];
 };
+
+export const SEARCH_ATTRIBUTE_METADATA = [
+	{
+		key: 'OrderStatus',
+		type: 'Keyword',
+		description: 'Current business lifecycle state for the order workflow.'
+	},
+	{
+		key: 'CustomerTier',
+		type: 'Keyword',
+		description: 'Customer tier used for workshop filtering and prioritization examples.'
+	},
+	{
+		key: 'RestaurantId',
+		type: 'Keyword',
+		description: 'Restaurant identifier used to find all orders for one merchant.'
+	}
+] as const satisfies readonly SearchAttributeMetadata[];
+
+export const SIGNAL_NAMES = [
+	'cancelOrder',
+	'restaurantAccepted',
+	'restaurantRejected',
+	'foodReady',
+	'courierLocationUpdate',
+	'addTip',
+	'deliveryCompleted'
+] as const satisfies readonly SignalName[];
+
+export const QUERY_NAMES = ['getStatus', 'getTimeline'] as const satisfies readonly QueryName[];
+
+export const UPDATE_NAMES = [
+	'updateDeliveryAddress',
+	'applyPromoCode'
+] as const satisfies readonly UpdateName[];
+
+export function isSignalName(value: string): value is SignalName {
+	switch (value) {
+		case 'cancelOrder':
+		case 'restaurantAccepted':
+		case 'restaurantRejected':
+		case 'foodReady':
+		case 'courierLocationUpdate':
+		case 'addTip':
+		case 'deliveryCompleted':
+			return true;
+		default:
+			return false;
+	}
+}
+
+export function isQueryName(value: string): value is QueryName {
+	switch (value) {
+		case 'getStatus':
+		case 'getTimeline':
+			return true;
+		default:
+			return false;
+	}
+}
+
+export function isUpdateName(value: string): value is UpdateName {
+	switch (value) {
+		case 'updateDeliveryAddress':
+		case 'applyPromoCode':
+			return true;
+		default:
+			return false;
+	}
+}
 
 /**
  * A single annotated entry in the order event timeline.
@@ -418,6 +531,7 @@ export type FeatureId =
 	| 'child-workflow'
 	| 'heartbeats-cancellation'
 	| 'continue-as-new'
+	| 'queryable-business-snapshot'
 	| 'search-attributes'
 	| 'local-activities'
 	| 'replay-safety'
@@ -439,6 +553,7 @@ export type ControlId =
 	| 'apply-promo'
 	| 'complete-delivery'
 	| 'kill-worker'
+	| 'list-visibility'
 	| 'query-status'
 	| 'query-timeline';
 
@@ -550,11 +665,19 @@ export const FEATURES = [
 		signal: 'courierLocationUpdate'
 	},
 	{
-		id: 'search-attributes',
+		id: 'queryable-business-snapshot',
 		concept: 'Queryable Business Snapshot',
 		mechanic:
 			'The getStatus query returns the business fields you would normally index as Temporal search attributes: OrderStatus, CustomerTier, and RestaurantId. This keeps the v1 demo honest while still teaching which dimensions make executions searchable.',
 		control: 'query-status',
+		query: 'getStatus'
+	},
+	{
+		id: 'search-attributes',
+		concept: 'Temporal Search Attributes',
+		mechanic:
+			'The workflow upserts OrderStatus, CustomerTier, and RestaurantId as real Temporal Search Attributes so learners can filter executions in Temporal Web and through the Visibility list API.',
+		control: 'list-visibility',
 		query: 'getStatus'
 	},
 	{
@@ -600,7 +723,8 @@ export const SCENARIO_ID = {
 	ChildDelivery: 'child-delivery',
 	WorkerRecovery: 'worker-recovery',
 	ContinueAsNew: 'continue-as-new',
-	ReplaySafety: 'replay-safety'
+	ReplaySafety: 'replay-safety',
+	SearchAttributes: 'search-attributes'
 } as const;
 
 /** Union of all guided workshop scenario identifiers. */
@@ -760,6 +884,20 @@ export const SCENARIOS = [
 				id: 'query-timeline',
 				control: 'query-timeline',
 				featureId: 'replay-safety',
+				completesOn: 'QueryCompleted'
+			}
+		]
+	},
+	{
+		id: SCENARIO_ID.SearchAttributes,
+		title: 'Filter with Temporal Visibility',
+		summary:
+			'List workflows by real Search Attributes after first reading the queryable business snapshot.',
+		steps: [
+			{
+				id: 'list-visibility',
+				control: 'list-visibility',
+				featureId: 'search-attributes',
 				completesOn: 'QueryCompleted'
 			}
 		]

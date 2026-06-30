@@ -23,7 +23,9 @@ import type {
 	QueryReturnMap,
 	UpdateName,
 	UpdateInputMap,
-	UpdateResultMap
+	UpdateResultMap,
+	VisibilityFilter,
+	VisibilityWorkflowSummary
 } from '$lib/contracts/workflow-api';
 
 // ---------------------------------------------------------------------------
@@ -45,6 +47,10 @@ export type UpdateCall = {
 	workflowId: string;
 	name: UpdateName;
 	input: UpdateInputMap[UpdateName];
+};
+
+export type VisibilityCall = {
+	filter: VisibilityFilter;
 };
 
 // ---------------------------------------------------------------------------
@@ -71,6 +77,9 @@ export class MockTemporalController implements TemporalController {
 
 	/** All `update()` calls in order. */
 	readonly updateCalls: UpdateCall[] = [];
+
+	/** All `visibility()` calls in order. */
+	readonly visibilityCalls: VisibilityCall[] = [];
 
 	/** Number of `killWorker()` invocations. */
 	killWorkerCount = 0;
@@ -102,6 +111,9 @@ export class MockTemporalController implements TemporalController {
 	 * ```
 	 */
 	readonly updateResults = new Map<UpdateName, unknown>();
+
+	/** Result returned by `visibility()`. */
+	visibilityResult: VisibilityWorkflowSummary[] = [];
 
 	/**
 	 * When set, `update()` throws this rejection error instead of succeeding.
@@ -151,5 +163,10 @@ export class MockTemporalController implements TemporalController {
 
 	async restartWorker(): Promise<void> {
 		this.restartWorkerCount++;
+	}
+
+	async visibility(filter: VisibilityFilter): Promise<VisibilityWorkflowSummary[]> {
+		this.visibilityCalls.push({ filter });
+		return this.visibilityResult;
 	}
 }

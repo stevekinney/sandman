@@ -9,7 +9,14 @@
 
 import { ApplicationFailure, CancelledFailure } from '@temporalio/activity';
 import { activityInfo, heartbeat, log, sleep } from '@temporalio/activity';
-import type { CourierInfo, DeliveryAddress, MoneyCents, OrderInput, OrderItem } from './shared.ts';
+import type {
+	ActivityOperationMetadata,
+	CourierInfo,
+	DeliveryAddress,
+	MoneyCents,
+	OrderInput,
+	OrderItem
+} from './shared.ts';
 import { PROMO_CODES } from './shared.ts';
 
 // ---------------------------------------------------------------------------
@@ -107,11 +114,17 @@ export async function calculatePricing(
  * Runs as a local activity for low-latency, in-process logging.
  */
 export async function writeAuditLog(entry: {
+	operation: ActivityOperationMetadata;
 	orderId: string;
 	event: string;
 	timestamp: string;
 }): Promise<void> {
-	log.info('AUDIT', { orderId: entry.orderId, event: entry.event, timestamp: entry.timestamp });
+	log.info('AUDIT', {
+		orderId: entry.orderId,
+		event: entry.event,
+		timestamp: entry.timestamp,
+		idempotencyKey: entry.operation.idempotencyKey
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +136,7 @@ export async function writeAuditLog(entry: {
  * Runs as a local activity to avoid the server round-trip for observability.
  */
 export async function emitMetrics(metric: {
+	operation: ActivityOperationMetadata;
 	orderId: string;
 	phase: string;
 	durationMs?: number;
@@ -138,6 +152,7 @@ export async function emitMetrics(metric: {
 export type ChargeResult = {
 	transactionId: string;
 	chargedCents: MoneyCents;
+	operation: ActivityOperationMetadata;
 	/**
 	 * The attempt number on which the charge ultimately succeeded, taken from
 	 * the activity's `activityInfo().attempt`. Reflects real Temporal retries:
@@ -154,15 +169,16 @@ export type ChargeResult = {
  *   if the payment method is definitively declined.
  */
 export async function chargePayment(
-	orderId: string,
+	operation: ActivityOperationMetadata,
 	paymentMethod: OrderInput['paymentMethod'],
 	amountCents: MoneyCents
 ): Promise<ChargeResult> {
 	const info = activityInfo();
 	log.info('chargePayment: attempt', {
-		orderId,
+		orderId: operation.orderId,
 		attempt: info.attempt,
-		amountCents
+		amountCents,
+		idempotencyKey: operation.idempotencyKey
 	});
 
 	// Simulate a declined payment for wallets with specific provider in test.
@@ -179,9 +195,14 @@ export async function chargePayment(
 		throw new Error('Gateway timeout — will retry');
 	}
 
-	const transactionId = `txn-${orderId}-${info.attempt}`;
-	log.info('chargePayment: success', { orderId, transactionId, attempts: info.attempt });
-	return { transactionId, chargedCents: amountCents, attempts: info.attempt };
+	const transactionId = `txn-${operation.orderId}-${info.attempt}`;
+	log.info('chargePayment: success', {
+		orderId: operation.orderId,
+		transactionId,
+		attempts: info.attempt,
+		idempotencyKey: operation.idempotencyKey
+	});
+	return { transactionId, chargedCents: amountCents, attempts: info.attempt, operation };
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +213,7 @@ export async function chargePayment(
 export type RefundResult = {
 	refundId: string;
 	refundedCents: MoneyCents;
+	operation: ActivityOperationMetadata;
 };
 
 /**
@@ -199,12 +221,16 @@ export type RefundResult = {
  * Has a permissive retry policy — refunds must eventually succeed.
  */
 export async function refundPayment(
-	orderId: string,
+	operation: ActivityOperationMetadata,
 	amountCents: MoneyCents
 ): Promise<RefundResult> {
-	log.info('refundPayment: issuing refund', { orderId, amountCents });
-	const refundId = `ref-${orderId}`;
-	return { refundId, refundedCents: amountCents };
+	log.info('refundPayment: issuing refund', {
+		orderId: operation.orderId,
+		amountCents,
+		idempotencyKey: operation.idempotencyKey
+	});
+	const refundId = `ref-${operation.orderId}`;
+	return { refundId, refundedCents: amountCents, operation };
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +241,7 @@ export async function refundPayment(
 export type NotifyResult = {
 	notificationId: string;
 	sentAt: string;
+	operation: ActivityOperationMetadata;
 };
 
 /**
@@ -222,13 +249,18 @@ export type NotifyResult = {
  * Retries automatically on transient failures.
  */
 export async function notifyRestaurant(
-	orderId: string,
+	operation: ActivityOperationMetadata,
 	restaurantId: string,
 	items: OrderItem[]
 ): Promise<NotifyResult> {
-	log.info('notifyRestaurant', { orderId, restaurantId, itemCount: items.length });
-	const notificationId = `notif-${orderId}`;
-	return { notificationId, sentAt: new Date().toISOString() };
+	log.info('notifyRestaurant', {
+		orderId: operation.orderId,
+		restaurantId,
+		itemCount: items.length,
+		idempotencyKey: operation.idempotencyKey
+	});
+	const notificationId = `notif-${operation.orderId}`;
+	return { notificationId, sentAt: new Date().toISOString(), operation };
 }
 
 // ---------------------------------------------------------------------------
@@ -240,14 +272,19 @@ export async function notifyRestaurant(
  * Returns courier info including a generated courierId.
  */
 export async function assignCourier(
-	orderId: string,
+	operation: ActivityOperationMetadata,
 	deliveryAddress: DeliveryAddress
-): Promise<CourierInfo> {
-	log.info('assignCourier', { orderId, city: deliveryAddress.city });
+): Promise<CourierInfo & { operation: ActivityOperationMetadata }> {
+	log.info('assignCourier', {
+		orderId: operation.orderId,
+		city: deliveryAddress.city,
+		idempotencyKey: operation.idempotencyKey
+	});
 	return {
-		courierId: `courier-${orderId}`,
+		courierId: `courier-${operation.orderId}`,
 		name: 'Alex Courier',
-		etaMinutes: 25
+		etaMinutes: 25,
+		operation
 	};
 }
 
@@ -259,8 +296,15 @@ export async function assignCourier(
  * Releases a previously assigned courier back to the pool.
  * Used in saga compensation when an order is cancelled after courier assignment.
  */
-export async function releaseCourier(orderId: string, courierId: string): Promise<void> {
-	log.info('releaseCourier', { orderId, courierId });
+export async function releaseCourier(
+	operation: ActivityOperationMetadata,
+	courierId: string
+): Promise<void> {
+	log.info('releaseCourier', {
+		orderId: operation.orderId,
+		courierId,
+		idempotencyKey: operation.idempotencyKey
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -324,10 +368,15 @@ export async function trackCourier(options: {
  * Dispatches the assigned courier to start delivery.
  */
 export async function dispatchCourier(
-	orderId: string,
+	operation: ActivityOperationMetadata,
 	courierId: string,
 	deliveryAddress: DeliveryAddress
-): Promise<{ dispatchedAt: string }> {
-	log.info('dispatchCourier', { orderId, courierId, city: deliveryAddress.city });
-	return { dispatchedAt: new Date().toISOString() };
+): Promise<{ dispatchedAt: string; operation: ActivityOperationMetadata }> {
+	log.info('dispatchCourier', {
+		orderId: operation.orderId,
+		courierId,
+		city: deliveryAddress.city,
+		idempotencyKey: operation.idempotencyKey
+	});
+	return { dispatchedAt: new Date().toISOString(), operation };
 }

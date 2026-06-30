@@ -215,6 +215,19 @@ async function waitForTemporal(
 	return false;
 }
 
+async function registerSearchAttributes(session: E2bSandboxSession): Promise<void> {
+	for (const name of ['OrderStatus', 'CustomerTier', 'RestaurantId']) {
+		const result = await session.commands.run(
+			`temporal operator search-attribute create --name ${name} --type Keyword`,
+			{ timeoutMs: 10_000 }
+		);
+		const output = `${result.stdout}${result.stderr}`.toLowerCase();
+		if (result.exitCode !== 0 && !output.includes('already')) {
+			throw new Error(`Failed to register Temporal Search Attribute ${name}: ${result.stderr}`);
+		}
+	}
+}
+
 /**
  * Polls the Temporal Web UI until it responds inside the sandbox.
  * A sandbox is not user-ready unless both the gRPC API and Web UI are up.
@@ -379,7 +392,12 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 			: false;
 		const ready = temporalReady && localTemporalUiReady && publicTemporalUiReady;
 
-		// 6. Start the worker in its own supervised background process.
+		// 6. Register custom Search Attributes before workflows can upsert them.
+		if (temporalReady) {
+			await registerSearchAttributes(session);
+		}
+
+		// 7. Start the worker in its own supervised background process.
 		const workerHandle = await session.commands.start(WORKER_CMD, { timeoutMs: 300_000 });
 		state.workerPid = workerHandle.pid;
 

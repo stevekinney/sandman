@@ -122,6 +122,7 @@ Tests use `@temporalio/testing`'s `TestWorkflowEnvironment.createTimeSkipping()`
 | **Update Address**              | Updates + Validators        | Accepted before IN_DELIVERY; the validator rejects the update with `order-already-in-delivery` once delivery starts                                        |
 | **Apply Promo**                 | Updates + Validators        | Validates the code synchronously, applies discount, returns new total                                                                                      |
 | **Query Status**                | Queries + Business Snapshot | `getStatus` returns live `OrderSnapshot`; snapshot fields show the business dimensions a production app could index for visibility                         |
+| **List Visibility**             | Search Attributes           | The advanced scenario filters executions by real `OrderStatus`, `CustomerTier`, and `RestaurantId` Search Attributes                                      |
 | **Query Timeline**              | Queries + Replay Safety     | `getTimeline` returns annotated event log; same history used by the replay-safety test                                                                     |
 | **Kill Worker**                 | Durable Recovery            | Terminating the Node.js worker process mid-flight leaves in-flight workflows intact on the server; restarting the worker resumes exactly where it left off |
 
@@ -131,15 +132,24 @@ Tests use `@temporalio/testing`'s `TestWorkflowEnvironment.createTimeSkipping()`
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Activities + automatic retry | `chargePayment` and `notifyRestaurant` use a configurable `RetryPolicy`                                                                                    |
 | Non-retryable failure        | `ApplicationFailure.nonRetryable(msg, 'PAYMENT_DECLINED')` bypasses retry                                                                                  |
-| Saga / compensation          | A `compensations` stack is built up; `runCompensations()` executes LIFO on any failure path                                                                |
+| Saga / compensation          | Each successful side effect registers a compensation immediately; compensation executes LIFO on failure/cancel paths                                      |
 | Signals                      | Six signals (`cancelOrder`, `restaurantAccepted`, `restaurantRejected`, `foodReady`, `courierLocationUpdate`, `addTip`)                                    |
 | Queries                      | `getStatus` (full snapshot) and `getTimeline` (annotated event log) are read-only                                                                          |
 | Updates with validators      | `updateDeliveryAddress` rejects synchronously after IN_DELIVERY; `applyPromoCode` validates the code before mutating state                                 |
 | Durable timers / `sleep()`   | Restaurant-accept deadline via `condition(..., Nm)`; 2-hour delivery SLA in child workflow                                                                 |
 | Child workflows              | `deliveryWorkflow` runs as an independent child, visible in the Temporal Web UI                                                                            |
 | Heartbeats + cancellation    | `trackCourier` heartbeats every 5 s; cancelling the order propagates via `CancellationScope`; uses `WAIT_CANCELLATION_COMPLETED` so cleanup is synchronous |
-| ContinueAsNew                | `subscriptionWorkflow` calls `continueAsNew` each cycle; `orderFoodWorkflow` calls it after 100 location updates                                           |
-| Search attributes            | `OrderStatus`, `CustomerTier`, and `RestaurantId` are mirrored in `OrderSnapshot.searchAttributes` on every transition                                     |
+| ContinueAsNew                | `subscriptionWorkflow` calls `continueAsNew` each cycle; `orderFoodWorkflow` uses a demo threshold and documents `workflowInfo().continueAsNewSuggested`    |
+| Business snapshot            | `OrderStatus`, `CustomerTier`, and `RestaurantId` are returned from `OrderSnapshot.businessSnapshot` for query-first teaching                              |
+| Search attributes            | When `visibilitySearchAttributesEnabled` is true, the workflow upserts real `OrderStatus`, `CustomerTier`, and `RestaurantId` Search Attributes             |
 | Local activities             | `validateOrder`, `calculatePricing`, `writeAuditLog`, `emitMetrics`                                                                                        |
 | Replay safety                | All non-deterministic operations are in activities; the replay test confirms no determinism violations                                                     |
 | Durable recovery             | Kill-worker demo proves in-flight state survives worker process termination                                                                                |
+
+## What to notice
+
+- Workflow code is deterministic; payment, restaurant, courier, logging, and metrics side effects live in activities or local activities.
+- Side-effecting activities receive stable `operationId` and `idempotencyKey` metadata so retries are safe to explain.
+- Compensation is registered immediately after each successful forward side effect and runs in reverse order.
+- `businessSnapshot` is the simple query lesson; opt-in Search Attributes power the advanced Visibility lesson.
+- Replay safety is verified by recorded-history replay.

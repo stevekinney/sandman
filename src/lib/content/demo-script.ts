@@ -147,14 +147,24 @@ export const FEATURE_MAP: Record<FeatureId, FeatureEntry> = {
 			'After 100 courier location updates, the workflow calls continueAsNew to keep event history bounded. The new run receives the current OrderSnapshot as its seed state so no data is lost.',
 		signal: 'courierLocationUpdate'
 	},
-	'search-attributes': {
-		id: 'search-attributes',
+	'queryable-business-snapshot': {
+		id: 'queryable-business-snapshot',
 		concept: 'Queryable Business Snapshot',
 		oneLiner:
-			'The workflow snapshot exposes the business dimensions you would choose for indexed visibility.',
+			'The workflow query returns business dimensions before you introduce indexed Visibility.',
 		mechanic:
-			'getStatus returns OrderStatus, CustomerTier, and RestaurantId in the snapshot. Those are the same dimensions you would promote to real Temporal search attributes when adding a visibility lesson.',
+			'getStatus returns OrderStatus, CustomerTier, and RestaurantId in businessSnapshot. This gives learners a simple read model before the advanced Search Attributes scenario.',
 		control: 'query-status',
+		query: 'getStatus'
+	},
+	'search-attributes': {
+		id: 'search-attributes',
+		concept: 'Temporal Search Attributes',
+		oneLiner:
+			'Search Attributes index workflow executions so Temporal Web and list APIs can filter across runs.',
+		mechanic:
+			'The advanced Visibility scenario upserts OrderStatus, CustomerTier, and RestaurantId as real Temporal Search Attributes and lists matching executions through Temporal Visibility.',
+		control: 'list-visibility',
 		query: 'getStatus'
 	},
 	'local-activities': {
@@ -239,6 +249,7 @@ export const CONTROL_FEATURE: Record<ControlId, FeatureId> = {
 	'apply-promo': 'updates-validators',
 	'complete-delivery': 'child-workflow',
 	'kill-worker': 'durable-recovery',
+	'list-visibility': 'search-attributes',
 	'query-status': 'queries',
 	'query-timeline': 'replay-safety'
 };
@@ -356,11 +367,19 @@ export const TOUR: readonly TourStep[] = [
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.ChildWorkflowExecutionStarted
 	},
 	{
-		id: 'search-attributes',
+		id: 'queryable-business-snapshot',
 		title: 'Read the queryable business snapshot',
 		instruction:
 			'Click "Get Status" to read the workflow snapshot, including OrderStatus, CustomerTier, and RestaurantId values that make the execution queryable by business dimensions.',
 		control: 'query-status',
+		completes: (e) => e.type === 'QueryCompleted'
+	},
+	{
+		id: 'search-attributes',
+		title: 'Filter with Temporal Visibility',
+		instruction:
+			'Click "List Visibility" to filter executions by the real Search Attributes upserted by the workflow.',
+		control: 'list-visibility',
 		completes: (e) => e.type === 'QueryCompleted'
 	},
 	{

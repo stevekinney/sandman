@@ -22,13 +22,16 @@ import {
 	executeChild,
 	getExternalWorkflowHandle,
 	isCancellation,
+	patched,
 	proxyActivities,
 	proxyLocalActivities,
 	setHandler,
 	sleep,
 	startChild,
+	upsertSearchAttributes,
 	workflowInfo
 } from '@temporalio/workflow';
+import { defineSearchAttributeKey } from '@temporalio/common';
 import type * as acts from './activities.ts';
 import {
 	addTipSignal,
@@ -40,6 +43,7 @@ import {
 	restaurantRejectedSignal
 } from './signals.ts';
 import { ORDER_STATUS, PROMO_CODES, TASK_QUEUE, WORKFLOW_EVENT_TYPE } from './shared.ts';
+import type { ActivityOperationMetadata, CompensationRecord } from './shared.ts';
 
 export {
 	addTipSignal,
@@ -96,6 +100,15 @@ export const applyPromoCodeUpdate = defineUpdate<ApplyPromoCodeResult, [ApplyPro
 type OrderStatus = (typeof ORDER_STATUS)[keyof typeof ORDER_STATUS];
 type PromoCode = keyof typeof PROMO_CODES;
 
+const orderStatusSearchAttributeKey = defineSearchAttributeKey('OrderStatus', 'KEYWORD');
+const customerTierSearchAttributeKey = defineSearchAttributeKey('CustomerTier', 'KEYWORD');
+const restaurantIdSearchAttributeKey = defineSearchAttributeKey('RestaurantId', 'KEYWORD');
+
+type CompensationStep = {
+	action: string;
+	run: () => Promise<void>;
+};
+
 function now(): string {
 	return new Date(Date.now()).toISOString();
 }
@@ -144,7 +157,16 @@ export async function orderFoodWorkflow(
 	let updatedAt = seed?.updatedAt ?? startedAt;
 	const attemptCounts: Record<string, number> = seed?.attemptCounts ?? {};
 	const compensations = seed?.compensations ?? [];
-	const timeline: TimelineEntry[] = [];
+	const activityOperations: Record<string, ActivityOperationMetadata> =
+		seed?.activityOperations ?? {};
+	const compensationStack: CompensationStep[] = [];
+	const timeline: TimelineEntry[] =
+		seed?.timelineDescriptions.map((description, index) => ({
+			index,
+			timestamp: updatedAt,
+			description,
+			status
+		})) ?? [];
 
 	let cancelReason = '';
 	let restaurantAccepted = false;
@@ -159,6 +181,7 @@ export async function orderFoodWorkflow(
 		eventType?: WorkflowEventType
 	): void {
 		status = nextStatus;
+		upsertBusinessSearchAttributes();
 		timeline.push({
 			index: timeline.length,
 			timestamp: now(),
@@ -168,6 +191,57 @@ export async function orderFoodWorkflow(
 			eventType
 		});
 		updatedAt = now();
+	}
+
+	function addTimeline(
+		description: string,
+		featureId?: FeatureId,
+		eventType?: WorkflowEventType
+	): void {
+		timeline.push({
+			index: timeline.length,
+			timestamp: now(),
+			description,
+			status,
+			featureId,
+			eventType
+		});
+		updatedAt = now();
+	}
+
+	function businessSnapshot(): BusinessSnapshot {
+		return {
+			OrderStatus: status,
+			CustomerTier: currentInput.customerTier,
+			RestaurantId: currentInput.restaurantId
+		};
+	}
+
+	function upsertBusinessSearchAttributes(): void {
+		if (currentInput.visibilitySearchAttributesEnabled !== true) return;
+		upsertSearchAttributes([
+			{ key: orderStatusSearchAttributeKey, value: status },
+			{ key: customerTierSearchAttributeKey, value: currentInput.customerTier },
+			{ key: restaurantIdSearchAttributeKey, value: currentInput.restaurantId }
+		]);
+	}
+
+	function operation(operationId: string): ActivityOperationMetadata {
+		return {
+			operationId,
+			idempotencyKey: `${currentInput.orderId}:${operationId}`,
+			workflowId: workflowInfo().workflowId,
+			orderId: currentInput.orderId
+		};
+	}
+
+	function rememberOperation(name: string, metadata: ActivityOperationMetadata): void {
+		activityOperations[name] = metadata;
+	}
+
+	function registerCompensation(action: string, run: () => Promise<void>): void {
+		compensationStack.push({ action, run });
+		addTimeline(`Registered compensation: ${action}`, 'saga-compensation');
 	}
 
 	function snapshot(): OrderSnapshot {
@@ -181,6 +255,7 @@ export async function orderFoodWorkflow(
 			totalCents,
 			attemptCounts,
 			compensations,
+			activityOperations,
 			courier,
 			locationUpdateCount,
 			deliveryDeadline,
@@ -189,11 +264,8 @@ export async function orderFoodWorkflow(
 			completedAt,
 			appliedPromoCode,
 			continueAsNewPending,
-			searchAttributes: {
-				OrderStatus: status,
-				CustomerTier: currentInput.customerTier,
-				RestaurantId: currentInput.restaurantId
-			}
+			businessSnapshot: businessSnapshot(),
+			timelineDescriptions: timeline.map((entry) => entry.description)
 		};
 	}
 
@@ -201,12 +273,24 @@ export async function orderFoodWorkflow(
 		nextStatus: OrderStatus,
 		description: string
 	): Promise<OrderSnapshot> {
-		if (courier) {
-			await releaseCourier(currentInput.orderId, courier.courierId);
-			compensations.push({ action: 'release-courier', timestamp: now(), ok: true });
+		for (let index = compensationStack.length - 1; index >= 0; index--) {
+			const step = compensationStack[index];
+			try {
+				await step.run();
+				compensations.push({ action: step.action, timestamp: now(), ok: true });
+				addTimeline(`Executed compensation: ${step.action}`, 'saga-compensation');
+			} catch (err) {
+				const record: CompensationRecord = {
+					action: step.action,
+					timestamp: now(),
+					ok: false,
+					errorMessage: err instanceof Error ? err.message : String(err)
+				};
+				compensations.push(record);
+				addTimeline(`Failed compensation: ${step.action}`, 'saga-compensation');
+				throw err;
+			}
 		}
-		await refundPayment(currentInput.orderId, totalCents);
-		compensations.push({ action: 'refund-payment', timestamp: now(), ok: true });
 		completedAt = now();
 		transition(nextStatus, description, 'saga-compensation');
 		return snapshot();
@@ -219,25 +303,16 @@ export async function orderFoodWorkflow(
 
 	setHandler(cancelOrderSignal, async (payload) => {
 		cancelReason = payload.reason;
-		timeline.push({
-			index: timeline.length,
-			timestamp: now(),
-			description: `Cancel requested: ${payload.reason}`,
-			status,
-			featureId: 'signals'
-		});
+		addTimeline(`Cancel requested: ${payload.reason}`, 'signals');
 		await cancelDeliveryChild();
 	});
 	setHandler(restaurantAcceptedSignal, (payload) => {
 		restaurantAccepted = true;
-		timeline.push({
-			index: timeline.length,
-			timestamp: now(),
-			description: `Restaurant accepted, prep ${payload.estimatedPrepMinutes}m`,
-			status,
-			featureId: 'signals',
-			eventType: WORKFLOW_EVENT_TYPE.WorkflowExecutionSignaled
-		});
+		addTimeline(
+			`Restaurant accepted, prep ${payload.estimatedPrepMinutes}m`,
+			'signals',
+			WORKFLOW_EVENT_TYPE.WorkflowExecutionSignaled
+		);
 	});
 	setHandler(restaurantRejectedSignal, (payload) => {
 		restaurantRejectedReason = payload.reason;
@@ -264,14 +339,11 @@ export async function orderFoodWorkflow(
 		updateDeliveryAddressUpdate,
 		(payload) => {
 			currentInput = { ...currentInput, deliveryAddress: payload.newAddress };
-			timeline.push({
-				index: timeline.length,
-				timestamp: now(),
-				description: 'Delivery address updated',
-				status,
-				featureId: 'updates-validators',
-				eventType: WORKFLOW_EVENT_TYPE.WorkflowExecutionUpdateAccepted
-			});
+			addTimeline(
+				'Delivery address updated',
+				'updates-validators',
+				WORKFLOW_EVENT_TYPE.WorkflowExecutionUpdateAccepted
+			);
 			return { updated: true, effectiveAddress: currentInput.deliveryAddress };
 		},
 		{
@@ -318,9 +390,20 @@ export async function orderFoodWorkflow(
 			'continue-as-new',
 			WORKFLOW_EVENT_TYPE.WorkflowExecutionCompleted
 		);
-		await writeAuditLog({ orderId: currentInput.orderId, event: 'delivered', timestamp: now() });
+		const auditOperation = operation('write-audit-log-delivered');
+		rememberOperation('writeAuditLog', auditOperation);
+		await writeAuditLog({
+			operation: auditOperation,
+			orderId: currentInput.orderId,
+			event: 'delivered',
+			timestamp: now()
+		});
 		await condition(allHandlersFinished);
 		return snapshot();
+	}
+
+	if (patched('sandman-idempotent-activity-operations')) {
+		addTimeline('Replay-safe patch marker: idempotent activity operations', 'replay-safety');
 	}
 
 	transition(
@@ -336,15 +419,24 @@ export async function orderFoodWorkflow(
 	deliveryFeeCents = pricing.deliveryFeeCents;
 	promoDiscountCents = pricing.promoDiscountCents;
 	totalCents = pricing.totalCents;
-	await emitMetrics({ orderId: currentInput.orderId, phase: 'validated' });
+	const metricsOperation = operation('emit-metrics-validated');
+	rememberOperation('emitMetrics', metricsOperation);
+	await emitMetrics({
+		operation: metricsOperation,
+		orderId: currentInput.orderId,
+		phase: 'validated'
+	});
 
 	try {
-		const charge = await chargePayment(
-			currentInput.orderId,
-			currentInput.paymentMethod,
-			totalCents
-		);
+		const chargeOperation = operation('charge-payment');
+		const charge = await chargePayment(chargeOperation, currentInput.paymentMethod, totalCents);
 		attemptCounts['chargePayment'] = charge.attempts;
+		rememberOperation('chargePayment', charge.operation);
+		registerCompensation('refund-payment', async () => {
+			const refundOperation = operation('refund-payment');
+			rememberOperation('refundPayment', refundOperation);
+			await refundPayment(refundOperation, totalCents);
+		});
 	} catch (err) {
 		const attempts = getChargePaymentAttemptCount(err);
 		if (attempts !== undefined) attemptCounts['chargePayment'] = attempts;
@@ -365,7 +457,13 @@ export async function orderFoodWorkflow(
 		'timers-durable-sleep',
 		WORKFLOW_EVENT_TYPE.TimerStarted
 	);
-	await notifyRestaurant(currentInput.orderId, currentInput.restaurantId, currentInput.items);
+	const notifyOperation = operation('notify-restaurant');
+	const notification = await notifyRestaurant(
+		notifyOperation,
+		currentInput.restaurantId,
+		currentInput.items
+	);
+	rememberOperation('notifyRestaurant', notification.operation);
 	const accepted = await condition(
 		() => restaurantAccepted || Boolean(restaurantRejectedReason) || Boolean(cancelReason),
 		`${currentInput.restaurantAcceptTimeoutMinutes ?? 10}m`
@@ -381,8 +479,28 @@ export async function orderFoodWorkflow(
 	if (cancelReason) return refundAndFinish(ORDER_STATUS.Cancelled, `Cancelled: ${cancelReason}`);
 
 	transition(ORDER_STATUS.AwaitingCourier, 'Assigning courier', 'child-workflow');
-	courier = await assignCourier(currentInput.orderId, currentInput.deliveryAddress);
-	await dispatchCourier(currentInput.orderId, courier.courierId, currentInput.deliveryAddress);
+	const assignCourierOperation = operation('assign-courier');
+	const assignedCourier = await assignCourier(assignCourierOperation, currentInput.deliveryAddress);
+	rememberOperation('assignCourier', assignedCourier.operation);
+	courier = {
+		courierId: assignedCourier.courierId,
+		name: assignedCourier.name,
+		location: assignedCourier.location,
+		etaMinutes: assignedCourier.etaMinutes
+	};
+	registerCompensation('release-courier', async () => {
+		if (!courier) return;
+		const releaseOperation = operation('release-courier');
+		rememberOperation('releaseCourier', releaseOperation);
+		await releaseCourier(releaseOperation, courier.courierId);
+	});
+	const dispatchOperation = operation('dispatch-courier');
+	const dispatch = await dispatchCourier(
+		dispatchOperation,
+		courier.courierId,
+		currentInput.deliveryAddress
+	);
+	rememberOperation('dispatchCourier', dispatch.operation);
 	if (cancelReason) return refundAndFinish(ORDER_STATUS.Cancelled, `Cancelled: ${cancelReason}`);
 
 	deliveryDeadline = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
@@ -424,6 +542,11 @@ export async function orderFoodWorkflow(
 
 	if (locationUpdateCount >= historyCompactionThreshold) {
 		continueAsNewPending = true;
+		const suggested = workflowInfo().continueAsNewSuggested;
+		addTimeline(
+			`ContinueAsNew triggered by demo history threshold; workflowInfo().continueAsNewSuggested was ${suggested ? 'true' : 'false'}`,
+			'continue-as-new'
+		);
 		transition(
 			ORDER_STATUS.InDelivery,
 			`History compaction threshold reached after ${locationUpdateCount} courier location updates`,
@@ -441,7 +564,14 @@ export async function orderFoodWorkflow(
 		'durable-recovery',
 		WORKFLOW_EVENT_TYPE.WorkflowExecutionCompleted
 	);
-	await writeAuditLog({ orderId: currentInput.orderId, event: 'delivered', timestamp: now() });
+	const deliveredAuditOperation = operation('write-audit-log-delivered');
+	rememberOperation('writeAuditLog', deliveredAuditOperation);
+	await writeAuditLog({
+		operation: deliveredAuditOperation,
+		orderId: currentInput.orderId,
+		event: 'delivered',
+		timestamp: now()
+	});
 	await condition(allHandlersFinished);
 	return snapshot();
 }

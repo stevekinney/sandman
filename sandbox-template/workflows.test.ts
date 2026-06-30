@@ -22,6 +22,11 @@ import { ApplicationFailure } from '@temporalio/workflow';
 import type { WorkflowHandle } from '@temporalio/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fileURLToPath } from 'node:url';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createServer } from 'node:net';
 import {
 	addTipSignal,
 	applyPromoCodeUpdate,
@@ -133,6 +138,78 @@ async function startOrder(
 	return [handle, status];
 }
 
+async function getFreePort(): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const server = createServer();
+		server.on('error', reject);
+		server.listen(0, () => {
+			const address = server.address();
+			server.close(() => {
+				if (typeof address === 'object' && address !== null) {
+					resolve(address.port);
+					return;
+				}
+				reject(new Error('Unable to reserve a free port'));
+			});
+		});
+	});
+}
+
+async function startTemporalVisibilityServer(): Promise<{
+	address: string;
+	databasePath: string;
+	process: ChildProcessWithoutNullStreams;
+}> {
+	const port = await getFreePort();
+	const databasePath = join(tmpdir(), `sandman-visibility-${Date.now()}.db`);
+	const child = spawn('temporal', [
+		'server',
+		'start-dev',
+		'--headless',
+		'--port',
+		String(port),
+		'--db-filename',
+		databasePath,
+		'--search-attribute',
+		'OrderStatus=Keyword',
+		'--search-attribute',
+		'CustomerTier=Keyword',
+		'--search-attribute',
+		'RestaurantId=Keyword'
+	]);
+	const address = `localhost:${port}`;
+	await waitForTemporalVisibilityServer(address);
+	return { address, databasePath, process: child };
+}
+
+async function waitForTemporalVisibilityServer(address: string): Promise<void> {
+	for (let attempt = 0; attempt < 5; attempt++) {
+		const exitCode = await runTemporalProbe(address);
+		if (exitCode === 0) return;
+		await new Promise((resolve) => setTimeout(resolve, 2_000));
+	}
+	throw new Error(`Temporal Visibility test server did not become ready at ${address}`);
+}
+
+async function runTemporalProbe(address: string): Promise<number | null> {
+	const probe = spawn('temporal', ['--address', address, 'workflow', 'list']);
+	return new Promise((resolve) => {
+		probe.once('exit', (code) => resolve(code));
+	});
+}
+
+async function stopTemporalVisibilityServer(server: {
+	databasePath: string;
+	process: ChildProcessWithoutNullStreams;
+}): Promise<void> {
+	server.process.kill('SIGTERM');
+	await new Promise<void>((resolve) => {
+		server.process.once('exit', () => resolve());
+		setTimeout(resolve, 2_000);
+	});
+	await rm(server.databasePath, { force: true });
+}
+
 /** Drive the happy path to DELIVERED. */
 async function driveToDelivered(
 	handle: WorkflowHandle<typeof orderFoodWorkflow>,
@@ -212,9 +289,9 @@ describe('happy path', () => {
 		expect(snapshot.subtotalCents).toBe(1099);
 		expect(snapshot.deliveryFeeCents).toBe(299);
 		expect(snapshot.completedAt).toBeDefined();
-		expect(snapshot.searchAttributes.OrderStatus).toBe(ORDER_STATUS.Delivered);
-		expect(snapshot.searchAttributes.CustomerTier).toBe(CUSTOMER_TIER.Standard);
-		expect(snapshot.searchAttributes.RestaurantId).toBe('rest-test');
+		expect(snapshot.businessSnapshot.OrderStatus).toBe(ORDER_STATUS.Delivered);
+		expect(snapshot.businessSnapshot.CustomerTier).toBe(CUSTOMER_TIER.Standard);
+		expect(snapshot.businessSnapshot.RestaurantId).toBe('rest-test');
 
 		void status; // used above; satisfy TS
 	}, 30_000);
@@ -257,6 +334,21 @@ describe('activities + retry', () => {
 		// reflects real Temporal retries rather than a workflow-side guess.
 		expect(snapshot.attemptCounts['chargePayment']).toBe(2);
 	}, 30_000);
+
+	it('passes stable idempotency metadata to retried side-effecting activities', async () => {
+		const input = makeInput({
+			paymentMethod: { type: 'card', last4: '0000', brand: 'visa' }
+		});
+		const [handle] = await startOrder(input);
+		const snapshot = await driveToDelivered(handle, input);
+
+		expect(snapshot.activityOperations['chargePayment']).toMatchObject({
+			operationId: 'charge-payment',
+			idempotencyKey: `${input.orderId}:charge-payment`,
+			orderId: input.orderId
+		});
+		expect(snapshot.activityOperations['refundPayment']).toBeUndefined();
+	}, 30_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -283,6 +375,23 @@ describe('non-retryable failure', () => {
 // ---------------------------------------------------------------------------
 
 describe('saga compensation', () => {
+	it('records compensation registration before compensation execution', async () => {
+		const input = makeInput();
+		const [handle] = await startOrder(input);
+
+		await handle.signal(restaurantAcceptedSignal, { estimatedPrepMinutes: 5 });
+		await handle.signal(cancelOrderSignal, { reason: 'changed my mind' });
+		await handle.signal(foodReadySignal, {});
+
+		const snapshot = await handle.result();
+		const descriptions = snapshot.timelineDescriptions;
+		const registeredIndex = descriptions.indexOf('Registered compensation: refund-payment');
+		const executedIndex = descriptions.indexOf('Executed compensation: refund-payment');
+
+		expect(registeredIndex).toBeGreaterThanOrEqual(0);
+		expect(executedIndex).toBeGreaterThan(registeredIndex);
+	}, 30_000);
+
 	it('cancelling after charge triggers refundPayment compensation', async () => {
 		const input = makeInput();
 		const [handle, queryStatus] = await startOrder(input);
@@ -757,22 +866,78 @@ describe('heartbeat + cancellation', () => {
 // ---------------------------------------------------------------------------
 
 describe('search attributes', () => {
-	it('OrderSnapshot.searchAttributes reflects current state', async () => {
+	it('OrderSnapshot.businessSnapshot reflects current state for queries', async () => {
 		const input = makeInput({ customerTier: CUSTOMER_TIER.Premium });
 		const [handle, queryStatus] = await startOrder(input);
 
 		const snap1 = await queryStatus();
 		// At some early phase
-		expect(snap1.searchAttributes.CustomerTier).toBe(CUSTOMER_TIER.Premium);
-		expect(snap1.searchAttributes.RestaurantId).toBe('rest-test');
+		expect(snap1.businessSnapshot.CustomerTier).toBe(CUSTOMER_TIER.Premium);
+		expect(snap1.businessSnapshot.RestaurantId).toBe('rest-test');
 
 		await handle.signal(restaurantAcceptedSignal, { estimatedPrepMinutes: 2 });
 		await handle.signal(foodReadySignal, {});
 		const result = await driveToDelivered(handle, input);
 
-		expect(result.searchAttributes.OrderStatus).toBe(ORDER_STATUS.Delivered);
-		expect(result.searchAttributes.CustomerTier).toBe(CUSTOMER_TIER.Premium);
+		expect(result.businessSnapshot.OrderStatus).toBe(ORDER_STATUS.Delivered);
+		expect(result.businessSnapshot.CustomerTier).toBe(CUSTOMER_TIER.Premium);
 	}, 30_000);
+
+	it('upserts real Temporal Search Attributes for Visibility filtering', async () => {
+		const visibilityServer = await startTemporalVisibilityServer();
+		const localEnv = await TestWorkflowEnvironment.createFromExistingServer({
+			address: visibilityServer.address
+		});
+		const localWorker = await Worker.create({
+			connection: localEnv.nativeConnection,
+			namespace: 'default',
+			taskQueue: TASK_QUEUE,
+			workflowsPath: WORKFLOWS_PATH,
+			activities,
+			interceptors: {
+				workflowModules: workflowInterceptorModules
+			}
+		});
+		const localWorkerShutdown = localWorker.run();
+		try {
+			const input = makeInput({
+				customerTier: CUSTOMER_TIER.Premium,
+				visibilitySearchAttributesEnabled: true
+			});
+			const handle = await localEnv.client.workflow.start(orderFoodWorkflow, {
+				workflowId: `visibility-${input.orderId}`,
+				taskQueue: TASK_QUEUE,
+				args: [input]
+			});
+
+			await handle.signal(restaurantAcceptedSignal, { estimatedPrepMinutes: 2 });
+			await handle.signal(foodReadySignal, {});
+
+			const deliveryWorkflowId = `delivery-${input.orderId}`;
+			const deliveryHandle = localEnv.client.workflow.getHandle(deliveryWorkflowId);
+			for (let i = 0; i < 20; i++) {
+				try {
+					await deliveryHandle.describe();
+					break;
+				} catch {
+					await new Promise((resolve) => setTimeout(resolve, 200));
+				}
+			}
+			await deliveryHandle.signal(deliveryCompletedSignal);
+			const result = await handle.result();
+			expect(result.status).toBe(ORDER_STATUS.Delivered);
+
+			const description = await handle.describe();
+			expect(description.searchAttributes.OrderStatus).toEqual([ORDER_STATUS.Delivered]);
+			expect(description.searchAttributes.CustomerTier).toEqual([CUSTOMER_TIER.Premium]);
+			expect(description.searchAttributes.RestaurantId).toEqual(['rest-test']);
+		} finally {
+			localWorker.shutdown();
+			await localWorkerShutdown;
+			await localEnv.teardown();
+			await stopTemporalVisibilityServer(visibilityServer);
+		}
+	}, 60_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -885,6 +1050,9 @@ describe('orderFoodWorkflow – continueAsNew', () => {
 		expect(result.locationUpdateCount).toBe(2);
 		expect(result.continueAsNewPending).toBe(false);
 		expect(result.attemptCounts['chargePayment']).toBe(1);
+		expect(result.timelineDescriptions).toContain(
+			'ContinueAsNew triggered by demo history threshold; workflowInfo().continueAsNewSuggested was false'
+		);
 	}, 30_000);
 });
 

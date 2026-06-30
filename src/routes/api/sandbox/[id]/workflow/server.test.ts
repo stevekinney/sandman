@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { POST } from './+server';
+import { GET as VISIBILITY_GET } from './visibility/+server';
+import { GET as QUERY_GET } from './query/+server';
+import { POST as SIGNAL_POST } from './signal/+server';
+import { POST as UPDATE_POST } from './update/+server';
 import { resolveEntry } from '$lib/server/sandbox/registry';
 
 vi.mock('$lib/server/security/origin', () => ({
@@ -26,6 +30,53 @@ function makeEvent(body: unknown): Parameters<typeof POST>[0] {
 			get: vi.fn()
 		}
 	} as unknown as Parameters<typeof POST>[0];
+}
+
+function makeRouteEvent(
+	route: string,
+	options: { method?: string; body?: unknown; search?: Record<string, string> } = {}
+): unknown {
+	const url = new URL(`http://localhost${route}`);
+	for (const [key, value] of Object.entries(options.search ?? {})) {
+		url.searchParams.set(key, value);
+	}
+	return {
+		params: { id: 'sandbox-1' },
+		url,
+		request: new Request(url, {
+			method: options.method ?? 'GET',
+			body: options.body === undefined ? undefined : JSON.stringify(options.body)
+		}),
+		cookies: {
+			get: vi.fn()
+		}
+	};
+}
+
+function mockSandboxExec(stdout: string): ReturnType<typeof vi.fn> {
+	const writeFile = vi.fn().mockResolvedValue(undefined);
+	const exec = vi.fn().mockResolvedValue({
+		exitCode: 0,
+		stdout,
+		stderr: ''
+	});
+	vi.mocked(resolveEntry).mockReturnValue({
+		client: {
+			provision: vi.fn(),
+			bootstrap: vi.fn(),
+			restartWorker: vi.fn(),
+			exec,
+			writeFile,
+			terminate: vi.fn()
+		},
+		handle: {
+			id: 'sandbox-1',
+			status: 'Ready',
+			host: vi.fn(),
+			accessToken: ''
+		}
+	});
+	return exec;
 }
 
 describe('POST /api/sandbox/[id]/workflow', () => {
@@ -89,5 +140,140 @@ describe('POST /api/sandbox/[id]/workflow', () => {
 			expect.stringContaining('--input-file'),
 			expect.anything()
 		);
+	});
+});
+
+describe('workflow message route validation', () => {
+	it('rejects unknown query names before invoking Temporal CLI', async () => {
+		const exec = mockSandboxExec('{}');
+		const response = await QUERY_GET(
+			makeRouteEvent('/api/sandbox/sandbox-1/workflow/query', {
+				search: { workflowId: 'order-1', name: 'unknownQuery' }
+			}) as Parameters<typeof QUERY_GET>[0]
+		);
+
+		expect(response.status).toBe(400);
+		expect(exec).not.toHaveBeenCalled();
+	});
+
+	it('rejects unknown signal names before invoking Temporal CLI', async () => {
+		const exec = mockSandboxExec('{}');
+		const response = await SIGNAL_POST(
+			makeRouteEvent('/api/sandbox/sandbox-1/workflow/signal', {
+				method: 'POST',
+				body: { workflowId: 'order-1', name: 'unknownSignal', payload: {} }
+			}) as Parameters<typeof SIGNAL_POST>[0]
+		);
+
+		expect(response.status).toBe(400);
+		expect(exec).not.toHaveBeenCalled();
+	});
+
+	it('rejects unknown update names before invoking Temporal CLI', async () => {
+		const exec = mockSandboxExec('{}');
+		const response = await UPDATE_POST(
+			makeRouteEvent('/api/sandbox/sandbox-1/workflow/update', {
+				method: 'POST',
+				body: { workflowId: 'order-1', name: 'unknownUpdate', input: {} }
+			}) as Parameters<typeof UPDATE_POST>[0]
+		);
+
+		expect(response.status).toBe(400);
+		expect(exec).not.toHaveBeenCalled();
+	});
+});
+
+describe('GET /api/sandbox/[id]/workflow/visibility', () => {
+	it('lists workflows with a Temporal Visibility query', async () => {
+		const exec = mockSandboxExec(
+			JSON.stringify({
+				executions: [
+					{
+						execution: { workflowId: 'order-1', runId: 'run-1' },
+						type: { name: 'orderFoodWorkflow' },
+						status: 'WORKFLOW_EXECUTION_STATUS_COMPLETED',
+						searchAttributes: {
+							indexedFields: {
+								OrderStatus: { data: btoa(JSON.stringify(['DELIVERED'])) },
+								CustomerTier: { data: btoa(JSON.stringify(['premium'])) },
+								RestaurantId: { data: btoa(JSON.stringify(['rest-test'])) }
+							}
+						}
+					}
+				]
+			})
+		);
+
+		const response = await VISIBILITY_GET(
+			makeRouteEvent('/api/sandbox/sandbox-1/workflow/visibility', {
+				search: {
+					status: 'DELIVERED',
+					customerTier: 'premium',
+					restaurantId: 'rest-test'
+				}
+			}) as Parameters<typeof VISIBILITY_GET>[0]
+		);
+
+		expect(response.status).toBe(200);
+		await expect(response.json()).resolves.toEqual({
+			workflows: [
+				{
+					workflowId: 'order-1',
+					runId: 'run-1',
+					status: 'COMPLETED',
+					type: 'orderFoodWorkflow',
+					businessSnapshot: {
+						OrderStatus: 'DELIVERED',
+						CustomerTier: 'premium',
+						RestaurantId: 'rest-test'
+					}
+				}
+			]
+		});
+		expect(exec).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.stringContaining('OrderStatus='),
+			expect.anything()
+		);
+		expect(exec).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.stringContaining('DELIVERED'),
+			expect.anything()
+		);
+	});
+
+	it('returns a teaching error when Search Attributes are not registered', async () => {
+		const exec = vi.fn().mockResolvedValue({
+			exitCode: 1,
+			stdout: 'invalid search attribute OrderStatus',
+			stderr: ''
+		});
+		vi.mocked(resolveEntry).mockReturnValue({
+			client: {
+				provision: vi.fn(),
+				bootstrap: vi.fn(),
+				restartWorker: vi.fn(),
+				exec,
+				writeFile: vi.fn(),
+				terminate: vi.fn()
+			},
+			handle: {
+				id: 'sandbox-1',
+				status: 'Ready',
+				host: vi.fn(),
+				accessToken: ''
+			}
+		});
+
+		const response = await VISIBILITY_GET(
+			makeRouteEvent('/api/sandbox/sandbox-1/workflow/visibility', {
+				search: { status: 'DELIVERED' }
+			}) as Parameters<typeof VISIBILITY_GET>[0]
+		);
+
+		expect(response.status).toBe(422);
+		await expect(response.json()).resolves.toEqual({
+			error: expect.stringContaining('Search Attributes must be registered')
+		});
 	});
 });

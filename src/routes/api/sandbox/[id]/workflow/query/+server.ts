@@ -11,7 +11,7 @@
 
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import type { QueryName } from '$lib/contracts/workflow-api';
+import { isQueryName } from '$lib/contracts/workflow-api';
 import { requireOwnedSandbox } from '$lib/server/security/guards';
 import {
 	getTemporalCliTarget,
@@ -24,13 +24,16 @@ export const GET: RequestHandler = async (event) => {
 	await requireOwnedSandbox(event, params.id);
 
 	const workflowId = url.searchParams.get('workflowId');
-	const name = url.searchParams.get('name') as QueryName | null;
+	const name = url.searchParams.get('name');
 
 	if (!workflowId) {
 		return json({ error: 'workflowId query param is required' }, { status: 400 });
 	}
 	if (!name) {
 		return json({ error: 'name query param is required' }, { status: 400 });
+	}
+	if (!isQueryName(name)) {
+		return json({ error: `Unknown query name: ${name}` }, { status: 400 });
 	}
 
 	const entry = getTemporalCliTarget(params.id);

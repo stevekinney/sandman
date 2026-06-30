@@ -14,7 +14,9 @@ import type {
 	QueryReturnMap,
 	UpdateName,
 	UpdateInputMap,
-	UpdateResultMap
+	UpdateResultMap,
+	VisibilityFilter,
+	VisibilityWorkflowSummary
 } from '$lib/contracts/workflow-api';
 
 // ---------------------------------------------------------------------------
@@ -28,7 +30,13 @@ export type WorkflowRun = {
 };
 
 /** Kind of Temporal interaction shown in the teaching command log. */
-export type CommandLogPrimitive = 'workflow' | 'signal' | 'query' | 'update' | 'worker';
+export type CommandLogPrimitive =
+	| 'workflow'
+	| 'signal'
+	| 'query'
+	| 'update'
+	| 'worker'
+	| 'visibility';
 
 /** Status of a command recorded by the control plane. */
 export type CommandLogStatus = 'running' | 'succeeded' | 'failed';
@@ -125,4 +133,7 @@ export type TemporalController = {
 
 	/** Restart the worker process inside the E2B sandbox. */
 	restartWorker(): Promise<void>;
+
+	/** List workflows through Temporal Visibility Search Attributes. */
+	visibility(filter: VisibilityFilter): Promise<VisibilityWorkflowSummary[]>;
 };

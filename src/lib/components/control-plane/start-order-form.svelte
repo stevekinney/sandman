@@ -117,6 +117,7 @@
 				unitPriceCents: item.priceCents
 			})),
 			deliveryAddress: restaurant.deliveryAddress,
+			visibilitySearchAttributesEnabled: true,
 			paymentMethod: {
 				type: 'card',
 				last4: '4242',

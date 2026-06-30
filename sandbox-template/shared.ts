@@ -105,6 +105,7 @@ export type OrderInput = {
 	promoCode?: string;
 	restaurantAcceptTimeoutMinutes?: number;
 	historyCompactionThreshold?: number;
+	visibilitySearchAttributesEnabled?: boolean;
 };
 
 // ---------------------------------------------------------------------------
@@ -158,6 +159,39 @@ export type CompensationRecord = {
 	errorMessage?: string;
 };
 
+export type BusinessSnapshot = {
+	OrderStatus: OrderStatus;
+	CustomerTier: CustomerTier;
+	RestaurantId: string;
+};
+
+export type SearchAttributeMetadata = {
+	key: keyof BusinessSnapshot;
+	type: 'Keyword';
+	description: string;
+};
+
+export type VisibilityFilter = {
+	status?: OrderStatus;
+	customerTier?: CustomerTier;
+	restaurantId?: string;
+};
+
+export type VisibilityWorkflowSummary = {
+	workflowId: string;
+	runId: string;
+	status: string;
+	type?: string;
+	businessSnapshot: Partial<BusinessSnapshot>;
+};
+
+export type ActivityOperationMetadata = {
+	operationId: string;
+	idempotencyKey: string;
+	workflowId: string;
+	orderId: string;
+};
+
 /** Full queryable state of a live order workflow. */
 export type OrderSnapshot = {
 	status: OrderStatus;
@@ -169,6 +203,7 @@ export type OrderSnapshot = {
 	totalCents: MoneyCents;
 	attemptCounts: Record<string, number>;
 	compensations: CompensationRecord[];
+	activityOperations: Record<string, ActivityOperationMetadata>;
 	courier?: CourierInfo;
 	locationUpdateCount: number;
 	restaurantDeadline?: string;
@@ -178,12 +213,44 @@ export type OrderSnapshot = {
 	completedAt?: string;
 	appliedPromoCode?: string;
 	continueAsNewPending: boolean;
-	searchAttributes: {
-		OrderStatus: OrderStatus;
-		CustomerTier: CustomerTier;
-		RestaurantId: string;
-	};
+	businessSnapshot: BusinessSnapshot;
+	timelineDescriptions: string[];
 };
+
+export const SEARCH_ATTRIBUTE_METADATA = [
+	{
+		key: 'OrderStatus',
+		type: 'Keyword',
+		description: 'Current business lifecycle state for the order workflow.'
+	},
+	{
+		key: 'CustomerTier',
+		type: 'Keyword',
+		description: 'Customer tier used for workshop filtering and prioritization examples.'
+	},
+	{
+		key: 'RestaurantId',
+		type: 'Keyword',
+		description: 'Restaurant identifier used to find all orders for one merchant.'
+	}
+] as const satisfies readonly SearchAttributeMetadata[];
+
+export const SIGNAL_NAMES = [
+	'cancelOrder',
+	'restaurantAccepted',
+	'restaurantRejected',
+	'foodReady',
+	'courierLocationUpdate',
+	'addTip',
+	'deliveryCompleted'
+] as const satisfies readonly SignalName[];
+
+export const QUERY_NAMES = ['getStatus', 'getTimeline'] as const satisfies readonly QueryName[];
+
+export const UPDATE_NAMES = [
+	'updateDeliveryAddress',
+	'applyPromoCode'
+] as const satisfies readonly UpdateName[];
 
 export const WORKFLOW_EVENT_TYPE = {
 	WorkflowExecutionStarted: 'WorkflowExecutionStarted',
@@ -322,6 +389,7 @@ export const FEATURE_ID = {
 	ChildWorkflow: 'child-workflow',
 	HeartbeatsCancellation: 'heartbeats-cancellation',
 	ContinueAsNew: 'continue-as-new',
+	QueryableBusinessSnapshot: 'queryable-business-snapshot',
 	SearchAttributes: 'search-attributes',
 	LocalActivities: 'local-activities',
 	ReplaySafety: 'replay-safety',
@@ -339,7 +407,8 @@ export const SCENARIO_ID = {
 	ChildDelivery: 'child-delivery',
 	WorkerRecovery: 'worker-recovery',
 	ContinueAsNew: 'continue-as-new',
-	ReplaySafety: 'replay-safety'
+	ReplaySafety: 'replay-safety',
+	SearchAttributes: 'search-attributes'
 } as const;
 
 export type ScenarioId = (typeof SCENARIO_ID)[keyof typeof SCENARIO_ID];
@@ -370,6 +439,7 @@ export type ControlId =
 	| 'apply-promo'
 	| 'complete-delivery'
 	| 'kill-worker'
+	| 'list-visibility'
 	| 'query-status'
 	| 'query-timeline';
 
@@ -509,6 +579,20 @@ export const SCENARIOS = [
 				completesOn: 'QueryCompleted'
 			}
 		]
+	},
+	{
+		id: SCENARIO_ID.SearchAttributes,
+		title: 'Filter with Temporal Visibility',
+		summary:
+			'List workflows by real Search Attributes after first reading the queryable business snapshot.',
+		steps: [
+			{
+				id: 'list-visibility',
+				control: 'list-visibility',
+				featureId: 'search-attributes',
+				completesOn: 'QueryCompleted'
+			}
+		]
 	}
 ] as const satisfies readonly Scenario[];
 
@@ -555,6 +639,11 @@ declare global {
 	type QueryName = import('./shared.ts').QueryName;
 	type CourierInfo = import('./shared.ts').CourierInfo;
 	type CompensationRecord = import('./shared.ts').CompensationRecord;
+	type BusinessSnapshot = import('./shared.ts').BusinessSnapshot;
+	type SearchAttributeMetadata = import('./shared.ts').SearchAttributeMetadata;
+	type VisibilityFilter = import('./shared.ts').VisibilityFilter;
+	type VisibilityWorkflowSummary = import('./shared.ts').VisibilityWorkflowSummary;
+	type ActivityOperationMetadata = import('./shared.ts').ActivityOperationMetadata;
 	type OrderSnapshot = import('./shared.ts').OrderSnapshot;
 	type TimelineEntry = import('./shared.ts').TimelineEntry;
 	type WorkflowEventType = import('./shared.ts').WorkflowEventType;

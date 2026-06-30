@@ -7,6 +7,7 @@
  *   POST /api/sandbox/[id]/workflow/signal  → send signal
  *   GET  /api/sandbox/[id]/workflow/query   → run query
  *   POST /api/sandbox/[id]/workflow/update  → run update
+ *   GET  /api/sandbox/[id]/workflow/visibility → list via Search Attributes
  *   POST /api/sandbox/[id]/worker/kill      → kill worker
  *   POST /api/sandbox/[id]/worker/restart   → restart worker
  */
@@ -20,7 +21,9 @@ import type {
 	QueryReturnMap,
 	UpdateName,
 	UpdateInputMap,
-	UpdateResultMap
+	UpdateResultMap,
+	VisibilityFilter,
+	VisibilityWorkflowSummary
 } from '$lib/contracts/workflow-api';
 
 /**
@@ -117,5 +120,23 @@ export class FetchController implements TemporalController {
 			const text = await res.text();
 			throw new Error(`Restart worker failed: ${text}`);
 		}
+	}
+
+	async visibility(filter: VisibilityFilter): Promise<VisibilityWorkflowSummary[]> {
+		const url = new URL(`${this.base}/workflow/visibility`, window.location.href);
+		if (filter.status !== undefined) url.searchParams.set('status', filter.status);
+		if (filter.customerTier !== undefined) {
+			url.searchParams.set('customerTier', filter.customerTier);
+		}
+		if (filter.restaurantId !== undefined)
+			url.searchParams.set('restaurantId', filter.restaurantId);
+
+		const res = await fetch(url.toString());
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error(`Visibility query failed: ${text}`);
+		}
+		const body = (await res.json()) as { workflows: VisibilityWorkflowSummary[] };
+		return body.workflows;
 	}
 }

@@ -19,14 +19,22 @@ import {
 
 import {
 	ORDER_STATUS,
+	QUERY_NAMES,
+	SEARCH_ATTRIBUTE_METADATA,
 	SCENARIOS,
 	SCENARIO_ID,
+	SIGNAL_NAMES,
+	UPDATE_NAMES,
 	type OrderStatus,
 	type ScenarioId,
 	type SignalName,
 	type QueryName,
 	type UpdateName,
-	type FeatureId
+	type FeatureId,
+	type BusinessSnapshot,
+	type VisibilityFilter,
+	type VisibilityWorkflowSummary,
+	type ActivityOperationMetadata
 } from './workflow-api.ts';
 
 import {
@@ -186,7 +194,7 @@ describe('SignalName / QueryName / UpdateName types', () => {
 });
 
 describe('FeatureId type', () => {
-	it('includes all fourteen features from the workflow-api.ts contract', () => {
+	it('includes all fifteen features from the workflow-api.ts contract', () => {
 		const feature: FeatureId = 'activities-retry';
 		expect(feature).toBe('activities-retry');
 		expectTypeOf<FeatureId>().toEqualTypeOf<
@@ -200,11 +208,65 @@ describe('FeatureId type', () => {
 			| 'child-workflow'
 			| 'heartbeats-cancellation'
 			| 'continue-as-new'
+			| 'queryable-business-snapshot'
 			| 'search-attributes'
 			| 'local-activities'
 			| 'replay-safety'
 			| 'durable-recovery'
 		>();
+	});
+});
+
+describe('workflow message allowlists', () => {
+	it('exports runtime allowlists for API route validation', () => {
+		expect(SIGNAL_NAMES).toEqual([
+			'cancelOrder',
+			'restaurantAccepted',
+			'restaurantRejected',
+			'foodReady',
+			'courierLocationUpdate',
+			'addTip',
+			'deliveryCompleted'
+		]);
+		expect(QUERY_NAMES).toEqual(['getStatus', 'getTimeline']);
+		expect(UPDATE_NAMES).toEqual(['updateDeliveryAddress', 'applyPromoCode']);
+	});
+});
+
+describe('Visibility and idempotency contracts', () => {
+	it('defines the business snapshot and real Temporal Search Attribute metadata', () => {
+		const snapshot: BusinessSnapshot = {
+			OrderStatus: ORDER_STATUS.Created,
+			CustomerTier: 'standard',
+			RestaurantId: 'restaurant-1'
+		};
+		const filter: VisibilityFilter = {
+			status: ORDER_STATUS.Created,
+			customerTier: 'standard',
+			restaurantId: 'restaurant-1'
+		};
+		const summary: VisibilityWorkflowSummary = {
+			workflowId: 'order-1',
+			runId: 'run-1',
+			status: 'Running',
+			type: 'orderFoodWorkflow',
+			businessSnapshot: snapshot
+		};
+		const operation: ActivityOperationMetadata = {
+			operationId: 'charge-payment',
+			idempotencyKey: 'order-1:charge-payment',
+			workflowId: 'order-1',
+			orderId: 'order-1'
+		};
+
+		expect(SEARCH_ATTRIBUTE_METADATA).toEqual([
+			expect.objectContaining({ key: 'OrderStatus', type: 'Keyword' }),
+			expect.objectContaining({ key: 'CustomerTier', type: 'Keyword' }),
+			expect.objectContaining({ key: 'RestaurantId', type: 'Keyword' })
+		]);
+		expect(summary.businessSnapshot).toEqual(snapshot);
+		expect(filter.restaurantId).toBe('restaurant-1');
+		expect(operation.idempotencyKey).toBe('order-1:charge-payment');
 	});
 });
 
@@ -218,7 +280,8 @@ describe('SCENARIOS', () => {
 			'child-delivery',
 			'worker-recovery',
 			'continue-as-new',
-			'replay-safety'
+			'replay-safety',
+			'search-attributes'
 		]);
 		expectTypeOf<ScenarioId>().toEqualTypeOf<
 			| 'happy-path'
@@ -229,11 +292,12 @@ describe('SCENARIOS', () => {
 			| 'worker-recovery'
 			| 'continue-as-new'
 			| 'replay-safety'
+			| 'search-attributes'
 		>();
 	});
 
 	it('has mechanically verifiable steps for every scenario', () => {
-		expect(SCENARIOS).toHaveLength(8);
+		expect(SCENARIOS).toHaveLength(9);
 		for (const scenario of SCENARIOS) {
 			expect(scenario.title.length).toBeGreaterThan(0);
 			expect(scenario.summary.length).toBeGreaterThan(0);

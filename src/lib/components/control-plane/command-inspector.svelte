@@ -23,6 +23,28 @@
 			? 'No Temporal history event has been observed yet.'
 			: explainEvent(latestEvent)
 	);
+	const latestCommandExplanation = $derived(
+		latestEntry === undefined ? undefined : explainCommand(latestEntry)
+	);
+
+	function explainCommand(entry: CommandLogEntry): string {
+		if (entry.primitive === 'visibility') {
+			return 'Temporal Visibility reads indexed Search Attributes across workflow executions. Unlike a workflow query, it does not need a specific running workflow handler.';
+		}
+		if (entry.primitive === 'query') {
+			return 'A workflow query reads state from one execution without adding a history event or advancing workflow code.';
+		}
+		if (entry.primitive === 'update') {
+			return 'A workflow update validates synchronously and then records accepted mutation work in workflow history.';
+		}
+		if (entry.primitive === 'signal') {
+			return 'A signal appends an external event to workflow history so the workflow can react when it next runs.';
+		}
+		if (entry.primitive === 'worker') {
+			return 'Worker commands affect only the polling process. The workflow state remains in the Temporal server.';
+		}
+		return 'Starting a workflow creates a durable execution with its own event history.';
+	}
 
 	function explainEvent(event: WorkflowEvent): string {
 		if (event.type.startsWith('ActivityTask')) {
@@ -88,6 +110,9 @@
 					<dd><code>{latestEntry.temporalCommand}</code></dd>
 				</div>
 			</dl>
+			{#if latestCommandExplanation}
+				<p>{latestCommandExplanation}</p>
+			{/if}
 		{/if}
 	</div>
 

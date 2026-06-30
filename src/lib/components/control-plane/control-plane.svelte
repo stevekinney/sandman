@@ -16,7 +16,9 @@
 	 * via the `onstarted` callback so it can scope its poll to the workflow ID.
 	 */
 	import Badge from '@lostgradient/cinder/badge';
+	import Button from '@lostgradient/cinder/button';
 	import '@lostgradient/cinder/badge/styles';
+	import '@lostgradient/cinder/button/styles';
 	import type {
 		CommandLogDraft,
 		CommandLogEntry,
@@ -31,7 +33,8 @@
 		QueryName,
 		SignalName,
 		TimelineEntry,
-		UpdateName
+		UpdateName,
+		VisibilityWorkflowSummary
 	} from '$lib/contracts/workflow-api';
 	import StartOrderForm from './start-order-form.svelte';
 	import SignalControls from './signal-controls.svelte';
@@ -76,6 +79,9 @@
 	let activeOrder = $state<OrderInput | null>(null);
 	let nextControlEventSequence = $state(10_000);
 	let nextCommandId = $state(1);
+	let visibilityLoading = $state(false);
+	let visibilityError = $state<string | null>(null);
+	let visibilityResults = $state<VisibilityWorkflowSummary[]>([]);
 	const deliveryFeeCents = 299;
 	const progressSteps = [
 		{ label: 'Placed', statuses: ['CREATED', 'VALIDATING', 'PAYMENT_CHARGED'] },
@@ -280,6 +286,29 @@
 					recordCommandError(entry, error);
 					throw error;
 				}
+			},
+			visibility: async (filter) => {
+				const entry = recordCommand(
+					buildCommandDraft(
+						'List Visibility',
+						'visibility',
+						'GET /api/sandbox/[id]/workflow/visibility',
+						{
+							temporalCommand: 'temporal workflow list --query <Search Attributes>',
+							workflowId: workflowRun?.workflowId,
+							payload: filter
+						}
+					),
+					'running'
+				);
+				try {
+					const result = await baseController.visibility(filter);
+					recordCommandResult(entry, result, 'succeeded');
+					return result;
+				} catch (error) {
+					recordCommandError(entry, error);
+					throw error;
+				}
 			}
 		};
 	}
@@ -358,10 +387,30 @@
 				return 'Complete Delivery';
 			case 'kill-worker':
 				return 'Kill Worker';
+			case 'list-visibility':
+				return 'List Visibility';
 			case 'query-status':
 				return 'Get Status';
 			case 'query-timeline':
 				return 'Get Timeline';
+		}
+	}
+
+	async function listVisibility(): Promise<void> {
+		if (!activeOrder) return;
+		visibilityLoading = true;
+		visibilityError = null;
+		try {
+			visibilityResults = await loggingController.visibility({
+				status: latestTimelineEntry?.status,
+				customerTier: activeOrder.customerTier,
+				restaurantId: activeOrder.restaurantId
+			});
+			emitControlEvent('QueryCompleted');
+		} catch (err) {
+			visibilityError = err instanceof Error ? err.message : String(err);
+		} finally {
+			visibilityLoading = false;
 		}
 	}
 </script>
@@ -438,6 +487,35 @@
 				if (name === 'getStatus') emitControlEvent('QueryCompleted');
 			}}
 		/>
+
+		<section class="visibility-panel" aria-label="Temporal Visibility">
+			<div>
+				<p class="eyebrow">Temporal Visibility</p>
+				<p>
+					Filter real workflow executions by OrderStatus, CustomerTier, and RestaurantId Search
+					Attributes.
+				</p>
+			</div>
+			<Button
+				label="List Visibility"
+				variant={recommendedControl === 'list-visibility' ? 'primary' : 'secondary'}
+				loading={visibilityLoading}
+				onclick={listVisibility}
+			/>
+			{#if visibilityError}
+				<p role="alert" class="visibility-error">{visibilityError}</p>
+			{/if}
+			{#if visibilityResults.length > 0}
+				<ul class="visibility-results">
+					{#each visibilityResults as result (`${result.workflowId}:${result.runId}`)}
+						<li>
+							<span>{result.workflowId}</span>
+							<strong>{result.status}</strong>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
 
 		<UpdateControls controller={loggingController} workflowId={workflowRun.workflowId} />
 
@@ -563,5 +641,52 @@
 		flex-direction: column;
 		gap: 0.75rem;
 		padding-top: 0.5rem;
+	}
+
+	.visibility-panel {
+		display: grid;
+		gap: 0.75rem;
+		padding: 1rem;
+		border: 1px solid var(--cinder-border, #334155);
+		border-radius: 0.5rem;
+		background: var(--cinder-surface, #0f172a);
+	}
+
+	.visibility-panel p {
+		margin: 0;
+		color: var(--cinder-text-muted, #94a3b8);
+	}
+
+	.visibility-error {
+		padding: 0.75rem;
+		border: 1px solid #f97316;
+		border-radius: 0.375rem;
+		background: #431407;
+		color: #fed7aa;
+	}
+
+	.visibility-results {
+		display: grid;
+		gap: 0.5rem;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.visibility-results li {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		min-width: 0;
+		padding: 0.5rem 0.625rem;
+		border: 1px solid var(--cinder-border, #334155);
+		border-radius: 0.375rem;
+	}
+
+	.visibility-results span {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 </style>
