@@ -40,6 +40,7 @@ export type Reaper = {
  */
 export function createReaper(maxAgeMs: number, now: () => number = Date.now): Reaper {
 	const entries = new Map<string, ReaperEntry>();
+	let intervalTickRunning = false;
 
 	async function tick(): Promise<void> {
 		const cutoff = now() - maxAgeMs;
@@ -47,11 +48,11 @@ export function createReaper(maxAgeMs: number, now: () => number = Date.now): Re
 
 		await Promise.all(
 			expired.map(async (e) => {
-				entries.delete(e.id);
 				try {
 					await e.terminate();
+					entries.delete(e.id);
 				} catch {
-					// Sandbox may already be gone; swallow the error.
+					// Preserve the entry so the next tick can retry cleanup.
 				}
 			})
 		);
@@ -70,8 +71,11 @@ export function createReaper(maxAgeMs: number, now: () => number = Date.now): Re
 
 		start(intervalMs) {
 			const handle = setInterval(() => {
-				// Fire-and-forget; errors are swallowed in tick().
-				void tick();
+				if (intervalTickRunning) return;
+				intervalTickRunning = true;
+				void tick().finally(() => {
+					intervalTickRunning = false;
+				});
 			}, intervalMs);
 			handle.unref?.();
 			return () => clearInterval(handle);

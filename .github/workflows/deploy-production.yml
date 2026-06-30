@@ -1,0 +1,154 @@
+name: Deploy Production
+
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish_e2b_template:
+        description: Rebuild and publish the E2B template before deploying
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy Production
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+      E2B_TEAM_ID: ${{ vars.E2B_TEAM_ID }}
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      FLY_ORG: ${{ vars.FLY_ORG }}
+      MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+      PRODUCTION_WEB_ORIGIN: ${{ vars.PRODUCTION_WEB_ORIGIN }}
+    steps:
+      - name: Checkout CI commit
+        if: github.event_name == 'workflow_run'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Checkout selected commit
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v4
+
+      - name: Verify deploy commit is current main
+        if: github.event_name == 'workflow_run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --depth=1
+          current_main="$(git rev-parse origin/main)"
+          if [ "$DEPLOY_SHA" != "$current_main" ]; then
+            echo "::error::Refusing to deploy ${DEPLOY_SHA}; origin/main is ${current_main}"
+            exit 1
+          fi
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          missing=0
+          for variable_name in \
+            E2B_API_KEY \
+            FLY_API_TOKEN \
+            FLY_ORG \
+            MIGRATION_DATABASE_URL \
+            PRODUCTION_WEB_ORIGIN
+          do
+            if [ -z "${!variable_name:-}" ]; then
+              echo "::error::${variable_name} is required for production deploys"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+          flyctl auth whoami
+          flyctl config validate --config deployment/fly/web.toml
+
+      - name: Verify pre-deploy configuration
+        run: bun run deploy:status
+
+      - name: Publish E2B template
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_e2b_template
+        shell: bash
+        run: |
+          set -euo pipefail
+          e2b_command=(bunx e2b template publish sandman --yes)
+          if [ -n "${E2B_TEAM_ID:-}" ]; then
+            e2b_command+=(--team "$E2B_TEAM_ID")
+          fi
+          "${e2b_command[@]}"
+
+      - name: Resolve E2B template ID
+        shell: bash
+        run: |
+          set -euo pipefail
+          bunx e2b template list --format json > "$RUNNER_TEMP/e2b-templates.json"
+          template_id="$(bun -e '
+            const templates = await Bun.file(process.argv[2]).json();
+            const values = Array.isArray(templates) ? templates : Object.values(templates).flat();
+            const match = values.find((template) => template?.template_name === "sandman" || template?.name === "sandman");
+            const id = match?.template_id ?? match?.templateId ?? match?.id;
+            if (typeof id === "string" && id.length > 0) console.log(id);
+          ' "$RUNNER_TEMP/e2b-templates.json")"
+          if [ -z "$template_id" ]; then
+            echo "::error::Unable to resolve E2B template ID for sandman"
+            exit 1
+          fi
+          echo "E2B_TEMPLATE_ID=$template_id" >> "$GITHUB_ENV"
+          echo "- E2B template: \`${template_id}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Stage E2B template secret
+        run: flyctl secrets set --stage --app sandman E2B_TEMPLATE_ID="$E2B_TEMPLATE_ID"
+
+      - name: Run production migrations
+        run: bun run db:migrate
+
+      - name: Deploy web
+        run: flyctl deploy . --config deployment/fly/web.toml --dockerfile deployment/containers/web.Dockerfile
+
+      - name: Verify public health check
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsS "${PRODUCTION_WEB_ORIGIN%/}/health"
+
+      - name: Write deployment summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### Production deploy"
+            echo ""
+            echo "- Commit: \`${DEPLOY_SHA}\`"
+            echo "- Web: \`${PRODUCTION_WEB_ORIGIN%/}\`"
+            echo "- Fly app: \`sandman\`"
+          } >> "$GITHUB_STEP_SUMMARY"

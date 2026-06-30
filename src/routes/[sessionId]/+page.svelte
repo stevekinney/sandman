@@ -19,6 +19,7 @@
 	import ControlPlane from '$lib/components/control-plane/control-plane.svelte';
 	import { FetchController } from '$lib/components/control-plane/fetch-controller';
 	import { GuidedTour, TourState } from '$lib/components/explainer';
+	import { getSandboxStatusFailureMessage, isSandboxUnusable } from './session-status';
 
 	let { data }: { data: PageData } = $props();
 
@@ -32,6 +33,10 @@
 	let timelineEntries = $state<TimelineEntry[]>([]);
 	let sandboxStatus = $state<string>('provisioning');
 	let sandboxStatusError = $state<string | null>(null);
+	const sandboxFailureMessage = $derived(
+		getSandboxStatusFailureMessage(sandboxStatus, sandboxStatusError)
+	);
+	const sandboxUnusable = $derived(isSandboxUnusable(sandboxStatus));
 
 	$effect(() => {
 		const sandboxId = data.sandboxId;
@@ -98,13 +103,13 @@
 		<span class="session-status" data-status={sandboxStatus}>{sandboxStatus}</span>
 	</header>
 
-	{#if sandboxStatus === 'error' || sandboxStatusError}
+	{#if sandboxFailureMessage}
 		<div class="session-error" role="alert">
-			{sandboxStatusError ?? 'Sandbox bootstrap failed. Start a new session to try again.'}
+			{sandboxFailureMessage}
 		</div>
 	{/if}
 
-	<main class="session-panels">
+	<main class="session-panels" data-unusable={sandboxUnusable}>
 		<section class="panel panel--editor" aria-label="Code editor">
 			<Editor sandboxId={data.sandboxId} />
 		</section>
@@ -220,6 +225,10 @@
 		flex-direction: column;
 		gap: 1.5rem;
 		background: #fafafa;
+	}
+
+	.session-panels[data-unusable='true'] .panel {
+		opacity: 0.52;
 	}
 
 	.guided-tour-panel {

@@ -44,6 +44,19 @@ Required Fly secrets:
 Do not set `MIGRATION_DATABASE_URL` as a Fly runtime secret. Use it only when
 running migrations.
 
+Required GitHub `production` environment secrets:
+
+- `FLY_API_TOKEN`: Fly deploy token.
+- `MIGRATION_DATABASE_URL`: direct Neon migration connection string.
+- `E2B_API_KEY`: E2B API key for template lookup and optional publishing.
+
+Required GitHub `production` environment variables:
+
+- `FLY_ORG`: Fly organization slug. Use `personal` unless a Lost Gradient Fly
+  organization exists in `flyctl orgs list`.
+- `PRODUCTION_WEB_ORIGIN`: `https://sandman.fly.dev`.
+- `E2B_TEAM_ID`: optional E2B team ID.
+
 ## Fly Setup
 
 Create the app and set secrets:
@@ -70,6 +83,10 @@ in Neon, but the in-process E2B handle is gone. The UI must surface the session
 as unavailable or expired rather than pretending reconnect is guaranteed.
 
 ## Preflight
+
+Pushes to `main` run the `CI` workflow first. `Deploy Production` runs only
+after `CI` succeeds for the current `main` commit. Operators can also run
+`Deploy Production` manually with `workflow_dispatch`.
 
 Run these before deploy:
 

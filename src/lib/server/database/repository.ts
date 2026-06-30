@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, lt, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import type { Database } from './connection.ts';
 import {
 	DEMO_SESSION_STATUS,
@@ -28,6 +28,16 @@ export type DemoSessionRecord = {
 	id: string;
 	tokenHash: string;
 };
+
+export type SandboxReservationResult =
+	| { status: 'reserved'; reservationId: string }
+	| { status: 'session-limit' | 'global-limit' };
+
+const ACTIVE_SANDBOX_STATUSES = [
+	SANDBOX_SESSION_STATUS.Provisioning,
+	SANDBOX_SESSION_STATUS.Bootstrapping,
+	SANDBOX_SESSION_STATUS.Ready
+] as const;
 
 export async function createDemoSession(
 	database: Database,
@@ -90,6 +100,118 @@ export async function createSandboxSession(
 	});
 }
 
+export async function reserveSandboxSlot(
+	database: Database,
+	input: {
+		sessionId: string;
+		now: Date;
+		expiresAt: Date;
+		globalLimit: number;
+		perSessionLimit: number;
+	}
+): Promise<SandboxReservationResult> {
+	const reservationId = crypto.randomUUID();
+	const rows = await database.execute<{
+		status: 'reserved' | 'session-limit' | 'global-limit';
+		reservation_id: string | null;
+	}>(sql`
+		with locked as (
+			select pg_advisory_xact_lock(hashtext('sandman:sandbox-capacity'))
+		),
+		expired as (
+			update ${sandboxSession}
+			set
+				status = ${SANDBOX_SESSION_STATUS.Expired},
+				updated_at = ${input.now},
+				terminated_at = ${input.now}
+			where
+				expires_at < ${input.now}
+				and status in (${SANDBOX_SESSION_STATUS.Provisioning}, ${SANDBOX_SESSION_STATUS.Bootstrapping}, ${SANDBOX_SESSION_STATUS.Ready})
+			returning id
+		),
+		session_active as (
+			select count(*)::int as value
+			from ${sandboxSession}, locked
+			where
+				session_id = ${input.sessionId}
+				and expires_at >= ${input.now}
+				and status in (${SANDBOX_SESSION_STATUS.Provisioning}, ${SANDBOX_SESSION_STATUS.Bootstrapping}, ${SANDBOX_SESSION_STATUS.Ready})
+		),
+		global_active as (
+			select count(*)::int as value
+			from ${sandboxSession}, locked
+			where
+				expires_at >= ${input.now}
+				and status in (${SANDBOX_SESSION_STATUS.Provisioning}, ${SANDBOX_SESSION_STATUS.Bootstrapping}, ${SANDBOX_SESSION_STATUS.Ready})
+		),
+		inserted as (
+			insert into ${sandboxSession} (
+				id,
+				session_id,
+				e2b_sandbox_id,
+				status,
+				created_at,
+				updated_at,
+				expires_at
+			)
+			select
+				${reservationId},
+				${input.sessionId},
+				null,
+				${SANDBOX_SESSION_STATUS.Provisioning},
+				${input.now},
+				${input.now},
+				${input.expiresAt}
+			from session_active, global_active
+			where
+				session_active.value < ${input.perSessionLimit}
+				and global_active.value < ${input.globalLimit}
+			returning id
+		)
+		select
+			case
+				when exists(select 1 from inserted) then 'reserved'
+				when (select value from session_active) >= ${input.perSessionLimit} then 'session-limit'
+				else 'global-limit'
+			end as status,
+			(select id from inserted) as reservation_id
+	`);
+	const row = rows.rows[0];
+	if (!row) return { status: 'global-limit' };
+	if (row.status === 'reserved' && row.reservation_id) {
+		return { status: 'reserved', reservationId: row.reservation_id };
+	}
+	if (row.status === 'session-limit') return { status: 'session-limit' };
+	return { status: 'global-limit' };
+}
+
+export async function attachSandboxToReservation(
+	database: Database,
+	input: { reservationId: string; sandboxId: string; now: Date }
+): Promise<void> {
+	await database
+		.update(sandboxSession)
+		.set({
+			e2bSandboxId: input.sandboxId,
+			updatedAt: input.now
+		})
+		.where(eq(sandboxSession.id, input.reservationId));
+}
+
+export async function markSandboxReservationError(
+	database: Database,
+	input: { reservationId: string; now: Date; errorMessage: string }
+): Promise<void> {
+	await database
+		.update(sandboxSession)
+		.set({
+			status: SANDBOX_SESSION_STATUS.Error,
+			updatedAt: input.now,
+			errorMessage: input.errorMessage
+		})
+		.where(eq(sandboxSession.id, input.reservationId));
+}
+
 export async function updateSandboxStatus(
 	database: Database,
 	input: {
@@ -137,8 +259,14 @@ export async function getOwnedSandboxStatus(
 		.limit(1);
 
 	const row = rows[0];
-	if (!row || !isSandboxSessionStatus(row.status)) return null;
-	return { ...row, status: row.status };
+	if (!row || !row.sandboxId || !isSandboxSessionStatus(row.status)) return null;
+	return {
+		sandboxId: row.sandboxId,
+		status: row.status,
+		errorMessage: row.errorMessage,
+		expiresAt: row.expiresAt,
+		updatedAt: row.updatedAt
+	};
 }
 
 export async function sandboxBelongsToSession(
@@ -156,7 +284,7 @@ export async function countActiveSandboxes(database: Database, now: Date): Promi
 		.where(
 			and(
 				gte(sandboxSession.expiresAt, now),
-				sql`${sandboxSession.status} in (${SANDBOX_SESSION_STATUS.Provisioning}, ${SANDBOX_SESSION_STATUS.Bootstrapping}, ${SANDBOX_SESSION_STATUS.Ready})`
+				inArray(sandboxSession.status, ACTIVE_SANDBOX_STATUSES)
 			)
 		);
 	return rows[0]?.value ?? 0;
@@ -173,7 +301,7 @@ export async function countActiveSandboxesForSession(
 			and(
 				eq(sandboxSession.sessionId, input.sessionId),
 				gte(sandboxSession.expiresAt, input.now),
-				sql`${sandboxSession.status} in (${SANDBOX_SESSION_STATUS.Provisioning}, ${SANDBOX_SESSION_STATUS.Bootstrapping}, ${SANDBOX_SESSION_STATUS.Ready})`
+				inArray(sandboxSession.status, ACTIVE_SANDBOX_STATUSES)
 			)
 		);
 	return rows[0]?.value ?? 0;
@@ -220,11 +348,11 @@ export async function markExpiredSandboxes(
 		.where(
 			and(
 				lt(sandboxSession.expiresAt, input.now),
-				sql`${sandboxSession.status} in (${SANDBOX_SESSION_STATUS.Provisioning}, ${SANDBOX_SESSION_STATUS.Bootstrapping}, ${SANDBOX_SESSION_STATUS.Ready})`
+				inArray(sandboxSession.status, ACTIVE_SANDBOX_STATUSES)
 			)
 		)
 		.returning({ sandboxId: sandboxSession.e2bSandboxId });
-	return rows.map((row) => row.sandboxId);
+	return rows.map((row) => row.sandboxId).filter(isString);
 }
 
 export async function getMonitoringSnapshot(
@@ -265,12 +393,13 @@ export async function getExpiredRegisteredSandboxIds(
 		.where(
 			and(
 				lt(sandboxSession.expiresAt, input.now),
-				sql`${sandboxSession.status} in (${SANDBOX_SESSION_STATUS.Provisioning}, ${SANDBOX_SESSION_STATUS.Bootstrapping}, ${SANDBOX_SESSION_STATUS.Ready})`
+				inArray(sandboxSession.status, ACTIVE_SANDBOX_STATUSES),
+				isNotNull(sandboxSession.e2bSandboxId)
 			)
 		)
 		.orderBy(desc(sandboxSession.expiresAt))
 		.limit(input.limit);
-	return rows.map((row) => row.sandboxId);
+	return rows.map((row) => row.sandboxId).filter(isString);
 }
 
 function isSandboxSessionStatus(value: string): value is SandboxSessionStatus {
@@ -282,4 +411,8 @@ function isSandboxSessionStatus(value: string): value is SandboxSessionStatus {
 		value === SANDBOX_SESSION_STATUS.Expired ||
 		value === SANDBOX_SESSION_STATUS.Terminated
 	);
+}
+
+function isString(value: string | null): value is string {
+	return typeof value === 'string';
 }

@@ -12,14 +12,14 @@
 
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { getSandboxRegistry, registerHandle } from '$lib/server/sandbox/registry';
+import { deregisterHandle, getSandboxRegistry, registerHandle } from '$lib/server/sandbox/registry';
 import { getProductionConfiguration } from '$lib/server/configuration';
 import { getDatabase } from '$lib/server/database/connection';
 import {
-	countActiveSandboxes,
-	countActiveSandboxesForSession,
-	createSandboxSession,
+	attachSandboxToReservation,
 	incrementRateLimitBucket,
+	markSandboxReservationError,
+	reserveSandboxSlot,
 	updateSandboxStatus
 } from '$lib/server/database/repository';
 import { SANDBOX_SESSION_STATUS } from '$lib/server/database/schema';
@@ -45,29 +45,6 @@ export const POST: RequestHandler = async (event) => {
 
 	const database = getDatabase();
 	const now = new Date();
-	const activeForSession = await countActiveSandboxesForSession(database, {
-		sessionId: session.id,
-		now
-	});
-	if (activeForSession >= configuration.maxActiveSandboxesPerSession) {
-		logWarning({
-			event: 'sandbox.provision.blocked',
-			sessionId: session.id,
-			status: 'session-limit'
-		});
-		throw error(429, 'This demo session already has an active sandbox');
-	}
-
-	const activeGlobal = await countActiveSandboxes(database, now);
-	if (activeGlobal >= configuration.maxActiveSandboxes) {
-		logWarning({
-			event: 'sandbox.provision.blocked',
-			sessionId: session.id,
-			status: 'global-limit'
-		});
-		throw error(429, 'Sandman is at its active sandbox limit');
-	}
-
 	const rateLimitCount = await incrementRateLimitBucket(database, {
 		key: `session-create:${session.tokenHash}`,
 		windowStart: getHourWindowStart(now),
@@ -78,22 +55,48 @@ export const POST: RequestHandler = async (event) => {
 		throw error(429, 'This demo token has reached its hourly session creation limit');
 	}
 
+	const reservation = await reserveSandboxSlot(database, {
+		sessionId: session.id,
+		now,
+		expiresAt: new Date(now.getTime() + configuration.sessionTtlMs),
+		globalLimit: configuration.maxActiveSandboxes,
+		perSessionLimit: configuration.maxActiveSandboxesPerSession
+	});
+	if (reservation.status !== 'reserved') {
+		logWarning({
+			event: 'sandbox.provision.blocked',
+			sessionId: session.id,
+			status: reservation.status
+		});
+		throw error(
+			429,
+			reservation.status === 'session-limit'
+				? 'This demo session already has an active sandbox'
+				: 'Sandman is at its active sandbox limit'
+		);
+	}
+
 	const registry = getSandboxRegistry();
 	const startedAt = performance.now();
 	let handle: Awaited<ReturnType<typeof registry.client.provision>> | undefined;
 	try {
 		handle = await registry.client.provision();
 		registerHandle(handle.id, handle);
-		await createSandboxSession(database, {
-			sessionId: session.id,
+		await attachSandboxToReservation(database, {
+			reservationId: reservation.reservationId,
 			sandboxId: handle.id,
-			now,
-			expiresAt: new Date(now.getTime() + configuration.sessionTtlMs)
+			now: new Date()
 		});
 	} catch (err) {
+		await markSandboxReservationError(database, {
+			reservationId: reservation.reservationId,
+			now: new Date(),
+			errorMessage: err instanceof Error ? err.message : String(err)
+		});
 		if (handle !== undefined) {
 			try {
 				await registry.client.terminate(handle);
+				deregisterHandle(handle.id);
 			} catch (terminationError) {
 				logError({
 					event: 'sandbox.provision_cleanup.failed',

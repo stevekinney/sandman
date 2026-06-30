@@ -43,6 +43,16 @@ Migration-only environment:
 
 - `MIGRATION_DATABASE_URL`
 
+GitHub Actions `production` environment:
+
+- Secrets: `FLY_API_TOKEN`, `MIGRATION_DATABASE_URL`, `E2B_API_KEY`.
+- Variables: `FLY_ORG`, `PRODUCTION_WEB_ORIGIN`.
+- Optional variable: `E2B_TEAM_ID`.
+
+Pushes to `main` deploy only after the `CI` workflow succeeds for the current
+`main` commit. Manual production deploys are available through
+`workflow_dispatch`.
+
 ## Preflight
 
 ```sh

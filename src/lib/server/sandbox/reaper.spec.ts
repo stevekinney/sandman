@@ -97,16 +97,46 @@ describe('createReaper', () => {
 		expect(callCount).toBe(1);
 	});
 
-	it('tick() swallows errors from a failing terminate function', async () => {
+	it('tick() retries a failed terminate function on the next pass', async () => {
 		const base = Date.now();
 		const reaper = createReaper(60_000, () => base);
+		let callCount = 0;
 
 		reaper.register('broken-sandbox', base - 120_000, async () => {
-			throw new Error('terminate exploded');
+			callCount++;
+			if (callCount === 1) throw new Error('terminate exploded');
 		});
 
-		// Should not throw.
 		await expect(reaper.tick()).resolves.toBeUndefined();
+		await expect(reaper.tick()).resolves.toBeUndefined();
+		await expect(reaper.tick()).resolves.toBeUndefined();
+
+		expect(callCount).toBe(2);
+	});
+
+	it('start() does not run overlapping ticks', async () => {
+		vi.useFakeTimers();
+		const base = 1_000_000;
+		let terminateCalls = 0;
+		let releaseTerminate: (() => void) | undefined;
+
+		const reaper = createReaper(60_000, () => base);
+		reaper.register('old', base - 120_000, async () => {
+			terminateCalls++;
+			await new Promise<void>((resolve) => {
+				releaseTerminate = resolve;
+			});
+		});
+
+		const stop = reaper.start(1_000);
+		await vi.advanceTimersByTimeAsync(1_000);
+		await vi.advanceTimersByTimeAsync(2_000);
+
+		expect(terminateCalls).toBe(1);
+
+		releaseTerminate?.();
+		await vi.runOnlyPendingTimersAsync();
+		stop();
 	});
 
 	it('start() returns a cleanup function that stops the interval', () => {
