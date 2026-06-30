@@ -26,35 +26,100 @@ bun run dev
 | Variable                 | Description                                                              |
 | ------------------------ | ------------------------------------------------------------------------ |
 | `E2B_API_KEY`            | Your E2B API key — get one at https://e2b.dev                            |
-| `E2B_TEMPLATE_ID`        | _Optional._ ID of a prebuilt E2B template with Node + the Temporal CLI + worker deps baked in. If unset, Sandman uses the default base image and installs the Temporal CLI and worker dependencies on demand during bootstrap. |
+| `E2B_TEMPLATE_ID`        | ID of the prebuilt E2B template with Node, the Temporal CLI, and worker dependencies baked in. Required in production. Optional in local development. |
 | `DATABASE_URL`           | Pooled Neon Postgres runtime connection string for demo sessions, sandbox ownership, and rate limits. |
 | `MIGRATION_DATABASE_URL` | Direct Neon Postgres connection string for `bun run db:migrate`; do not set as a Fly runtime secret. |
-| `SANDMAN_DEMO_TOKEN_SHA256` | SHA-256 hash of the shared demo token. Store the raw token outside the repo. |
+| `SANDMAN_DEMO_TOKEN_SHA256` | SHA-256 hash of the shared invite code, shown in the UI as the demo token. Store the raw code outside the repo. |
 | `SANDMAN_SESSION_SECRET` | Signing secret for the HttpOnly demo session cookie. |
 | `SANDMAN_SESSION_TTL_MS` | Sandbox lifetime in milliseconds (default: `300000` / 5 min)             |
 | `SANDMAN_MAX_ACTIVE_SANDBOXES` | Global active sandbox limit (default: `20`) |
 | `SANDMAN_MAX_ACTIVE_SANDBOXES_PER_SESSION` | Active sandbox limit per browser session (default: `1`) |
-| `SANDMAN_SESSION_CREATIONS_PER_TOKEN_PER_HOUR` | Hourly sandbox creation limit per demo token (default: `5`) |
+| `SANDMAN_SESSION_CREATIONS_PER_TOKEN_PER_HOUR` | Hourly sandbox creation limit per invite code hash (default: `5`) |
 
-## Prebuilt E2B template (optional)
+## Invite Codes
+
+Sandman uses one shared invite code for production v1. The landing page labels
+this value as the demo token. The raw invite code is never stored in source,
+Fly configuration, GitHub Actions, or Neon. Sandman stores only a SHA-256 hash
+in `SANDMAN_DEMO_TOKEN_SHA256` and compares submitted tokens server-side.
+
+Generate a new invite code:
+
+```sh
+openssl rand -base64 24
+```
+
+Store the raw output in a password manager, then hash it without a trailing
+newline:
+
+```sh
+printf '%s' '<raw-invite-code>' | shasum -a 256 | awk '{print $1}'
+```
+
+Use that hash as the runtime secret:
+
+```sh
+flyctl secrets set -a sandman SANDMAN_DEMO_TOKEN_SHA256="<sha256-hash>"
+```
+
+For local development, put the same hash in `.env`:
+
+```sh
+SANDMAN_DEMO_TOKEN_SHA256=<sha256-hash>
+```
+
+Rotating the invite code only changes future token exchanges. Existing browser
+sessions have signed cookies and durable `demo_session` rows. To revoke sessions
+created from an old invite code, run this against the production database:
+
+```sql
+update demo_session
+set status = 'revoked'
+where token_hash = '<old-sha256-hash>'
+  and status = 'active';
+```
+
+## Prebuilt E2B Template
 
 The default flow installs the Temporal CLI and worker npm dependencies on every
 boot — a per-boot network dependency. Baking them into a prebuilt E2B template
 removes those installs, which makes bootstrap more reliable (and usually faster,
 though boot time is network-variable, so treat reliability as the main win).
 
-**Requirements:** `e2b` CLI and an authenticated E2B account.
+**Requirements:** `e2b` CLI and an authenticated E2B account with a valid
+`E2B_API_KEY`.
 
-Build and publish the template from the repo root:
+Create the template definition from the repo root:
 
 ```sh
-npx e2b@latest template build --name sandman
+bunx e2b template create sandman --path . --dockerfile e2b.Dockerfile
 ```
 
-The command prints the new template ID. Add it to your `.env`:
+If the template already exists and you changed `e2b.Dockerfile`, publish the
+updated template:
 
 ```sh
-E2B_TEMPLATE_ID=<id-printed-above>
+bunx e2b template publish sandman --yes
+```
+
+If Sandman belongs to an E2B team, pass the team ID from `e2b.toml` when
+listing or publishing:
+
+```sh
+bunx e2b template publish sandman --yes --team "<team-id>"
+```
+
+List templates and copy the `sandman` template ID:
+
+```sh
+bunx e2b template list --format json
+```
+
+Add the ID to `.env` locally and to Fly for production:
+
+```sh
+E2B_TEMPLATE_ID=<template-id>
+flyctl secrets set -a sandman E2B_TEMPLATE_ID="<template-id>"
 ```
 
 Sandman reads `E2B_TEMPLATE_ID` at startup. When set, it passes the template ID
@@ -66,7 +131,7 @@ change required.
 `NODE_ENV=production`.
 
 The template definition lives in `e2b.Dockerfile` at the repo root. Re-run
-`e2b template build` after updating Node, the Temporal CLI version, or the
+`e2b template publish` after updating Node, the Temporal CLI version, or the
 worker's `package.json` dependencies to keep the baked cache current.
 
 ## Verification gates

@@ -32,6 +32,10 @@ Runtime Fly secrets:
 - `SANDMAN_DEMO_TOKEN_SHA256`
 - `SANDMAN_SESSION_SECRET`
 
+`SANDMAN_DEMO_TOKEN_SHA256` is the SHA-256 hash of the shared invite code. The
+landing page calls the raw value the demo token. Do not store the raw invite
+code in Fly, GitHub, Neon, source files, or logs.
+
 Runtime non-secret defaults in `deployment/fly/web.toml`:
 
 - `SANDMAN_SESSION_TTL_MS=300000`
@@ -52,6 +56,71 @@ GitHub Actions `production` environment:
 Pushes to `main` deploy only after the `CI` workflow succeeds for the current
 `main` commit. Manual production deploys are available through
 `workflow_dispatch`.
+
+## Invite Code Commands
+
+Generate a raw invite code:
+
+```sh
+openssl rand -base64 24
+```
+
+Store the raw value in a password manager. Hash the exact value without adding
+a newline:
+
+```sh
+printf '%s' '<raw-invite-code>' | shasum -a 256 | awk '{print $1}'
+```
+
+Set or rotate the runtime hash:
+
+```sh
+flyctl secrets set -a sandman SANDMAN_DEMO_TOKEN_SHA256="<sha256-hash>"
+```
+
+If rotation must invalidate existing browser sessions, revoke rows for the old
+hash:
+
+```sql
+update demo_session
+set status = 'revoked'
+where token_hash = '<old-sha256-hash>'
+  and status = 'active';
+```
+
+Completion signal: future token exchanges require the new invite code, and
+`bun run deploy:status` reports `SANDMAN_DEMO_TOKEN_SHA256` as present.
+
+Failure signal: if users with the new invite code still receive `401`, confirm
+the hash was generated with `printf '%s'` and not `echo`, which adds a newline
+on most shells.
+
+## E2B Template Commands
+
+Create the template if it does not exist:
+
+```sh
+bunx e2b template create sandman --path . --dockerfile e2b.Dockerfile
+```
+
+Publish updates:
+
+```sh
+bunx e2b template publish sandman --yes
+```
+
+For team-owned templates, include the team ID when publishing or listing:
+
+```sh
+bunx e2b template publish sandman --yes --team "<team-id>"
+bunx e2b template list --team "<team-id>" --format json
+```
+
+Set the resolved template ID in Fly:
+
+```sh
+flyctl secrets set -a sandman E2B_TEMPLATE_ID="<e2b-template-id>"
+```
 
 ## Preflight
 

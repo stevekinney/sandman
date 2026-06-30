@@ -16,7 +16,8 @@ Prepare these before the first deploy:
 - A Neon Postgres project for demo sessions, sandbox ownership, and rate limits.
 - An E2B account and API key.
 - A prebuilt E2B template created from `e2b.Dockerfile`.
-- A shared demo token stored outside the repository.
+- A shared invite code stored outside the repository. The UI calls this the
+  demo token.
 
 ## Secrets
 
@@ -26,19 +27,23 @@ Generate a cookie signing secret:
 openssl rand -hex 32 # SANDMAN_SESSION_SECRET
 ```
 
-Generate a demo token, store the raw value in a password manager, and configure
-only the SHA-256 hash:
+Generate an invite code, store the raw value in a password manager, and
+configure only the SHA-256 hash:
 
 ```sh
-printf '%s' '<raw-demo-token>' | shasum -a 256
+openssl rand -base64 24 # raw invite code
+printf '%s' '<raw-invite-code>' | shasum -a 256 | awk '{print $1}'
 ```
+
+Share the raw invite code only through the password manager. Put the hash in
+`SANDMAN_DEMO_TOKEN_SHA256`.
 
 Required Fly secrets:
 
 - `DATABASE_URL`: pooled Neon runtime connection string.
 - `E2B_API_KEY`: E2B API key.
 - `E2B_TEMPLATE_ID`: prebuilt E2B template ID.
-- `SANDMAN_DEMO_TOKEN_SHA256`: SHA-256 hash of the shared demo token.
+- `SANDMAN_DEMO_TOKEN_SHA256`: SHA-256 hash of the shared invite code.
 - `SANDMAN_SESSION_SECRET`: signing secret for the HttpOnly session cookie.
 
 Do not set `MIGRATION_DATABASE_URL` as a Fly runtime secret. Use it only when
@@ -56,6 +61,59 @@ Required GitHub `production` environment variables:
   organization exists in `flyctl orgs list`.
 - `PRODUCTION_WEB_ORIGIN`: `https://sandman.fly.dev`.
 - `E2B_TEAM_ID`: optional E2B team ID.
+
+## Invite Code Rotation
+
+Rotating `SANDMAN_DEMO_TOKEN_SHA256` changes future token exchanges. It does not
+automatically remove signed browser sessions that already exchanged the old
+invite code. To force old sessions out, revoke rows for the previous hash:
+
+```sql
+update demo_session
+set status = 'revoked'
+where token_hash = '<old-sha256-hash>'
+  and status = 'active';
+```
+
+Then set the new hash:
+
+```sh
+flyctl secrets set -a sandman SANDMAN_DEMO_TOKEN_SHA256="<new-sha256-hash>"
+```
+
+Re-run `bun run deploy:status` after rotation. It should report
+`SANDMAN_DEMO_TOKEN_SHA256` as present without printing the value.
+
+## E2B Template
+
+Production requires a prebuilt E2B template. Use an E2B API key that is valid
+for the account or team that owns Sandman.
+
+Create the template if it does not exist:
+
+```sh
+bunx e2b template create sandman --path . --dockerfile e2b.Dockerfile
+```
+
+Publish updates after changing `e2b.Dockerfile` or sandbox dependencies:
+
+```sh
+bunx e2b template publish sandman --yes
+```
+
+If the template belongs to a team, pass the configured team ID when publishing
+or listing:
+
+```sh
+bunx e2b template publish sandman --yes --team "<team-id>"
+bunx e2b template list --team "<team-id>" --format json
+```
+
+Set the resulting template ID in Fly:
+
+```sh
+flyctl secrets set -a sandman E2B_TEMPLATE_ID="<e2b-template-id>"
+```
 
 ## Fly Setup
 
@@ -131,5 +189,5 @@ bun run proof:preview
 bun run smoke:e2e
 ```
 
-Do not share the raw demo token in logs, screenshots, committed files, or Fly
+Do not share the raw invite code in logs, screenshots, committed files, or Fly
 configuration.
