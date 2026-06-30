@@ -1,3 +1,5 @@
+import { loadEnv } from 'vite';
+
 const DEFAULT_SESSION_TTL_MS = 300_000;
 const DEFAULT_MAX_ACTIVE_SANDBOXES = 20;
 const DEFAULT_MAX_ACTIVE_SANDBOXES_PER_SESSION = 1;
@@ -16,8 +18,12 @@ export type ProductionConfiguration = {
 	isProduction: boolean;
 };
 
+type Environment = Record<string, string | undefined>;
+
+let cachedLocalEnvironment: Environment | undefined;
+
 export function getProductionConfiguration(
-	environment: NodeJS.ProcessEnv = process.env
+	environment: Environment = getDefaultEnvironment()
 ): ProductionConfiguration {
 	return {
 		databaseUrl: environment.DATABASE_URL,
@@ -40,6 +46,20 @@ export function getProductionConfiguration(
 		),
 		isProduction: environment.NODE_ENV === 'production'
 	};
+}
+
+function getDefaultEnvironment(): Environment {
+	const localEnvironment = getLocalEnvironment();
+	return { ...localEnvironment, ...process.env };
+}
+
+function getLocalEnvironment(): Environment {
+	cachedLocalEnvironment ??= loadEnv(getEnvironmentMode(), process.cwd(), '');
+	return cachedLocalEnvironment;
+}
+
+function getEnvironmentMode(): string {
+	return process.env.NODE_ENV === 'production' ? 'production' : 'development';
 }
 
 export function requireProductionReadiness(configuration = getProductionConfiguration()): void {

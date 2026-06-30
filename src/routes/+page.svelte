@@ -9,7 +9,9 @@
 	 * surfaced inline so the user can diagnose and retry.
 	 */
 	import Button from '@lostgradient/cinder/button';
+	import Input from '@lostgradient/cinder/input';
 	import '@lostgradient/cinder/button/styles';
+	import '@lostgradient/cinder/input/styles';
 
 	let demoToken = $state('');
 	let provisioning = $state(false);
@@ -59,16 +61,17 @@
 		<p role="alert" class="error">{provisionError}</p>
 	{/if}
 
-	<label class="token-field">
-		<span>Demo token</span>
-		<input
-			type="password"
-			autocomplete="off"
-			bind:value={demoToken}
-			disabled={provisioning}
-			placeholder="Enter demo token"
-		/>
-	</label>
+	<Input
+		id="demo-token"
+		class="token-field"
+		label="Demo token"
+		type="password"
+		autocomplete="off"
+		bind:value={demoToken}
+		oninput={(event) => (demoToken = event.currentTarget.value)}
+		disabled={provisioning}
+		placeholder="Enter demo token"
+	/>
 
 	<Button
 		class="start-button"
@@ -120,22 +123,20 @@
 		max-width: 480px;
 	}
 
-	.token-field {
-		display: grid;
-		gap: 0.35rem;
+	.landing :global(.token-field) {
 		width: min(100%, 22rem);
 		text-align: left;
-		color: #374151;
-		font-size: 0.875rem;
 	}
 
-	.token-field input {
-		width: 100%;
-		box-sizing: border-box;
-		border: 1px solid #d1d5db;
-		border-radius: 6px;
-		padding: 0.65rem 0.75rem;
-		font: inherit;
+	.landing :global(input.token-field) {
+		background: #ffffff;
+		color: #111827;
+		caret-color: #111827;
+	}
+
+	.landing :global(input.token-field::placeholder) {
+		color: #6b7280;
+		opacity: 1;
 	}
 
 	.landing :global(.start-button) {

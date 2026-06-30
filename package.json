@@ -15,7 +15,7 @@
 		"lint": "eslint .",
 		"test": "vitest run",
 		"test:workflows": "vitest run --root sandbox-template --passWithNoTests",
-		"test:e2e": "playwright test",
+		"test:e2e": "bun run build && playwright test",
 		"smoke:sandbox": "bun src/lib/server/sandbox/smoke.ts",
 		"proof:preview": "bun src/lib/server/proxy/proof.ts",
 		"smoke:e2e": "bun src/lib/server/sandbox/smoke-e2e.ts",

@@ -50,7 +50,7 @@ export const POST: RequestHandler = async (event) => {
 
 	const now = new Date();
 	const sessionId = crypto.randomUUID();
-	await createDemoSession(getDatabase(), {
+	await createDemoSession(getDatabase(configuration.databaseUrl), {
 		sessionId,
 		tokenHash: hashDemoToken(body.token),
 		now

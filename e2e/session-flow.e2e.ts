@@ -1,0 +1,142 @@
+import { expect, test, type Page } from '@playwright/test';
+
+const DEMO_TOKEN = 'playwright-demo-token';
+const SANDBOX_ID = 'sbx-playwright-flow';
+
+async function mockSessionExchange(page: Page): Promise<{ tokenRequests: string[] }> {
+	const tokenRequests: string[] = [];
+	await page.route('**/api/session', async (route) => {
+		const request = route.request();
+		const payload = request.postDataJSON() as { token?: string };
+		tokenRequests.push(payload.token ?? '');
+		await route.fulfill({
+			status: 201,
+			contentType: 'application/json',
+			headers: {
+				'set-cookie': 'sandman_session=e2e-session.signature; Path=/; HttpOnly; SameSite=Lax'
+			},
+			body: JSON.stringify({ ok: true })
+		});
+	});
+	return { tokenRequests };
+}
+
+async function mockSandboxCreation(
+	page: Page,
+	status = 200,
+	body = { sandboxId: SANDBOX_ID }
+): Promise<void> {
+	await page.route('**/api/sandbox', async (route) => {
+		await route.fulfill({
+			status,
+			contentType: status === 200 ? 'application/json' : 'text/plain',
+			body: typeof body === 'string' ? body : JSON.stringify(body)
+		});
+	});
+}
+
+async function mockSandboxStatus(
+	page: Page,
+	sandboxId: string,
+	status: string,
+	errorMessage: string | null = null
+): Promise<void> {
+	await page.route(new RegExp(`/api/sandbox/${sandboxId}/status$`), async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ status, errorMessage })
+		});
+	});
+}
+
+test('demo token exchange provisions a sandbox and redirects to the session page', async ({
+	page
+}) => {
+	const { tokenRequests } = await mockSessionExchange(page);
+	await mockSandboxCreation(page);
+	await mockSandboxStatus(page, SANDBOX_ID, 'ready');
+
+	await page.goto('/');
+	const tokenInput = page.getByLabel('Demo token');
+	await tokenInput.fill(DEMO_TOKEN);
+
+	await expect(tokenInput).toHaveValue(DEMO_TOKEN);
+	await expect(tokenInput).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+	await expect(tokenInput).toHaveCSS('color', 'rgb(17, 24, 39)');
+
+	await page.getByRole('button', { name: 'New Session' }).click();
+
+	await expect(page).toHaveURL(`/${SANDBOX_ID}`);
+	expect(tokenRequests).toEqual([DEMO_TOKEN]);
+	await expect(page.locator('.session-id')).toContainText(SANDBOX_ID);
+	await expect(page.locator('.session-status')).toHaveText('ready');
+	await expect(page.locator('[aria-label="Code editor"]')).toBeVisible();
+	await expect(page.locator('[aria-label="Temporal Web UI"]')).toBeVisible();
+	await expect(page.locator('[aria-label="Control plane and guided tour"]')).toBeVisible();
+});
+
+test('invalid demo token keeps the user on the landing page with a clear error', async ({
+	page
+}) => {
+	await page.route('**/api/session', async (route) => {
+		await route.fulfill({
+			status: 401,
+			contentType: 'text/plain',
+			body: 'Invalid demo token'
+		});
+	});
+
+	await page.goto('/');
+	await page.getByLabel('Demo token').fill('wrong-token');
+	await page.getByRole('button', { name: 'New Session' }).click();
+
+	await expect(page).toHaveURL('/');
+	await expect(page.getByRole('alert')).toContainText('Invalid demo token');
+});
+
+test('sandbox creation failures keep the user on the landing page with the server message', async ({
+	page
+}) => {
+	await mockSessionExchange(page);
+	await mockSandboxCreation(
+		page,
+		429,
+		'This demo token has reached its hourly session creation limit'
+	);
+
+	await page.goto('/');
+	await page.getByLabel('Demo token').fill(DEMO_TOKEN);
+	await page.getByRole('button', { name: 'New Session' }).click();
+
+	await expect(page).toHaveURL('/');
+	await expect(page.getByRole('alert')).toContainText(
+		'This demo token has reached its hourly session creation limit'
+	);
+});
+
+test('bootstrap failure is displayed on the session page', async ({ page }) => {
+	await mockSandboxStatus(page, SANDBOX_ID, 'error', 'Temporal server did not become ready');
+
+	await page.goto(`/${SANDBOX_ID}`);
+
+	await expect(page.locator('.session-status')).toHaveText('error');
+	await expect(page.getByRole('alert')).toContainText('Temporal server did not become ready');
+	await expect(page.locator('.session-panels')).toHaveAttribute('data-unusable', 'true');
+});
+
+test('expired and terminated sandboxes show explicit unusable states', async ({ page }) => {
+	for (const [status, message] of [
+		['expired', 'This sandbox expired and has been terminated. Start a new session to continue.'],
+		['terminated', 'This sandbox has been terminated. Start a new session to continue.']
+	] as const) {
+		const sandboxId = `${SANDBOX_ID}-${status}`;
+		await mockSandboxStatus(page, sandboxId, status);
+
+		await page.goto(`/${sandboxId}`);
+
+		await expect(page.locator('.session-status')).toHaveText(status);
+		await expect(page.getByRole('alert')).toContainText(message);
+		await expect(page.locator('.session-panels')).toHaveAttribute('data-unusable', 'true');
+	}
+});

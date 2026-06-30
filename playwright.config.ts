@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
 	webServer: {
-		command: 'bun run build && bun run preview',
+		command: 'bun run preview',
 		env: { SANDMAN_SESSION_SECRET: 'playwright-session-secret' },
 		port: 4173
 	},

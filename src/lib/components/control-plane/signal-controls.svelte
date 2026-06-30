@@ -6,13 +6,13 @@
 	 * courierLocationUpdate, addTip.
 	 */
 	import Button from '@lostgradient/cinder/button';
+	import Checkbox from '@lostgradient/cinder/checkbox';
 	import FormField from '@lostgradient/cinder/form-field';
-	import Label from '@lostgradient/cinder/label';
 	import NumberInput from '@lostgradient/cinder/number-input';
 	import Textarea from '@lostgradient/cinder/textarea';
 	import '@lostgradient/cinder/button/styles';
+	import '@lostgradient/cinder/checkbox/styles';
 	import '@lostgradient/cinder/form-field/styles';
-	import '@lostgradient/cinder/label/styles';
 	import '@lostgradient/cinder/number-input/styles';
 	import '@lostgradient/cinder/textarea/styles';
 	import type { TemporalController } from './types.ts';
@@ -83,10 +83,12 @@
 				placeholder="Enter reason…"
 			/>
 		</FormField>
-		<div class="field checkbox-field">
-			<input id="rejection-retryable" type="checkbox" bind:checked={rejectionRetryable} />
-			<Label for="rejection-retryable">Retryable</Label>
-		</div>
+		<Checkbox
+			id="rejection-retryable"
+			class="field"
+			label="Retryable"
+			bind:checked={rejectionRetryable}
+		/>
 		<Button
 			label="Restaurant Rejected"
 			variant="soft-danger"
