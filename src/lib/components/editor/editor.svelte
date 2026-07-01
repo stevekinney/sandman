@@ -20,6 +20,7 @@
 	import WorkerStatusStrip from '$lib/components/editor/worker-status-strip.svelte';
 	import type { WorkerStatus } from '$lib/contracts/sandbox';
 	import type * as Monaco from 'monaco-editor';
+	import { onMount } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 
 	type Props = {
@@ -140,10 +141,13 @@
 	}
 
 	// ---------------------------------------------------------------------------
-	// Monaco lifecycle — runs once when the container div is available
+	// Client mount guard — the cinder <Tabs> are browser-only, so we render an
+	// SSR placeholder and swap them in after hydration. onMount runs once on the
+	// client after hydration completes, which keeps the server and initial-client
+	// render identical (no hydration mismatch).
 	// ---------------------------------------------------------------------------
 
-	$effect(() => {
+	onMount(() => {
 		isMounted = true;
 	});
 
