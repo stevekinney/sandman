@@ -1,5 +1,3 @@
-import { loadEnv } from 'vite';
-
 const DEFAULT_SESSION_TTL_MS = 300_000;
 const DEFAULT_MAX_ACTIVE_SANDBOXES = 20;
 const DEFAULT_MAX_ACTIVE_SANDBOXES_PER_SESSION = 1;
@@ -19,8 +17,6 @@ export type ProductionConfiguration = {
 };
 
 type Environment = Record<string, string | undefined>;
-
-let cachedLocalEnvironment: Environment | undefined;
 
 export function getProductionConfiguration(
 	environment: Environment = getDefaultEnvironment()
@@ -48,18 +44,17 @@ export function getProductionConfiguration(
 	};
 }
 
+/**
+ * Reads configuration from the process environment.
+ *
+ * Fly injects runtime secrets as environment variables in production, and both
+ * the Bun runtime and the Vite dev server load `.env` files into `process.env`
+ * during local development — so `process.env` is the single source of truth.
+ * (Importing Vite's build-time `loadEnv` here would bundle Vite into the server
+ * output and crash at runtime.)
+ */
 function getDefaultEnvironment(): Environment {
-	const localEnvironment = getLocalEnvironment();
-	return { ...localEnvironment, ...process.env };
-}
-
-function getLocalEnvironment(): Environment {
-	cachedLocalEnvironment ??= loadEnv(getEnvironmentMode(), process.cwd(), '');
-	return cachedLocalEnvironment;
-}
-
-function getEnvironmentMode(): string {
-	return process.env.NODE_ENV === 'production' ? 'production' : 'development';
+	return process.env;
 }
 
 export function requireProductionReadiness(configuration = getProductionConfiguration()): void {
