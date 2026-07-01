@@ -78,41 +78,35 @@ test('demo token exchange provisions a sandbox and redirects to the session page
 
 	await expect(page).toHaveURL(`/${SANDBOX_ID}`);
 	expect(tokenRequests).toEqual([DEMO_TOKEN]);
-	await expect(page.locator('.session-id')).toContainText(SANDBOX_ID);
-	await expect(page.locator('.session-status')).toHaveText('Ready');
-	await expect(page.getByRole('tab', { name: 'Workflow State' })).toHaveAttribute(
-		'aria-selected',
-		'true'
-	);
-	await expect(page.locator('[aria-label="Control plane and guided tour"]')).toBeVisible();
-	await page.getByRole('tab', { name: 'Code Editor' }).click();
-	await expect(page.locator('[aria-label="Code editor"]')).toBeVisible();
-	await page.getByRole('tab', { name: 'Temporal UI' }).click();
-	await expect(page.locator('[aria-label="Temporal Web UI"]')).toBeVisible();
+	await expect(page.locator('.session__id')).toContainText(SANDBOX_ID);
+	await expect(page.locator('[data-chip="sandbox"]')).toContainText('Ready');
+
+	// Single-screen workbench: journey rail, code view by default, and the
+	// Temporal UI reachable through the center view switch.
+	await expect(page.locator('[aria-label="Guided journey"]')).toBeVisible();
+	await expect(page.locator('#center-panel-code')).toBeVisible();
+	await page
+		.getByRole('tablist', { name: 'Workbench view' })
+		.getByRole('tab', { name: 'Temporal UI' })
+		.click();
+	await expect(page.locator('#center-panel-temporal')).toBeVisible();
 });
 
-test('keyboard users can jump directly to the guided demo and inspect the tour map', async ({
-	page
-}) => {
+test('keyboard users can jump directly to the guided journey', async ({ page }) => {
 	const sandboxId = 'sbx-keyboard-a11y';
 	await mockSandboxStatus(page, sandboxId, 'ready');
 
 	await page.goto(`/${sandboxId}`);
 	await page.keyboard.press('Tab');
 
-	const skipLink = page.getByRole('link', { name: 'Skip to guided demo' });
+	const skipLink = page.getByRole('link', { name: 'Skip to guided journey' });
 	await expect(skipLink).toBeFocused();
 
 	await page.keyboard.press('Enter');
-	const guidedDemo = page.locator('#guided-demo');
-	await expect(guidedDemo).toBeFocused();
-	await expect(page).toHaveURL(new RegExp(`/${sandboxId}#guided-demo$`));
+	const guidedJourney = page.locator('#guided-journey');
+	await expect(guidedJourney).toBeFocused();
+	await expect(page).toHaveURL(new RegExp(`/${sandboxId}#guided-journey$`));
 
-	await page.keyboard.press('Tab');
-	const tourMapSummary = page.locator('summary').filter({ hasText: 'Tour map' });
-	await expect(tourMapSummary).toBeFocused();
-
-	await page.keyboard.press('Enter');
 	await expect(page.getByRole('navigation', { name: 'Tour progress' })).toBeVisible();
 });
 
@@ -228,9 +222,14 @@ test('bootstrap failure is displayed on the session page', async ({ page }) => {
 
 	await page.goto(`/${SANDBOX_ID}`);
 
-	await expect(page.locator('.session-status')).toHaveText('Error');
-	await expect(page.getByRole('alert')).toContainText('Temporal server did not become ready');
-	await expect(page.locator('.session-workbench')).toHaveAttribute('data-unusable', 'true');
+	await expect(page.locator('[data-chip="sandbox"]')).toContainText('Error');
+	await expect(page.locator('.session__gate')).toContainText(
+		'Temporal server did not become ready'
+	);
+	await expect(
+		page.locator('.session__gate').getByRole('link', { name: 'Start a new session' })
+	).toBeVisible();
+	await expect(page.locator('.session')).toHaveAttribute('data-unusable', 'true');
 });
 
 test('expired and terminated sandboxes show explicit unusable states', async ({ page }) => {
@@ -251,9 +250,9 @@ test('expired and terminated sandboxes show explicit unusable states', async ({ 
 
 		await page.goto(`/${sandboxId}`);
 
-		await expect(page.locator('.session-status')).toHaveText(label);
-		await expect(page.getByRole('alert')).toContainText(message);
-		await expect(page.locator('.session-workbench')).toHaveAttribute('data-unusable', 'true');
+		await expect(page.locator('[data-chip="sandbox"]')).toContainText(label);
+		await expect(page.locator('.session__gate')).toContainText(message);
+		await expect(page.locator('.session')).toHaveAttribute('data-unusable', 'true');
 	}
 });
 
@@ -289,7 +288,7 @@ test('guided tour can be completed through the visible workflow controls', async
 		if (payload.name === 'restaurantAccepted') {
 			timeline = [
 				...timeline,
-				makeEntry('Restaurant accepted', 'AWAITING_RESTAURANT', 'WorkflowExecutionSignaled')
+				makeEntry('Restaurant accepted', 'PREPARING', 'WorkflowExecutionSignaled')
 			];
 		}
 		if (payload.name === 'foodReady') {
@@ -309,11 +308,7 @@ test('guided tour can be completed through the visible workflow controls', async
 	await page.route(`**/api/sandbox/${sandboxId}/workflow/update`, async (route) => {
 		timeline = [
 			...timeline,
-			makeEntry(
-				'Delivery address updated',
-				'AWAITING_RESTAURANT',
-				'WorkflowExecutionUpdateAccepted'
-			)
+			makeEntry('Delivery address updated', 'PREPARING', 'WorkflowExecutionUpdateAccepted')
 		];
 		await route.fulfill({
 			status: 200,
@@ -321,10 +316,10 @@ test('guided tour can be completed through the visible workflow controls', async
 			body: JSON.stringify({
 				updated: true,
 				effectiveAddress: {
-					street: '456 Larimer Street',
+					street: '44 Maple Avenue',
 					city: 'Denver',
 					state: 'CO',
-					postalCode: '80202'
+					postalCode: '80209'
 				}
 			})
 		});
@@ -340,6 +335,7 @@ test('guided tour can be completed through the visible workflow controls', async
 					? timeline
 					: {
 							status: 'IN_DELIVERY',
+							totalCents: 2019,
 							businessSnapshot: {
 								OrderStatus: 'IN_DELIVERY',
 								CustomerTier: 'standard',
@@ -376,46 +372,61 @@ test('guided tour can be completed through the visible workflow controls', async
 	});
 
 	await page.goto(`/${sandboxId}`);
-	await page.getByRole('button', { name: 'Place Order' }).click();
+	const toolbar = page.getByRole('group', { name: 'Order lifecycle' });
+	const interactions = page.getByRole('group', { name: 'Workflow interactions' });
+	const journey = page.locator('[aria-label="Guided journey"]');
+
+	await toolbar.getByRole('button', { name: 'Place order' }).click();
+	await expect(journey.getByRole('heading', { name: 'Send a signal to resume' })).toBeVisible();
+
+	// The execution pointer maps the awaiting-restaurant phase onto the
+	// condition() line in workflows.ts and captions it above the editor.
+	await expect(page.getByText(/Executing line \d+ — parked on condition\(\)/)).toBeVisible({
+		timeout: 15_000
+	});
+
+	await toolbar.getByRole('button', { name: 'Restaurant accepted' }).click();
 	await expect(
-		page.getByRole('heading', { name: 'Send a signal to resume the workflow' })
+		journey.getByRole('heading', { name: 'Update with a synchronous validator' })
 	).toBeVisible();
 
-	await page.getByRole('button', { name: 'Restaurant Accepted' }).click();
+	// This step carries a hands-on code experiment with a jump-to-code button.
+	await expect(journey.getByText('Try changing the code')).toBeVisible();
+	await journey.getByRole('button', { name: 'Show me the code' }).click();
+	await expect(page.locator('#center-panel-code')).toBeVisible();
+
+	await interactions.getByRole('button', { name: 'Update address' }).click();
 	await expect(
-		page.getByRole('heading', { name: 'Updates with synchronous validators' })
+		journey.getByRole('heading', { name: 'Hand delivery to a child workflow' })
 	).toBeVisible();
 
-	await page.getByLabel('New street').fill('456 Larimer Street');
-	await page.getByLabel('New city').fill('Denver');
-	await page.getByLabel('New state').fill('CO');
-	await page.getByLabel('New postal code').fill('80202');
-	await page.getByRole('button', { name: 'Update Address' }).click();
+	await toolbar.getByRole('button', { name: 'Food ready' }).click();
+	await expect(journey.getByRole('heading', { name: 'Read state with a query' })).toBeVisible();
+
+	await interactions.getByRole('button', { name: 'Get status' }).click();
+	await expect(journey.getByRole('heading', { name: 'Search across workflows' })).toBeVisible();
+
+	await interactions.getByRole('button', { name: 'List visibility' }).click();
 	await expect(
-		page.getByRole('heading', { name: 'A child workflow handles delivery' })
+		journey.getByRole('heading', { name: 'Kill the worker — watch it recover' })
 	).toBeVisible();
 
-	await page.getByRole('button', { name: 'Food Ready' }).click();
-	await expect(
-		page.getByRole('heading', { name: 'Read the queryable business snapshot' })
-	).toBeVisible();
+	// The kill/restart control lives on the worker node in the topology strip.
+	const topology = page.locator('[aria-label="System topology"]');
+	await topology.getByRole('button', { name: 'Kill' }).click();
+	// While the worker is dead the execution pointer flips to its paused state.
+	await expect(page.getByText(/Paused at line \d+ — worker offline/)).toBeVisible();
+	await topology.getByRole('button', { name: 'Restart' }).click();
+	await expect(journey.getByRole('heading', { name: 'Finish the delivery' })).toBeVisible();
 
-	await page.getByRole('button', { name: 'Get Status' }).click();
-	await expect(
-		page.getByRole('heading', { name: 'Filter with Temporal Visibility' })
-	).toBeVisible();
-
-	await page.getByRole('button', { name: 'List Visibility' }).click();
-	await expect(
-		page.getByRole('heading', { name: 'Kill the worker — watch it recover' })
-	).toBeVisible();
-
-	await page.getByRole('button', { name: 'Kill Worker' }).click();
-	await page.getByRole('button', { name: 'Restart Worker' }).click();
-	await expect(page.getByRole('heading', { name: 'Complete the delivery workflow' })).toBeVisible();
-
-	await page.getByRole('button', { name: 'Complete Delivery' }).click();
+	await toolbar.getByRole('button', { name: 'Complete delivery' }).click();
 	await expect(page.getByText('Tour complete')).toBeVisible();
+
+	// The friendly steps lens shows the same durable history.
+	await page
+		.getByRole('radiogroup', { name: 'History lens' })
+		.getByRole('radio', { name: 'Steps' })
+		.click();
 	await expect(page.getByLabel('Order timeline').getByText('Order delivered')).toBeVisible();
 });
 

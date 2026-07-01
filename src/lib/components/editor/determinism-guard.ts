@@ -140,13 +140,21 @@ const DETERMINISM_PATTERNS: DeterminismPattern[] = [
 ];
 
 /**
- * Returns true when `path` refers to the workflow definitions file.
- * Only workflows.ts is subject to determinism checking; activities and shared
- * files are exempt because I/O and wall-clock access are intentional there.
+ * File names whose code runs inside the deterministic workflow sandbox.
+ * Activities, worker, and shared files are exempt because I/O and wall-clock
+ * access are intentional there.
  */
+const WORKFLOW_FILE_NAMES = new Set([
+	'workflows.ts',
+	'order-workflow.ts',
+	'delivery-workflow.ts',
+	'definitions.ts'
+]);
+
+/** Returns true when `path` refers to a workflow-sandbox file. */
 export function isWorkflowFile(path: string): boolean {
 	const filename = path.split('/').pop() ?? path;
-	return filename === 'workflows.ts';
+	return WORKFLOW_FILE_NAMES.has(filename);
 }
 
 /**

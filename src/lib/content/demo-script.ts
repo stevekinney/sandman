@@ -288,14 +288,49 @@ export const SCENARIO_COPY: Record<OrderStatus, string> = {
 // Tour step type
 // ---------------------------------------------------------------------------
 
+/**
+ * A hands-on code experiment attached to a tour step: a concrete edit the
+ * learner can make in the sandbox editor to get a different outcome. The
+ * anchor is a verbatim substring of the named sandbox-template file (the
+ * anti-drift test asserts this) so "show me the code" can jump straight to it.
+ */
+export type TourExperiment = {
+	/** What to change and what will happen — rendered as Markdown. */
+	prompt: string;
+	/** Which editable sandbox file the code lives in. */
+	file: string;
+	/** Verbatim substring of that file to reveal in the editor. */
+	anchor: string;
+};
+
+/**
+ * A "where to look" callout attached to a tour step: a note (rendered as
+ * Markdown) about what a workbench surface is showing right now, plus the
+ * surface itself so the UI can navigate the learner straight to it.
+ */
+export type TourLookAt = {
+	/** Which surface to bring into view. */
+	surface: 'temporal-ui' | 'events' | 'steps';
+	/** Why it is worth looking — teaches what the surface shows. */
+	note: string;
+};
+
 /** A single step in the guided tour. */
 export type TourStep = {
 	/** Stable identifier for this step. */
 	id: string;
+	/** Temporal concept eyebrow rendered above the step title (e.g. "Signals"). */
+	concept: string;
 	/** Short title rendered in the step indicator. */
 	title: string;
 	/** Full instructional copy rendered below the title. */
 	instruction: string;
+	/** One line telling the learner what to watch for while the step completes. */
+	watch: string;
+	/** Optional hands-on code edit that produces a different outcome. */
+	experiment?: TourExperiment;
+	/** Optional "where to look" callout that navigates to a workbench surface. */
+	lookAt?: TourLookAt;
 	/** Optional control-plane action that drives this step. */
 	control?: ControlId;
 	/**
@@ -320,80 +355,144 @@ export type TourStep = {
 export const TOUR: readonly TourStep[] = [
 	{
 		id: 'start-workflow',
+		concept: 'Durable execution',
 		title: 'Place a food order',
 		instruction:
-			'Click "Place Order" to start one durable order workflow. Temporal records the start event in history, then a worker begins running your workflow code.',
+			'Start one durable order workflow. Temporal records the start event in history, then a worker begins running your workflow code.',
+		watch: 'The first history event lands in the workflow history rail.',
 		control: 'start-order',
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.WorkflowExecutionStarted
 	},
 	{
 		id: 'activities-run',
-		title: 'Activities run — watch automatic retry',
+		concept: 'Activities & retries',
+		title: 'Activities run — with automatic retries',
 		instruction:
 			'Payment charge, restaurant notification, and courier dispatch each run as activities. If a transient failure occurs, Temporal retries automatically with exponential backoff. You do not write retry loops.',
+		watch: 'Activity tasks complete in the event stream — retries happen on their own.',
+		experiment: {
+			prompt:
+				"Make the charge fail once: in `activities.ts`, `chargePayment` simulates a gateway timeout for card `'0000'` — change it to `'4242'` (the demo card), then Reset and place a new order. Attempt 1 fails and Temporal retries it for you.",
+			file: 'activities.ts',
+			anchor: "last4 === '0000'"
+		},
+		lookAt: {
+			surface: 'events',
+			note: 'The **Events** lens on the right streams the durable history as it is written — every activity, retry, timer, and signal, live.'
+		},
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.ActivityTaskCompleted
 	},
 	{
 		id: 'durable-timer',
-		title: 'A durable timer guards the restaurant deadline',
+		concept: 'Durable timers',
+		title: 'A durable timer guards the deadline',
 		instruction:
 			'The workflow starts a timer for the restaurant-acceptance deadline. This timer lives in the Temporal server — it will fire even if the worker crashes and restarts.',
+		watch: 'A TimerStarted event is recorded in history.',
+		experiment: {
+			prompt:
+				'Shrink the deadline: change the `?? 10` minute fallback to `?? 1`, save, then Reset and place a new order without accepting it. After a minute the durable timer fires and the saga refunds the payment.',
+			file: 'order-workflow.ts',
+			anchor: 'restaurantAcceptTimeoutMinutes ?? 10'
+		},
+		lookAt: {
+			surface: 'temporal-ui',
+			note: 'This is the **real Temporal Web UI**, proxied from your sandbox. Your order is in the Workflows list — open it to see its Event History and the pending timer the server is holding durably.'
+		},
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.TimerStarted
 	},
 	{
 		id: 'signal-accept',
-		title: 'Send a signal to resume the workflow',
+		concept: 'Signals',
+		title: 'Send a signal to resume',
 		instruction:
-			'Click "Restaurant Accepted" to send a signal into the waiting workflow. The order has been paused until the restaurant responds; the signal lets it continue.',
+			'The order is parked waiting for the restaurant. Sending the restaurant-accepted signal appends an event to history and resumes the workflow.',
+		watch: '"Waiting for restaurant" flips to preparing.',
 		control: 'accept-restaurant',
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.WorkflowExecutionSignaled
 	},
 	{
 		id: 'update-with-validator',
-		title: 'Updates with synchronous validators',
+		concept: 'Updates & validators',
+		title: 'Update with a synchronous validator',
 		instruction:
-			'Update the delivery address while the order is preparing. Temporal validates the request before the workflow accepts it, so bad changes can be rejected immediately.',
+			'Update the delivery address while the order is preparing. A validator accepts or rejects the change before any workflow state mutates — bad changes are rejected immediately.',
+		watch: 'The update is validated, then recorded in history.',
+		experiment: {
+			prompt:
+				'Make the validator stricter: add `|| status === ORDER_STATUS.Preparing` to the rejection check, save, then try Update address while the order is preparing — the change is rejected synchronously and no history is written.',
+			file: 'order-workflow.ts',
+			anchor: 'ORDER_STATUS.InDelivery || status === ORDER_STATUS.Delivered'
+		},
 		control: 'update-address',
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.WorkflowExecutionUpdateAccepted
 	},
 	{
 		id: 'child-workflow',
-		title: 'A child workflow handles delivery',
+		concept: 'Child workflows',
+		title: 'Hand delivery to a child workflow',
 		instruction:
-			'Click "Food Ready" to hand delivery to a child workflow. The parent keeps owning the order, while the delivery workflow can be tracked on its own.',
+			'Food ready spawns a DeliveryWorkflow child. The parent keeps owning the order, while the delivery workflow can be tracked on its own in the Temporal UI.',
+		watch: 'A child workflow execution starts in the event stream.',
+		lookAt: {
+			surface: 'temporal-ui',
+			note: 'The Workflows list now shows **two executions**: your order and its `delivery-…` child. Open the child — Temporal links parents and children automatically, so composed processes stay fully observable.'
+		},
 		control: 'food-ready',
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.ChildWorkflowExecutionStarted
 	},
 	{
 		id: 'queryable-business-snapshot',
-		title: 'Read the queryable business snapshot',
+		concept: 'Queries',
+		title: 'Read state with a query',
 		instruction:
-			'Click "Get Status" to ask this running workflow for its current order snapshot. Queries are read-only: they inspect state without moving the workflow forward.',
+			'Ask the running workflow for its current order snapshot. Queries are read-only: they inspect state without moving the workflow forward.',
+		watch: 'A snapshot returns; no new history event is written.',
+		experiment: {
+			prompt:
+				'Change the delivery fee: edit the `?? 299` fallback in `order-workflow.ts`, save, Reset, and place a new order — then Get status again and the snapshot total reflects your fee.',
+			file: 'order-workflow.ts',
+			anchor: 'deliveryFeeCents ?? 299'
+		},
+		lookAt: {
+			surface: 'steps',
+			note: 'Flip the right rail to **Steps**: the same durable history, translated to plain language. Compare it with the raw **Events** lens to see exactly what Temporal stores.'
+		},
 		control: 'query-status',
 		completes: (e) => e.type === 'QueryCompleted'
 	},
 	{
 		id: 'search-attributes',
-		title: 'Filter with Temporal Visibility',
+		concept: 'Visibility',
+		title: 'Search across workflows',
 		instruction:
-			'Click "List Visibility" to search across workflow executions by indexed fields like order status, customer tier, and restaurant.',
+			'List executions by indexed Search Attributes — order status, customer tier, and restaurant — across every workflow, no specific handle needed.',
+		watch: 'Matching executions are reported back.',
 		control: 'list-visibility',
 		completes: (e) => e.type === 'QueryCompleted'
 	},
 	{
 		id: 'durable-recovery',
+		concept: 'Durable recovery',
 		title: 'Kill the worker — watch it recover',
 		instruction:
-			'Click "Kill Worker" to stop the process running your workflow code. Temporal keeps the history, so after you restart the worker the order resumes from the stored state.',
+			'Kill the process running your workflow code. State lives in the Temporal server, so after you restart the worker it replays history and resumes exactly where it left off.',
+		watch: 'The worker goes dark, then recovers with nothing lost.',
+		lookAt: {
+			surface: 'temporal-ui',
+			note: 'After the restart, open your workflow in the Temporal UI: the Event History shows the worker vanish, then a fresh one **replay every recorded event** to rebuild state — nothing was lost.'
+		},
 		control: 'kill-worker',
 		// Completes ONLY on WorkerRestarted — WorkerKilled does not advance this step.
 		completes: (e) => e.type === 'WorkerRestarted'
 	},
 	{
 		id: 'complete-delivery',
-		title: 'Complete the delivery workflow',
+		concept: 'Completion',
+		title: 'Finish the delivery',
 		instruction:
-			'Click "Complete Delivery" to finish the child workflow. The parent observes that result and moves the order to its delivered final state.',
+			'Complete the child delivery workflow. The parent observes that result and moves the order to its delivered final state.',
+		watch: 'The run reaches its final state.',
 		control: 'complete-delivery',
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.WorkflowExecutionCompleted
 	}

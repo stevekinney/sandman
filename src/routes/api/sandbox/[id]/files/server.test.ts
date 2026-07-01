@@ -11,13 +11,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { _configureSandboxResolver as configureSandboxResolver, POST } from './+server.ts';
 import type { SandboxClient, SandboxHandle, WorkerStatus } from '$lib/contracts/sandbox';
+import { requireOwnedSandbox, touchSessionActivity } from '$lib/server/security/guards';
 
 vi.mock('$lib/server/security/origin', () => ({
 	assertSameOrigin: vi.fn()
 }));
 
 vi.mock('$lib/server/security/guards', () => ({
-	requireOwnedSandbox: vi.fn().mockResolvedValue('session-id')
+	requireOwnedSandbox: vi.fn().mockResolvedValue('session-id'),
+	touchSessionActivity: vi.fn().mockResolvedValue(undefined)
 }));
 
 // ---------------------------------------------------------------------------
@@ -180,6 +182,21 @@ describe('POST /api/sandbox/[id]/files', () => {
 			await POST(event);
 
 			expect(resolve).toHaveBeenCalledWith('my-specific-sandbox');
+		});
+
+		it('slides session/sandbox expiry after the ownership guard succeeds (file writes count as activity)', async () => {
+			configureSandboxResolver(async () => ({
+				client: makeClient({
+					restartWorker: vi.fn().mockResolvedValue({ ok: true, phase: 'ready' })
+				}),
+				handle: makeHandle()
+			}));
+
+			const event = makeEvent('sandbox-1', { path: 'workflows.ts', contents: 'code' });
+			await POST(event);
+
+			expect(requireOwnedSandbox).toHaveBeenCalledWith(event, 'sandbox-1');
+			expect(touchSessionActivity).toHaveBeenCalledWith(event, 'sandbox-1');
 		});
 	});
 });

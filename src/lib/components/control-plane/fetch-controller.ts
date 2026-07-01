@@ -122,6 +122,22 @@ export class FetchController implements TemporalController {
 		}
 	}
 
+	async stopServer(): Promise<void> {
+		const res = await fetch(`${this.base}/server/stop`, { method: 'POST' });
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error(`Stop server failed: ${text}`);
+		}
+	}
+
+	async startServer(): Promise<void> {
+		const res = await fetch(`${this.base}/server/start`, { method: 'POST' });
+		if (!res.ok) {
+			const text = await res.text();
+			throw new Error(`Start server failed: ${text}`);
+		}
+	}
+
 	async visibility(filter: VisibilityFilter): Promise<VisibilityWorkflowSummary[]> {
 		const url = new URL(`${this.base}/workflow/visibility`, window.location.href);
 		if (filter.status !== undefined) url.searchParams.set('status', filter.status);

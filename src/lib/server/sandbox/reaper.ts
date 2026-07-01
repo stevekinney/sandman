@@ -23,6 +23,11 @@ export type Reaper = {
 	register(id: string, createdAt: number, terminate: () => Promise<void>): void;
 	/** Remove a sandbox from TTL tracking (e.g. after explicit terminate). */
 	unregister(id: string): void;
+	/**
+	 * Re-stamp a registered sandbox's `createdAt` to the current time, sliding
+	 * its TTL forward. A no-op if the sandbox is not registered.
+	 */
+	touch(id: string): void;
 	/** Perform a single reap pass — exposed for deterministic testing. */
 	tick(): Promise<void>;
 	/**
@@ -65,6 +70,12 @@ export function createReaper(maxAgeMs: number, now: () => number = Date.now): Re
 
 		unregister(id) {
 			entries.delete(id);
+		},
+
+		touch(id) {
+			const entry = entries.get(id);
+			if (!entry) return;
+			entries.set(id, { ...entry, createdAt: now() });
 		},
 
 		tick,

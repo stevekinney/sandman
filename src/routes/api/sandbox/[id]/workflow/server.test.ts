@@ -11,7 +11,8 @@ vi.mock('$lib/server/security/origin', () => ({
 }));
 
 vi.mock('$lib/server/security/guards', () => ({
-	requireOwnedSandbox: vi.fn().mockResolvedValue('session-1')
+	requireOwnedSandbox: vi.fn().mockResolvedValue('session-1'),
+	touchSessionActivity: vi.fn().mockResolvedValue(undefined)
 }));
 
 vi.mock('$lib/server/sandbox/registry', () => ({
@@ -66,6 +67,8 @@ function mockSandboxExec(stdout: string): ReturnType<typeof vi.fn> {
 			bootstrap: vi.fn(),
 			restartWorker: vi.fn(),
 			killWorker: vi.fn(),
+			stopServer: vi.fn(),
+			startServer: vi.fn(),
 			exec,
 			writeFile,
 			terminate: vi.fn()
@@ -100,6 +103,8 @@ describe('POST /api/sandbox/[id]/workflow', () => {
 				bootstrap: vi.fn(),
 				restartWorker: vi.fn(),
 				killWorker: vi.fn(),
+				stopServer: vi.fn(),
+				startServer: vi.fn(),
 				exec,
 				writeFile,
 				terminate: vi.fn()
@@ -256,6 +261,8 @@ describe('GET /api/sandbox/[id]/workflow/visibility', () => {
 				bootstrap: vi.fn(),
 				restartWorker: vi.fn(),
 				killWorker: vi.fn(),
+				stopServer: vi.fn(),
+				startServer: vi.fn(),
 				exec,
 				writeFile: vi.fn(),
 				terminate: vi.fn()

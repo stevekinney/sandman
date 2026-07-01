@@ -617,6 +617,155 @@ describe('restartWorker()', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: stopServer
+// ---------------------------------------------------------------------------
+
+describe('stopServer()', () => {
+	it('kills the temporal dev server process by PID', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		calls.length = 0;
+
+		await client.stopServer(handle);
+
+		expect(calls).toContainEqual({ method: 'commands.kill', pid: 100 });
+	});
+
+	it('also kills the worker process, since its connection dies with the server', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		calls.length = 0;
+
+		await client.stopServer(handle);
+
+		const killedPids = calls
+			.filter(
+				(c): c is Extract<CallRecord, { method: 'commands.kill' }> => c.method === 'commands.kill'
+			)
+			.map((c) => c.pid);
+		// Bootstrap started temporal (pid 100) then the worker (pid 101).
+		expect(killedPids).toContain(100);
+		expect(killedPids).toContain(101);
+	});
+
+	it('does not start any new process', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		calls.length = 0;
+
+		await client.stopServer(handle);
+
+		expect(calls.some((c) => c.method === 'commands.start')).toBe(false);
+	});
+
+	it('is idempotent — calling twice does not throw', async () => {
+		const { client } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+
+		await client.stopServer(handle);
+		await expect(client.stopServer(handle)).resolves.toBeUndefined();
+	});
+
+	it('is idempotent — second call issues no additional kill commands', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+
+		await client.stopServer(handle);
+		const countAfterFirst = calls.length;
+		await client.stopServer(handle);
+
+		expect(calls.length).toBe(countAfterFirst);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: startServer
+// ---------------------------------------------------------------------------
+
+describe('startServer()', () => {
+	it('starts a new temporal server process', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.stopServer(handle);
+		calls.length = 0;
+
+		await client.startServer(handle);
+
+		const temporalStart = calls.find(
+			(c) => c.method === 'commands.start' && c.cmd.includes('temporal server start-dev')
+		);
+		expect(temporalStart).toBeDefined();
+	});
+
+	it('re-registers the Temporal Search Attributes', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.stopServer(handle);
+		calls.length = 0;
+
+		await client.startServer(handle);
+
+		const registeredAttribute = calls.some(
+			(c) =>
+				c.method === 'commands.run' && c.cmd.includes('search-attribute create --name OrderStatus')
+		);
+		expect(registeredAttribute).toBe(true);
+	});
+
+	it('restarts the worker after the server is ready', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.stopServer(handle);
+		calls.length = 0;
+
+		await client.startServer(handle);
+
+		const temporalIdx = calls.findIndex(
+			(c) => c.method === 'commands.start' && c.cmd.includes('temporal server start-dev')
+		);
+		const workerIdx = calls.findIndex(
+			(c) =>
+				c.method === 'commands.start' &&
+				c.cmd.includes('worker') &&
+				!c.cmd.includes('temporal server')
+		);
+		expect(temporalIdx).toBeGreaterThanOrEqual(0);
+		expect(workerIdx).toBeGreaterThan(temporalIdx);
+	});
+
+	it('is idempotent when called without a preceding stopServer — kills the running server first', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		calls.length = 0;
+
+		await client.startServer(handle);
+
+		const killIdx = calls.findIndex(
+			(c) => c.method === 'commands.kill' && c.pid === 100 // original temporal PID from bootstrap
+		);
+		const startIdx = calls.findIndex(
+			(c) => c.method === 'commands.start' && c.cmd.includes('temporal server start-dev')
+		);
+		expect(killIdx).toBeGreaterThanOrEqual(0);
+		expect(startIdx).toBeGreaterThan(killIdx);
+	});
+
+	it('recovers workflow state via --db-filename when restarting after a stop', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.stopServer(handle);
+		calls.length = 0;
+
+		await client.startServer(handle);
+
+		const temporalCall = calls.find(
+			(c) => c.method === 'commands.start' && c.cmd.includes('temporal server start-dev')
+		) as Extract<CallRecord, { method: 'commands.start' }> | undefined;
+		expect(temporalCall?.cmd).toContain('--db-filename /tmp/sandman.db');
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Tests: exec
 // ---------------------------------------------------------------------------
 

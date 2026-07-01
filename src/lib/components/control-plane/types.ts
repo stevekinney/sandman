@@ -134,6 +134,18 @@ export type TemporalController = {
 	/** Restart the worker process inside the E2B sandbox. */
 	restartWorker(): Promise<void>;
 
+	/**
+	 * Stop the Temporal dev server inside the sandbox. Workflow state is
+	 * persisted to disk; the worker dies with its server connection.
+	 */
+	stopServer(): Promise<void>;
+
+	/**
+	 * Start the Temporal dev server again: recovers persisted workflow state,
+	 * waits for readiness, and restarts the worker.
+	 */
+	startServer(): Promise<void>;
+
 	/** List workflows through Temporal Visibility Search Attributes. */
 	visibility(filter: VisibilityFilter): Promise<VisibilityWorkflowSummary[]>;
 };

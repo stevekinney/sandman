@@ -13,7 +13,7 @@ import type { RequestHandler } from './$types';
 import { TASK_QUEUE, ORDER_FOOD_WORKFLOW } from '$lib/contracts/workflow-api';
 import type { OrderInput } from '$lib/contracts/workflow-api';
 import { assertSameOrigin } from '$lib/server/security/origin';
-import { requireOwnedSandbox } from '$lib/server/security/guards';
+import { requireOwnedSandbox, touchSessionActivity } from '$lib/server/security/guards';
 import {
 	getTemporalCliTarget,
 	quoteShellArgument,
@@ -25,6 +25,7 @@ export const POST: RequestHandler = async (event) => {
 	const { request, params } = event;
 	assertSameOrigin(event);
 	await requireOwnedSandbox(event, params.id);
+	await touchSessionActivity(event, params.id);
 
 	let body: unknown;
 	try {

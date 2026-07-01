@@ -17,6 +17,18 @@
 	import { FILE_DESCRIPTORS } from '$lib/components/editor/file-descriptors';
 	import { getDeterminismMarkers } from '$lib/components/editor/determinism-guard';
 	import { createDebounce } from '$lib/components/editor/debounce';
+	import {
+		configureSandboxTypeScript,
+		defineSandmanTheme,
+		loadTemporalTypes
+	} from '$lib/components/editor/monaco-setup';
+	import {
+		executionCaption,
+		executionMarker,
+		findAnchorLine,
+		type CodeReveal,
+		type ExecutionPointer
+	} from '$lib/components/editor/execution-pointer';
 	import WorkerStatusStrip from '$lib/components/editor/worker-status-strip.svelte';
 	import type { WorkerStatus } from '$lib/contracts/sandbox';
 	import type * as Monaco from 'monaco-editor';
@@ -26,9 +38,13 @@
 	type Props = {
 		/** The E2B sandbox ID; used to build the /api/sandbox/[id]/files URL. */
 		sandboxId: string;
+		/** Live pointer to the line of workflow code executing right now. */
+		execution?: ExecutionPointer | null;
+		/** One-shot request to jump to and flash a code anchor (experiments). */
+		reveal?: CodeReveal | null;
 	};
 
-	const { sandboxId }: Props = $props();
+	const { sandboxId, execution = null, reveal = null }: Props = $props();
 
 	// ---------------------------------------------------------------------------
 	// Reactive UI state — drives the template
@@ -42,6 +58,12 @@
 	let isLoading = $state(false);
 	let isMounted = $state(false);
 	let editorContainer = $state<HTMLDivElement | undefined>();
+	/** Bumped when Monaco finishes loading so pointer effects re-run. */
+	let monacoReady = $state(false);
+	/** Bumped on every keystroke so the execution anchor is re-resolved. */
+	let contentRevision = $state(0);
+	/** Resolved 1-based line of the current execution pointer, if found. */
+	let executionLine = $state<number | null>(null);
 
 	// ---------------------------------------------------------------------------
 	// Imperative Monaco handles — plain variables, no Svelte tracking needed
@@ -104,42 +126,6 @@
 		);
 	}
 
-	function isRecord(value: unknown): value is Record<string, unknown> {
-		return typeof value === 'object' && value !== null;
-	}
-
-	function callMonacoDefaultsMethod(method: unknown, receiver: object, argument: object): void {
-		if (typeof method !== 'function') return;
-		Reflect.apply(method, receiver, [argument]);
-	}
-
-	function configureSandboxTypeScript(monaco: typeof Monaco): void {
-		const maybeTypeScript: unknown = monaco.languages.typescript;
-		if (!isRecord(maybeTypeScript)) return;
-		const maybeDefaults = maybeTypeScript.typescriptDefaults;
-		if (!isRecord(maybeDefaults)) return;
-
-		callMonacoDefaultsMethod(maybeDefaults.setCompilerOptions, maybeDefaults, {
-			target: 99,
-			module: 99,
-			moduleResolution: 2,
-			allowImportingTsExtensions: true,
-			allowNonTsExtensions: true,
-			esModuleInterop: true,
-			skipLibCheck: true,
-			strict: true,
-			noEmit: true
-		});
-
-		// The sandbox worker validates package and relative imports against the real
-		// install. Monaco only has these in-memory files, so semantic validation
-		// produces false module-resolution errors for legitimate sandbox imports.
-		callMonacoDefaultsMethod(maybeDefaults.setDiagnosticsOptions, maybeDefaults, {
-			noSemanticValidation: true,
-			noSyntaxValidation: false
-		});
-	}
-
 	// ---------------------------------------------------------------------------
 	// Client mount guard — the cinder <Tabs> are browser-only, so we render an
 	// SSR placeholder and swap them in after hydration. onMount runs once on the
@@ -158,6 +144,8 @@
 		const container = editorContainer;
 		let disposed = false;
 
+		let typeLibDisposables: Monaco.IDisposable[] = [];
+
 		Promise.all([
 			import('monaco-editor'),
 			import('monaco-editor/esm/vs/language/typescript/monaco.contribution.js')
@@ -165,6 +153,17 @@
 			if (disposed) return;
 			_monaco = monaco;
 			configureSandboxTypeScript(monaco);
+			defineSandmanTheme(monaco);
+
+			// Temporal SDK declarations load in the background — IntelliSense for
+			// `@temporalio/*` imports appears as soon as they land.
+			void loadTemporalTypes(monaco).then((disposables) => {
+				if (disposed) {
+					for (const disposable of disposables) disposable.dispose();
+					return;
+				}
+				typeLibDisposables = disposables;
+			});
 
 			// Create one model per file descriptor
 			for (const descriptor of FILE_DESCRIPTORS) {
@@ -180,7 +179,7 @@
 
 			const editor = monaco.editor.create(container, {
 				model: initialModel,
-				theme: 'vs-dark',
+				theme: 'sandman-dark',
 				automaticLayout: true,
 				fontSize: 14,
 				minimap: { enabled: false },
@@ -197,6 +196,7 @@
 				const code = model.getValue();
 				getDebouncerFor(path).call({ path, contents: code });
 				refreshMarkers(path, code);
+				contentRevision++;
 			});
 
 			// Cmd/Ctrl+S — immediate save, cancels any pending debounce
@@ -210,6 +210,7 @@
 
 			// Seed initial markers for the first file
 			refreshMarkers(FILE_DESCRIPTORS[0].name, initialModel.getValue());
+			monacoReady = true;
 		});
 
 		return () => {
@@ -220,7 +221,10 @@
 			_models.clear();
 			for (const d of _debouncers.values()) d.cancel();
 			_debouncers.clear();
+			for (const disposable of typeLibDisposables) disposable.dispose();
+			typeLibDisposables = [];
 			_monaco = undefined;
+			monacoReady = false;
 		};
 	});
 
@@ -236,6 +240,90 @@
 		_editor.setModel(model);
 		_editor.updateOptions({ readOnly: file.readOnly });
 		refreshMarkers(file.name, model.getValue());
+	});
+
+	// ---------------------------------------------------------------------------
+	// Execution pointer — highlight the line the workflow is executing right now
+	// ---------------------------------------------------------------------------
+
+	let _executionDecorationIds: string[] = [];
+	let _executionModel: Monaco.editor.ITextModel | undefined;
+	let _lastRevealedPointer = '';
+
+	$effect(() => {
+		const pointer = execution;
+		const activeName = activeFileName; // re-run on tab switches
+		void contentRevision; // re-resolve the anchor as the learner edits
+		if (!monacoReady || !_monaco) return;
+
+		if (_executionModel && !_executionModel.isDisposed()) {
+			_executionDecorationIds = _executionModel.deltaDecorations(_executionDecorationIds, []);
+		}
+		executionLine = null;
+		if (pointer === null) return;
+		const model = _models.get(pointer.file);
+		if (!model) return;
+		const line = findAnchorLine(model.getValue(), pointer.anchor);
+		if (line === null) return;
+
+		executionLine = line;
+		_executionModel = model;
+		_executionDecorationIds = model.deltaDecorations(
+			[],
+			[
+				{
+					range: new _monaco.Range(line, 1, line, 1),
+					options: {
+						isWholeLine: true,
+						className: pointer.state === 'running' ? 'exec-line' : 'exec-line exec-line--paused',
+						linesDecorationsClassName: 'exec-line-gutter'
+					}
+				}
+			]
+		);
+
+		// Scroll to the pointer when it moves (not on every keystroke) and only
+		// while the learner is looking at the file it lives in.
+		const revealKey = `${pointer.file}:${line}:${pointer.state}`;
+		if (revealKey !== _lastRevealedPointer && pointer.file === activeName) {
+			_lastRevealedPointer = revealKey;
+			_editor?.revealLineInCenterIfOutsideViewport(line);
+		}
+	});
+
+	// One-shot experiment reveal: switch to the file, center the anchor, flash it.
+	let _flashHandle: ReturnType<typeof setTimeout> | undefined;
+
+	$effect(() => {
+		const request = reveal;
+		if (request === null || !monacoReady || !_monaco) return;
+		const monaco = _monaco;
+		const model = _models.get(request.file);
+		if (!model) return;
+		const line = findAnchorLine(model.getValue(), request.anchor);
+		if (line === null) return;
+
+		activeFileName = request.file;
+		// Let the file-switch effect swap the model in before revealing.
+		const editor = _editor;
+		clearTimeout(_flashHandle);
+		_flashHandle = setTimeout(() => {
+			editor?.revealLineInCenter(line);
+			const flashIds = model.deltaDecorations(
+				[],
+				[
+					{
+						range: new monaco.Range(line, 1, line, 1),
+						options: { isWholeLine: true, className: 'exec-flash' }
+					}
+				]
+			);
+			_flashHandle = setTimeout(() => {
+				if (!model.isDisposed()) model.deltaDecorations(flashIds, []);
+			}, 1800);
+		}, 60);
+
+		return () => clearTimeout(_flashHandle);
 	});
 </script>
 
@@ -271,6 +359,14 @@
 		<span>{activeFile.purpose}</span>
 	</section>
 
+	{#if execution !== null && executionLine !== null}
+		<div class={`exec-caption exec-caption--${execution.state}`} role="status" aria-live="polite">
+			<span class="exec-caption__marker" aria-hidden="true">{executionMarker(execution.state)}</span
+			>
+			<span>{executionCaption(execution, executionLine, execution.file === activeFile.name)}</span>
+		</div>
+	{/if}
+
 	<div class="editor-container" bind:this={editorContainer}></div>
 
 	<WorkerStatusStrip {workerStatus} />
@@ -281,8 +377,8 @@
 		display: flex;
 		flex-direction: column;
 		height: 100%;
-		background: #1e1e1e;
-		color: #ccc;
+		background: var(--cinder-bg, #0b0f17);
+		color: var(--cinder-text-muted, #94a3b8);
 	}
 
 	.sandman-editor :global(.editor-tabs) {
@@ -293,22 +389,22 @@
 	.editor-tabs-placeholder {
 		min-height: 2.5rem;
 		flex-shrink: 0;
-		border-bottom: 1px solid #333;
+		border-bottom: 1px solid var(--cinder-border-muted, #1f2937);
 	}
 
 	.sandman-editor :global(.editor-tab-list) {
 		gap: 2px;
 		padding: 4px 8px 0;
-		border-bottom-color: #333;
+		border-bottom-color: var(--cinder-border-muted, #1f2937);
 		overflow-x: auto;
 	}
 
 	.sandman-editor :global(.editor-tab) {
-		background: #2d2d2d;
+		background: var(--cinder-surface, #0f172a);
 		border: 1px solid transparent;
 		border-bottom: none;
 		border-radius: 4px 4px 0 0;
-		color: #ccc;
+		color: var(--cinder-text-muted, #94a3b8);
 		cursor: pointer;
 		font-size: 13px;
 		font-family: inherit;
@@ -320,14 +416,14 @@
 	}
 
 	.sandman-editor :global(.editor-tab:hover:not(.active)) {
-		background: #3a3a3a;
-		color: #fff;
+		background: var(--cinder-surface-hover, #17263a);
+		color: var(--cinder-text, #e2e8f0);
 	}
 
 	.sandman-editor :global(.editor-tab.active) {
-		background: #1e1e1e;
-		border-color: #444;
-		color: #fff;
+		background: var(--cinder-bg, #0b0f17);
+		border-color: var(--cinder-border, #334155);
+		color: var(--cinder-text, #f8fafc);
 	}
 
 	.sandman-editor :global(.editor-tab.readonly) {
@@ -344,8 +440,8 @@
 	.editor-saving {
 		padding: 2px 10px;
 		font-size: 11px;
-		color: #999;
-		background: #252525;
+		color: var(--cinder-text-subtle, #64748b);
+		background: var(--cinder-surface, #0f172a);
 		flex-shrink: 0;
 	}
 
@@ -354,25 +450,66 @@
 		gap: 0.5rem;
 		align-items: baseline;
 		padding: 0.5rem 0.75rem;
-		border-bottom: 1px solid #333;
-		background: #252526;
-		color: #d4d4d4;
+		border-bottom: 1px solid var(--cinder-border-muted, #1f2937);
+		background: var(--cinder-surface, #0f172a);
+		color: var(--cinder-text-muted, #94a3b8);
 		font-size: 0.78rem;
 		line-height: 1.35;
 	}
 
 	.file-purpose strong {
-		color: #fff;
+		color: var(--cinder-text, #e2e8f0);
 		white-space: nowrap;
 	}
 
 	.file-purpose span {
 		min-width: 0;
-		color: #b8c0cc;
+		color: var(--cinder-text-muted, #94a3b8);
 	}
 
 	.editor-container {
 		flex: 1;
 		min-height: 0;
+	}
+
+	.exec-caption {
+		display: flex;
+		align-items: center;
+		gap: 0.5625rem;
+		flex-shrink: 0;
+		padding: 0.4rem 1rem;
+		font-size: 0.72rem;
+		font-weight: 600;
+		border-bottom: 1px solid #333;
+		background: color-mix(in oklch, var(--cinder-accent, #818cf8), transparent 88%);
+		color: var(--cinder-accent-text, #a5b4fc);
+	}
+
+	.exec-caption--paused,
+	.exec-caption--replaying {
+		background: var(--cinder-color-warning-bg, #38290b);
+		color: var(--cinder-color-warning-fg, #fbbf24);
+	}
+
+	.exec-caption__marker {
+		flex: none;
+	}
+
+	/* Monaco decoration classes render inside the editor DOM — must be global. */
+	.sandman-editor :global(.exec-line) {
+		background: color-mix(in oklch, var(--cinder-accent, #818cf8), transparent 84%);
+	}
+
+	.sandman-editor :global(.exec-line--paused) {
+		background: color-mix(in oklch, var(--cinder-warning, #f59e0b), transparent 82%);
+	}
+
+	.sandman-editor :global(.exec-line-gutter) {
+		border-left: 3px solid var(--cinder-accent, #818cf8);
+	}
+
+	.sandman-editor :global(.exec-flash) {
+		background: color-mix(in oklch, var(--cinder-accent, #818cf8), transparent 60%);
+		transition: background 0.3s ease;
 	}
 </style>

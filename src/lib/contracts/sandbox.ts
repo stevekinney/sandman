@@ -83,6 +83,25 @@ export type SandboxClient = {
 	killWorker(handle: SandboxHandle): Promise<void>;
 
 	/**
+	 * Stops the Temporal dev server process running inside the sandbox.
+	 * Workflow state persists across the stop because the server was started
+	 * with `--db-filename`, so a subsequent `startServer` call recovers it.
+	 *
+	 * Also stops the worker: once the server process dies the worker's gRPC
+	 * connection dies with it, and the worker has no supervisor to restart
+	 * it, so it would otherwise be left running as a dead process.
+	 */
+	stopServer(handle: SandboxHandle): Promise<void>;
+
+	/**
+	 * Relaunches the Temporal dev server inside the sandbox, waits for it to
+	 * become reachable, re-registers the custom Search Attributes (a fresh
+	 * server process starts with none registered), and restarts the worker —
+	 * its connection died with the previous server process.
+	 */
+	startServer(handle: SandboxHandle): Promise<void>;
+
+	/**
 	 * Runs a shell command inside the sandbox and returns its output.
 	 */
 	exec(handle: SandboxHandle, command: string, opts?: { timeoutMs?: number }): Promise<ExecResult>;

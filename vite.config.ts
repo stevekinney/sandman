@@ -35,6 +35,24 @@ export default defineConfig({
 	optimizeDeps: {
 		exclude: ['@lostgradient/cinder']
 	},
+	// Cinder's export maps list the `node` condition before `svelte`, so SSR
+	// resolves to `./dist/server/*` — precompiled without Svelte's dev-mode
+	// metadata. Rendering app-authored snippets through those components (e.g.
+	// children of `ToastRegion`) crashes dev SSR in `push_element` ("Cannot
+	// read properties of undefined (reading 'Symbol(filename)')"). Bundling
+	// cinder into the SSR build and dropping `node` from the SSR condition set
+	// resolves the `svelte` condition instead, so SSR compiles the same source
+	// the browser uses. Fixed upstream (stevekinney/cinder#575) but not yet
+	// released as of @lostgradient/cinder@0.4.1 — remove once a release ships.
+	ssr: {
+		// lucide-svelte ships raw .svelte files that Node cannot import when
+		// externalized — it must ride through the Svelte transform with cinder
+		// (stevekinney/cinder#533 documents the same pairing).
+		noExternal: ['@lostgradient/cinder', 'lucide-svelte'],
+		resolve: {
+			conditions: ['svelte', 'module', 'development|production']
+		}
+	},
 	test: {
 		expect: { requireAssertions: true },
 		projects: [

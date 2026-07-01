@@ -1,303 +1,425 @@
 <script lang="ts">
 	/**
-	 * guided-tour.svelte — ordered, event-driven guided tour of Temporal features.
+	 * guided-tour.svelte — the "Guided journey" rail.
+	 *
+	 * Shows the current tour step as a card (concept eyebrow, title, copy, a
+	 * "watch for this" line, and a call-to-action button when the step is driven
+	 * by a control), plus the full ordered step list beneath it. Progress is
+	 * event-driven: the parent advances `progress` as workflow events arrive.
 	 *
 	 * Uses a plain accessible ordered list instead of the Cinder Steps component
 	 * to avoid SVG/template initialization issues in vitest browser tests.
-	 *
-	 * Props:
-	 *   progress — TourProgress snapshot; controls which step is active.
-	 *   onreset  — callback invoked when the user clicks "Reset tour".
 	 */
 	import Button from '@lostgradient/cinder/button';
-	import Badge from '@lostgradient/cinder/badge';
+	import Spinner from '@lostgradient/cinder/spinner';
+	import '@lostgradient/cinder/button/styles';
+	import '@lostgradient/cinder/spinner/styles';
+	import MarkdownText from './markdown-text.svelte';
 	import type { TourProgress } from '$lib/content/tour-engine';
 	import { TOUR } from '$lib/content/demo-script';
+	import type { TourExperiment, TourLookAt } from '$lib/content/demo-script';
 	import type { ControlId } from '$lib/contracts/workflow-api';
 
 	type Props = {
 		/** Current progress snapshot; controls which step is active. */
 		progress: TourProgress;
-		/** Called when the user wants to reset tour progress. */
-		onreset?: () => void;
+		/** Whether the current step's control can run right now. */
+		ctaEnabled?: boolean;
+		/** Worker liveness — flips the kill-worker CTA label to "Restart". */
+		workerOnline?: boolean;
+		/** Called when the user clicks the step's call-to-action button. */
+		oncta?: (control: ControlId) => void;
+		/** Called when the user asks to see an experiment's code in the editor. */
+		onshowcode?: (experiment: TourExperiment) => void;
+		/** Called when the user asks to be taken to a "where to look" surface. */
+		onlookat?: (lookAt: TourLookAt) => void;
 	};
 
-	let { progress, onreset }: Props = $props();
+	let {
+		progress,
+		ctaEnabled = false,
+		workerOnline = true,
+		oncta,
+		onshowcode,
+		onlookat
+	}: Props = $props();
+
+	function lookAtButtonLabel(surface: TourLookAt['surface']): string {
+		switch (surface) {
+			case 'temporal-ui':
+				return 'Open the Temporal UI';
+			case 'events':
+				return 'Show the event stream';
+			case 'steps':
+				return 'Show the friendly steps';
+		}
+		const exhaustive: never = surface;
+		return exhaustive;
+	}
 
 	const activeStep = $derived(progress.currentStepIndex);
 	const isComplete = $derived(activeStep >= TOUR.length);
 	const currentStep = $derived(TOUR[activeStep]);
-
-	function handleReset() {
-		onreset?.();
-	}
+	const ctaControl = $derived(isComplete ? undefined : currentStep?.control);
 
 	function getActionLabel(control: ControlId): string {
 		switch (control) {
 			case 'start-order':
-				return 'Place Order';
+				return 'Place order';
 			case 'cancel-order':
-				return 'Cancel Order';
+				return 'Cancel order';
 			case 'accept-restaurant':
-				return 'Restaurant Accepted';
+				return 'Send restaurant-accepted signal';
 			case 'reject-restaurant':
-				return 'Restaurant Rejected';
+				return 'Send restaurant-rejected signal';
 			case 'food-ready':
-				return 'Food Ready';
+				return 'Mark food ready';
 			case 'update-location':
-				return 'Update Courier Location';
+				return 'Update courier location';
 			case 'add-tip':
-				return 'Add Tip';
+				return 'Add tip';
 			case 'update-address':
-				return 'Update Address';
+				return 'Update delivery address';
 			case 'apply-promo':
-				return 'Apply Promo';
+				return 'Apply promo code';
 			case 'query-status':
-				return 'Get Status';
+				return 'Query status';
 			case 'query-timeline':
-				return 'Get Timeline';
+				return 'Query timeline';
 			case 'kill-worker':
-				return 'Kill Worker, then Restart Worker';
+				return workerOnline ? 'Kill the worker' : 'Restart the worker';
 			case 'complete-delivery':
-				return 'Complete Delivery';
+				return 'Complete delivery';
 			case 'list-visibility':
-				return 'List Visibility';
+				return 'List by visibility';
 		}
 		const exhaustive: never = control;
 		return exhaustive;
 	}
 </script>
 
-<section aria-label="Guided tour" class="guided-tour">
-	<header class="guided-tour__header">
-		<h2 class="guided-tour__title">Guided Tour</h2>
+<section aria-label="Guided journey" class="journey">
+	<header class="journey__header">
+		<h2 class="journey__title">Guided journey</h2>
 		<span
-			class="guided-tour__count"
+			class="journey__count"
 			aria-label="Step {Math.min(activeStep + 1, TOUR.length)} of {TOUR.length}"
 		>
 			Step {Math.min(activeStep + 1, TOUR.length)} of {TOUR.length}
 		</span>
 	</header>
 
-	<!-- Active step detail + live region so changes are announced to screen readers -->
-	<div role="status" aria-live="polite" aria-atomic="true" class="guided-tour__detail">
-		{#if isComplete}
-			<div class="guided-tour__complete">
-				<p class="guided-tour__complete-message">
-					Tour complete. You started a durable workflow, changed it with signals and updates,
-					queried its state, searched it through Visibility, killed the worker, restarted it, and
-					still delivered the order.
-				</p>
-			</div>
-		{:else if currentStep !== undefined}
-			<div class="guided-tour__step-detail">
-				<h3 class="guided-tour__step-detail-title">{currentStep.title}</h3>
-				<p class="guided-tour__step-instruction">{currentStep.instruction}</p>
-				{#if currentStep.control}
-					<p class="guided-tour__step-control">
-						<span class="guided-tour__step-control-label">Next action:</span>
-						<Badge variant="neutral">{getActionLabel(currentStep.control)}</Badge>
+	<div class="journey__scroll">
+		<!-- Active step detail + live region so changes are announced to screen readers -->
+		<div role="status" aria-live="polite" aria-atomic="true">
+			{#if isComplete}
+				<div class="journey__card journey__card--complete">
+					<h3 class="journey__card-title">Tour complete</h3>
+					<p class="journey__copy">
+						You started a durable workflow, changed it with a signal and a validated update, queried
+						its state, searched Visibility, killed the worker, watched it replay and recover, and
+						still delivered the order.
 					</p>
-				{/if}
-			</div>
-		{/if}
-	</div>
+				</div>
+			{:else if currentStep !== undefined}
+				<div class="journey__card">
+					<p class="journey__eyebrow">{currentStep.concept}</p>
+					<h3 class="journey__card-title">{currentStep.title}</h3>
+					<p class="journey__copy">{currentStep.instruction}</p>
+					<p class="journey__watch">
+						<span class="journey__watch-label">Watch</span>
+						<span>{currentStep.watch}</span>
+					</p>
+					{#if ctaControl !== undefined && ctaEnabled}
+						<Button
+							variant="primary"
+							fullWidth
+							label={getActionLabel(ctaControl)}
+							onclick={() => oncta?.(ctaControl)}
+						/>
+					{:else if ctaControl === undefined}
+						<p class="journey__watching">
+							<Spinner size="sm" label="Watching the system respond" />
+							Watching the system respond…
+						</p>
+					{/if}
+					{#if currentStep.lookAt !== undefined}
+						{@const lookAt = currentStep.lookAt}
+						<div class="journey__lookat">
+							<p class="journey__panel-label">Where to look</p>
+							<div class="journey__panel-copy">
+								<MarkdownText text={lookAt.note} />
+							</div>
+							<Button
+								variant="soft"
+								size="sm"
+								label={lookAtButtonLabel(lookAt.surface)}
+								onclick={() => onlookat?.(lookAt)}
+							/>
+						</div>
+					{/if}
+					{#if currentStep.experiment !== undefined}
+						{@const experiment = currentStep.experiment}
+						<div class="journey__experiment">
+							<p class="journey__panel-label">Try changing the code</p>
+							<div class="journey__panel-copy">
+								<MarkdownText text={experiment.prompt} />
+							</div>
+							<Button
+								variant="soft"
+								size="sm"
+								label="Show me the code"
+								onclick={() => onshowcode?.(experiment)}
+							/>
+						</div>
+					{/if}
+				</div>
+			{/if}
+		</div>
 
-	<details class="guided-tour__map">
-		<summary>
-			<span>Tour map</span>
-			<span>{progress.completedStepIds.length} complete</span>
-		</summary>
 		<!-- Step overview — accessible ordered list with aria-current on the active step -->
-		<nav aria-label="Tour progress" class="guided-tour__nav">
-			<ol class="guided-tour__steps">
+		<nav aria-label="Tour progress" class="journey__nav">
+			<p class="journey__nav-label">All steps</p>
+			<ol class="journey__steps">
 				{#each TOUR as step, i (step.id)}
 					{@const isDone = i < activeStep}
-					{@const isActive = i === activeStep}
+					{@const isActive = i === activeStep && !isComplete}
 					<li
-						class="guided-tour__step"
-						class:guided-tour__step--done={isDone}
-						class:guided-tour__step--active={isActive}
+						class={[
+							'journey__step',
+							isDone && 'journey__step--done',
+							isActive && 'journey__step--active'
+						]}
 						aria-current={isActive ? 'step' : undefined}
 					>
-						<span class="guided-tour__step-marker" aria-hidden="true">
+						<span class="journey__step-marker" aria-hidden="true">
 							{#if isDone}✓{:else}{i + 1}{/if}
 						</span>
-						<span class="guided-tour__step-label">{step.title}</span>
-						{#if step.control}
-							<span class="guided-tour__step-hint">{getActionLabel(step.control)}</span>
-						{/if}
+						<span class="journey__step-label">{step.title}</span>
 					</li>
 				{/each}
 			</ol>
 		</nav>
-	</details>
-
-	<footer class="guided-tour__footer">
-		<Button variant="ghost" onclick={handleReset}>Reset tour</Button>
-	</footer>
+	</div>
 </section>
 
 <style>
-	.guided-tour {
+	.journey {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		min-height: 0;
+		height: 100%;
 	}
 
-	.guided-tour__header {
+	.journey__header {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
+		gap: 0.625rem;
+		flex: none;
+		padding: 0.7rem 1.125rem;
+		border-bottom: 1px solid var(--cinder-border-muted);
 	}
 
-	.guided-tour__title {
-		font-size: 1.125rem;
-		font-weight: 600;
+	.journey__title {
 		margin: 0;
-	}
-
-	.guided-tour__count {
-		font-size: 0.875rem;
-		color: var(--color-text-secondary, #6b7280);
-	}
-
-	.guided-tour__steps {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-	}
-
-	.guided-tour__map {
-		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 0.5rem;
-		background: color-mix(in srgb, var(--color-surface-subtle, #f9fafb), transparent 12%);
-	}
-
-	.guided-tour__map > summary {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		padding: 0.65rem 0.75rem;
-		cursor: pointer;
-		list-style: none;
-		color: var(--color-text-primary, #111827);
+		font-size: 0.6875rem;
 		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--cinder-accent-text);
 	}
 
-	.guided-tour__map > summary::-webkit-details-marker {
-		display: none;
+	.journey__count {
+		font-size: 0.75rem;
+		font-weight: 650;
+		color: var(--cinder-text-muted);
+		font-variant-numeric: tabular-nums;
 	}
 
-	.guided-tour__map > summary span:last-child {
-		color: var(--color-text-muted, #9ca3af);
-		font-size: 0.78rem;
-		font-weight: 500;
-	}
-
-	.guided-tour__map > summary:focus-visible {
-		outline: 2px solid #38bdf8;
-		outline-offset: 2px;
-	}
-
-	.guided-tour__map .guided-tour__nav {
-		padding: 0 0.75rem 0.75rem;
-	}
-
-	.guided-tour__step {
+	.journey__scroll {
+		flex: 1;
+		min-height: 0;
+		overflow-y: auto;
+		padding: 1rem 1.125rem;
 		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+
+	.journey__card {
+		border: 1px solid var(--cinder-border);
+		background: var(--cinder-surface-raised);
+		border-radius: 0.75rem;
+		padding: 0.9375rem;
+		box-shadow: var(--cinder-shadow-sm);
+	}
+
+	.journey__card--complete {
+		border-color: var(--cinder-color-success-border);
+		background: var(--cinder-color-success-bg);
+	}
+
+	.journey__card--complete .journey__card-title,
+	.journey__card--complete .journey__copy {
+		color: var(--cinder-color-success-fg);
+	}
+
+	.journey__eyebrow {
+		margin: 0 0 0.3125rem;
+		font-size: 0.625rem;
+		font-weight: 700;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--cinder-accent-text);
+	}
+
+	.journey__card-title {
+		margin: 0 0 0.4375rem;
+		font-size: 0.9375rem;
+		font-weight: 700;
+		line-height: 1.25;
+		color: var(--cinder-text);
+	}
+
+	.journey__copy {
+		margin: 0 0 0.6875rem;
+		font-size: 0.78rem;
+		line-height: 1.55;
+		color: var(--cinder-text-muted);
+	}
+
+	.journey__watch {
+		display: flex;
+		gap: 0.4375rem;
 		align-items: baseline;
-		gap: 0.5rem;
-		font-size: 0.875rem;
-		padding: 0.25rem 0;
-		color: var(--color-text-secondary, #6b7280);
+		margin: 0 0 0.8125rem;
 	}
 
-	.guided-tour__step--done {
-		color: var(--color-success, #059669);
+	.journey__watch-label {
+		flex: none;
+		font-size: 0.625rem;
+		font-weight: 700;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		color: var(--cinder-text-subtle);
 	}
 
-	.guided-tour__step--active {
-		color: var(--color-text-primary, #111827);
+	.journey__watch > span:last-child {
+		font-size: 0.75rem;
+		line-height: 1.45;
+		color: var(--cinder-text-muted);
+	}
+
+	.journey__watching {
+		display: flex;
+		align-items: center;
+		gap: 0.5625rem;
+		margin: 0;
+		padding: 0.5625rem 0.75rem;
+		border-radius: 0.5625rem;
+		background: color-mix(in oklch, var(--cinder-accent), transparent 90%);
+		color: var(--cinder-accent-text);
+		font-size: 0.78rem;
 		font-weight: 600;
 	}
 
-	.guided-tour__step-marker {
+	.journey__experiment,
+	.journey__lookat {
+		margin-top: 0.8125rem;
+		padding: 0.6875rem 0.75rem;
+		border-radius: 0.5625rem;
+	}
+
+	.journey__experiment {
+		border: 1px dashed var(--cinder-border);
+		background: var(--cinder-surface-inset);
+	}
+
+	.journey__lookat {
+		border: 1px solid color-mix(in oklch, var(--cinder-accent), transparent 72%);
+		background: color-mix(in oklch, var(--cinder-accent), transparent 92%);
+	}
+
+	.journey__panel-label {
+		margin: 0 0 0.3125rem;
+		font-size: 0.625rem;
+		font-weight: 700;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--cinder-text-subtle);
+	}
+
+	.journey__lookat .journey__panel-label {
+		color: var(--cinder-accent-text);
+	}
+
+	.journey__panel-copy {
+		margin: 0 0 0.625rem;
+		font-size: 0.75rem;
+		line-height: 1.5;
+		color: var(--cinder-text-muted);
+	}
+
+	.journey__nav-label {
+		margin: 0 0 0.375rem;
+		font-size: 0.625rem;
+		font-weight: 700;
+		letter-spacing: 0.09em;
+		text-transform: uppercase;
+		color: var(--cinder-text-subtle);
+	}
+
+	.journey__steps {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.125rem;
+	}
+
+	.journey__step {
+		display: flex;
+		align-items: center;
+		gap: 0.625rem;
+		padding: 0.375rem 0.5rem;
+		border-radius: 0.5rem;
+		font-size: 0.78rem;
+		color: var(--cinder-text-subtle);
+	}
+
+	.journey__step--done {
+		color: var(--cinder-text-muted);
+	}
+
+	.journey__step--active {
+		background: color-mix(in oklch, var(--cinder-accent), transparent 90%);
+		color: var(--cinder-text);
+		font-weight: 650;
+	}
+
+	.journey__step-marker {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
 		width: 1.25rem;
 		height: 1.25rem;
+		flex: none;
 		border-radius: 50%;
-		font-size: 0.75rem;
-		background: var(--color-surface-subtle, #f3f4f6);
-		border: 1px solid var(--color-border, #e5e7eb);
-		flex-shrink: 0;
-	}
-
-	.guided-tour__step--done .guided-tour__step-marker {
-		background: var(--color-success-light, #d1fae5);
-		border-color: var(--color-success, #059669);
-	}
-
-	.guided-tour__step--active .guided-tour__step-marker {
-		background: var(--color-accent, #3b82f6);
-		border-color: var(--color-accent, #3b82f6);
-		color: white;
-	}
-
-	.guided-tour__step-hint {
-		font-size: 0.75rem;
-		color: var(--color-text-muted, #9ca3af);
-		font-weight: 400;
-	}
-
-	.guided-tour__detail {
-		padding: 0.75rem;
-		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 0.5rem;
-		background: var(--color-surface-subtle, #f9fafb);
-		min-height: 5rem;
-	}
-
-	.guided-tour__step-detail-title {
-		font-size: 1rem;
-		font-weight: 600;
-		margin-block-end: 0.5rem;
-	}
-
-	.guided-tour__step-instruction {
-		font-size: 0.9375rem;
-		line-height: 1.6;
-		color: var(--color-text-primary, #111827);
-		margin-block-end: 0.5rem;
-	}
-
-	.guided-tour__step-control {
-		font-size: 0.875rem;
-		margin: 0;
-		display: flex;
-		align-items: center;
-		gap: 0.375rem;
-	}
-
-	.guided-tour__step-control-label {
-		color: var(--color-text-secondary, #6b7280);
-	}
-
-	.guided-tour__complete-message {
-		margin: 0;
+		font-size: 0.65rem;
 		font-weight: 700;
-		line-height: 1.55;
-		color: #bbf7d0;
+		background: var(--cinder-surface-inset);
+		color: var(--cinder-text-subtle);
 	}
 
-	.guided-tour__footer {
-		display: flex;
-		justify-content: flex-end;
+	.journey__step--done .journey__step-marker {
+		background: var(--cinder-success);
+		color: #fff;
+	}
+
+	.journey__step--active .journey__step-marker {
+		background: var(--cinder-accent);
+		color: var(--cinder-accent-contrast);
 	}
 </style>

@@ -27,6 +27,8 @@ describe('writeAndRestart', () => {
 		const mockClient: SandboxClient = {
 			provision: vi.fn(),
 			bootstrap: vi.fn(),
+			stopServer: vi.fn(),
+			startServer: vi.fn(),
 			exec: vi.fn(),
 			terminate: vi.fn(),
 			killWorker: vi.fn(),
@@ -49,6 +51,8 @@ describe('writeAndRestart', () => {
 		const mockClient: SandboxClient = {
 			provision: vi.fn(),
 			bootstrap: vi.fn(),
+			stopServer: vi.fn(),
+			startServer: vi.fn(),
 			exec: vi.fn(),
 			terminate: vi.fn(),
 			killWorker: vi.fn(),
@@ -69,6 +73,8 @@ describe('writeAndRestart', () => {
 		const mockClient: SandboxClient = {
 			provision: vi.fn(),
 			bootstrap: vi.fn(),
+			stopServer: vi.fn(),
+			startServer: vi.fn(),
 			exec: vi.fn(),
 			terminate: vi.fn(),
 			killWorker: vi.fn(),
@@ -88,6 +94,8 @@ describe('writeAndRestart', () => {
 		const mockClient: SandboxClient = {
 			provision: vi.fn(),
 			bootstrap: vi.fn(),
+			stopServer: vi.fn(),
+			startServer: vi.fn(),
 			exec: vi.fn(),
 			terminate: vi.fn(),
 			killWorker: vi.fn(),
@@ -108,6 +116,8 @@ describe('writeAndRestart', () => {
 		const mockClient: SandboxClient = {
 			provision: vi.fn(),
 			bootstrap: vi.fn(),
+			stopServer: vi.fn(),
+			startServer: vi.fn(),
 			exec: vi.fn(),
 			terminate: vi.fn(),
 			killWorker: vi.fn(),

@@ -12,13 +12,14 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { assertSameOrigin } from '$lib/server/security/origin';
-import { requireOwnedSandbox } from '$lib/server/security/guards';
+import { requireOwnedSandbox, touchSessionActivity } from '$lib/server/security/guards';
 import { getTemporalCliTarget } from '$lib/server/sandbox/temporal-cli';
 
 export const POST: RequestHandler = async (event) => {
 	const { params } = event;
 	assertSameOrigin(event);
 	await requireOwnedSandbox(event, params.id);
+	await touchSessionActivity(event, params.id);
 
 	const entry = getTemporalCliTarget(params.id);
 	try {

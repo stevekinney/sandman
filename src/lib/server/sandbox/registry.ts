@@ -96,6 +96,16 @@ export function registerHandle(sandboxId: string, handle: SandboxHandle): void {
 }
 
 /**
+ * Slide a sandbox's in-memory reaper TTL forward, keyed on real user
+ * activity. Call this alongside the database-level touch so the reaper's
+ * timer and the persisted `expiresAt` never drift apart. A no-op if the
+ * sandbox is not registered.
+ */
+export function touchHandle(sandboxId: string): void {
+	getSandboxRegistry().reaper.touch(sandboxId);
+}
+
+/**
  * Remove a sandbox from the registry.
  * Call this after `client.terminate()` succeeds.
  */

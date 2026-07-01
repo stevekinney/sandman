@@ -68,15 +68,15 @@ export async function touchActiveDemoSession(
 
 export async function getActiveDemoSession(
 	database: Database,
-	input: { sessionId: string; now: Date }
+	input: { sessionId: string }
 ): Promise<DemoSessionRecord | null> {
 	const rows = await database
-		.update(demoSession)
-		.set({ lastSeenAt: input.now })
+		.select({ id: demoSession.id, tokenHash: demoSession.tokenHash })
+		.from(demoSession)
 		.where(
 			and(eq(demoSession.id, input.sessionId), eq(demoSession.status, DEMO_SESSION_STATUS.Active))
 		)
-		.returning({ id: demoSession.id, tokenHash: demoSession.tokenHash });
+		.limit(1);
 	return rows[0] ?? null;
 }
 
@@ -237,6 +237,32 @@ export async function updateSandboxStatus(
 					: undefined
 		})
 		.where(eq(sandboxSession.e2bSandboxId, input.sandboxId));
+}
+
+/**
+ * Slides a sandbox session's expiry forward by `ttlMs` from `now` — the
+ * idle-based (sliding) counterpart to the fixed `expiresAt` set at creation.
+ * Only touches rows still in an active status, so an already-expired or
+ * terminated sandbox cannot be revived by a late-arriving mutation.
+ */
+export async function touchSandboxSession(
+	database: Database,
+	input: { sandboxId: string; now: Date; ttlMs: number }
+): Promise<boolean> {
+	const rows = await database
+		.update(sandboxSession)
+		.set({
+			expiresAt: new Date(input.now.getTime() + input.ttlMs),
+			updatedAt: input.now
+		})
+		.where(
+			and(
+				eq(sandboxSession.e2bSandboxId, input.sandboxId),
+				inArray(sandboxSession.status, ACTIVE_SANDBOX_STATUSES)
+			)
+		)
+		.returning({ id: sandboxSession.id });
+	return rows.length === 1;
 }
 
 export async function getOwnedSandboxStatus(

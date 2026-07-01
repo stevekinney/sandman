@@ -66,6 +66,33 @@ describe('createReaper', () => {
 		expect(terminated).not.toContain('young');
 	});
 
+	it('touch() slides a registered sandbox past the reap cutoff', async () => {
+		const base = Date.now();
+		let fakeNow = base;
+		const terminated: string[] = [];
+
+		const reaper = createReaper(60_000, () => fakeNow);
+
+		// Registered 50 seconds ago — still young, but close to the cutoff.
+		reaper.register('active-sandbox', base - 50_000, async () => {
+			terminated.push('active-sandbox');
+		});
+
+		// Advance the clock so the untouched registration would now be expired.
+		fakeNow = base + 20_000;
+		reaper.touch('active-sandbox');
+
+		await reaper.tick();
+
+		expect(terminated).not.toContain('active-sandbox');
+	});
+
+	it('touch() on an unregistered sandbox is a no-op', () => {
+		const reaper = createReaper(60_000);
+
+		expect(() => reaper.touch('never-registered')).not.toThrow();
+	});
+
 	it('unregister() prevents a previously registered sandbox from being reaped', async () => {
 		const base = Date.now();
 		const terminated: string[] = [];

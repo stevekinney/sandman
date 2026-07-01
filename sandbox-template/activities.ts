@@ -190,7 +190,9 @@ export async function chargePayment(
 		});
 	}
 
-	// Simulate transient failure on first attempt to exercise retry
+	// Simulate a transient failure on the first attempt to exercise retry.
+	// Try: change '0000' to '4242' (the demo card) — every new order's first
+	// charge attempt then fails, and Temporal retries it automatically.
 	if (info.attempt === 1 && paymentMethod.type === 'card' && paymentMethod.last4 === '0000') {
 		throw new Error('Gateway timeout — will retry');
 	}

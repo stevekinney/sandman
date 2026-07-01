@@ -108,6 +108,8 @@ describe('POST /api/sandbox', () => {
 				exec: vi.fn(),
 				restartWorker: vi.fn(),
 				killWorker: vi.fn(),
+				stopServer: vi.fn(),
+				startServer: vi.fn(),
 				terminate: vi.fn(),
 				writeFile: vi.fn()
 			},
@@ -115,6 +117,7 @@ describe('POST /api/sandbox', () => {
 			reaper: {
 				register: vi.fn(),
 				unregister: vi.fn(),
+				touch: vi.fn(),
 				tick: vi.fn(),
 				start: vi.fn()
 			},
@@ -149,6 +152,8 @@ describe('POST /api/sandbox', () => {
 				exec: vi.fn(),
 				restartWorker: vi.fn(),
 				killWorker: vi.fn(),
+				stopServer: vi.fn(),
+				startServer: vi.fn(),
 				terminate: vi.fn(),
 				writeFile: vi.fn()
 			},
@@ -156,6 +161,7 @@ describe('POST /api/sandbox', () => {
 			reaper: {
 				register: vi.fn(),
 				unregister: vi.fn(),
+				touch: vi.fn(),
 				tick: vi.fn(),
 				start: vi.fn()
 			},

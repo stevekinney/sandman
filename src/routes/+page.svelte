@@ -14,6 +14,7 @@
 	import '@lostgradient/cinder/alert/styles';
 	import '@lostgradient/cinder/button/styles';
 	import '@lostgradient/cinder/input/styles';
+	import { SITE_DESCRIPTION, SITE_TITLE } from '$lib/metadata';
 
 	let demoToken = $state('');
 	let provisioning = $state(false);
@@ -92,6 +93,15 @@
 		);
 	}
 </script>
+
+<svelte:head>
+	<title>{SITE_TITLE}</title>
+	<meta name="description" content={SITE_DESCRIPTION} />
+	<meta property="og:title" content={SITE_TITLE} />
+	<meta property="og:description" content={SITE_DESCRIPTION} />
+	<meta name="twitter:title" content={SITE_TITLE} />
+	<meta name="twitter:description" content={SITE_DESCRIPTION} />
+</svelte:head>
 
 <main class="landing">
 	<h1>Sandman</h1>
