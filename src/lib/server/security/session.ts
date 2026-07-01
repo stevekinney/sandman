@@ -2,6 +2,14 @@ import { createHmac, createHash, timingSafeEqual } from 'node:crypto';
 
 export const SESSION_COOKIE_NAME = 'sandman_session';
 
+export type SessionCookieOptions = {
+	httpOnly: boolean;
+	sameSite: 'lax';
+	secure: boolean;
+	path: string;
+	maxAge: number;
+};
+
 export function hashDemoToken(token: string): string {
 	return createHash('sha256').update(token).digest('hex');
 }
@@ -13,6 +21,16 @@ export function validateDemoToken(input: string, expectedHash: string | undefine
 
 export function createSignedSessionCookieValue(sessionId: string, secret: string): string {
 	return `${sessionId}.${signSessionId(sessionId, secret)}`;
+}
+
+export function createSessionCookieOptions(url: URL, ttlMs: number): SessionCookieOptions {
+	return {
+		httpOnly: true,
+		sameSite: 'lax',
+		secure: url.protocol === 'https:',
+		path: '/',
+		maxAge: Math.ceil(ttlMs / 1000)
+	};
 }
 
 export function readSignedSessionCookieValue(

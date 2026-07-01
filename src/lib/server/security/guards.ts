@@ -6,7 +6,12 @@ import {
 	sandboxBelongsToSession,
 	type DemoSessionRecord
 } from '$lib/server/database/repository';
-import { readSignedSessionCookieValue, SESSION_COOKIE_NAME } from './session.ts';
+import {
+	createSessionCookieOptions,
+	createSignedSessionCookieValue,
+	readSignedSessionCookieValue,
+	SESSION_COOKIE_NAME
+} from './session.ts';
 
 export type AuthenticatedDemoSession = DemoSessionRecord;
 
@@ -33,6 +38,11 @@ export async function requireAuthenticatedDemoSession(
 	if (!session) {
 		throw error(401, 'Demo session is no longer active');
 	}
+	event.cookies.set(
+		SESSION_COOKIE_NAME,
+		createSignedSessionCookieValue(sessionId, configuration.sessionSecret),
+		createSessionCookieOptions(event.url, configuration.sessionTtlMs)
+	);
 	return session;
 }
 

@@ -23,6 +23,12 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 # Playwright
 test-results
+.playwright-mcp/
+
+# Codex local artifacts
+.codex/audits/
+.codex/environments/
+
 # SQLite
 *.db
 
