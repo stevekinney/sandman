@@ -65,6 +65,7 @@ function mockSandboxExec(stdout: string): ReturnType<typeof vi.fn> {
 			provision: vi.fn(),
 			bootstrap: vi.fn(),
 			restartWorker: vi.fn(),
+			killWorker: vi.fn(),
 			exec,
 			writeFile,
 			terminate: vi.fn()
@@ -98,6 +99,7 @@ describe('POST /api/sandbox/[id]/workflow', () => {
 				provision: vi.fn(),
 				bootstrap: vi.fn(),
 				restartWorker: vi.fn(),
+				killWorker: vi.fn(),
 				exec,
 				writeFile,
 				terminate: vi.fn()
@@ -253,6 +255,7 @@ describe('GET /api/sandbox/[id]/workflow/visibility', () => {
 				provision: vi.fn(),
 				bootstrap: vi.fn(),
 				restartWorker: vi.fn(),
+				killWorker: vi.fn(),
 				exec,
 				writeFile: vi.fn(),
 				terminate: vi.fn()

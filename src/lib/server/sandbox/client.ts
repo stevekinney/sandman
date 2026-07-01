@@ -410,15 +410,19 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 	// restartWorker
 	// ------------------------------------------------------------------
 
+	async function killWorker(handle: SandboxHandle): Promise<void> {
+		const state = getState(handle.id);
+		if (state.workerPid !== undefined) {
+			await state.session.commands.kill(state.workerPid);
+			state.workerPid = undefined;
+		}
+	}
+
 	async function restartWorker(handle: SandboxHandle): Promise<WorkerStatus> {
 		const state = getState(handle.id);
 		const { session } = state;
 
-		// Kill the existing worker if we know its PID.
-		if (state.workerPid !== undefined) {
-			await session.commands.kill(state.workerPid);
-			state.workerPid = undefined;
-		}
+		await killWorker(handle);
 
 		// Restart ONLY the worker; the Temporal server keeps running.
 		try {
@@ -479,7 +483,7 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		return state;
 	}
 
-	return { provision, bootstrap, restartWorker, exec, writeFile, terminate };
+	return { provision, bootstrap, restartWorker, killWorker, exec, writeFile, terminate };
 }
 
 // Re-export the port constants so other modules can reference them.

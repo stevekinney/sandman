@@ -56,6 +56,7 @@ function makeClient(overrides?: Partial<SandboxClient>): SandboxClient {
 		provision: vi.fn(),
 		bootstrap: vi.fn(),
 		restartWorker: vi.fn(),
+		killWorker: vi.fn(),
 		exec: vi.fn(),
 		writeFile: vi.fn().mockResolvedValue(undefined),
 		terminate: vi.fn(),

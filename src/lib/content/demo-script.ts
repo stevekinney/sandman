@@ -322,7 +322,7 @@ export const TOUR: readonly TourStep[] = [
 		id: 'start-workflow',
 		title: 'Place a food order',
 		instruction:
-			'Click "Start Order" to kick off the food-ordering workflow. A WorkflowExecution is created in the Temporal server and your workflow function begins running inside the worker process.',
+			'Click "Place Order" to start one durable order workflow. Temporal records the start event in history, then a worker begins running your workflow code.',
 		control: 'start-order',
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.WorkflowExecutionStarted
 	},
@@ -331,7 +331,6 @@ export const TOUR: readonly TourStep[] = [
 		title: 'Activities run — watch automatic retry',
 		instruction:
 			'Payment charge, restaurant notification, and courier dispatch each run as activities. If a transient failure occurs, Temporal retries automatically with exponential backoff. You do not write retry loops.',
-		control: 'start-order',
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.ActivityTaskCompleted
 	},
 	{
@@ -339,14 +338,13 @@ export const TOUR: readonly TourStep[] = [
 		title: 'A durable timer guards the restaurant deadline',
 		instruction:
 			'The workflow starts a timer for the restaurant-acceptance deadline. This timer lives in the Temporal server — it will fire even if the worker crashes and restarts.',
-		control: 'start-order',
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.TimerStarted
 	},
 	{
 		id: 'signal-accept',
 		title: 'Send a signal to resume the workflow',
 		instruction:
-			'Click "Accept" to send a restaurantAccepted signal. The workflow has been blocking on condition() waiting for this signal. It now resumes and transitions to the Preparing state.',
+			'Click "Restaurant Accepted" to send a signal into the waiting workflow. The order has been paused until the restaurant responds; the signal lets it continue.',
 		control: 'accept-restaurant',
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.WorkflowExecutionSignaled
 	},
@@ -354,7 +352,7 @@ export const TOUR: readonly TourStep[] = [
 		id: 'update-with-validator',
 		title: 'Updates with synchronous validators',
 		instruction:
-			'Try updating the delivery address while the order is still preparing. The validator runs synchronously before the handler, so invalid updates are rejected before workflow execution is consumed.',
+			'Update the delivery address while the order is preparing. Temporal validates the request before the workflow accepts it, so bad changes can be rejected immediately.',
 		control: 'update-address',
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.WorkflowExecutionUpdateAccepted
 	},
@@ -362,7 +360,7 @@ export const TOUR: readonly TourStep[] = [
 		id: 'child-workflow',
 		title: 'A child workflow handles delivery',
 		instruction:
-			'Click "Food Ready" to hand the delivery leg off to a DeliveryWorkflow child. You can see it listed independently in the Temporal Web UI, demonstrating workflow composition.',
+			'Click "Food Ready" to hand delivery to a child workflow. The parent keeps owning the order, while the delivery workflow can be tracked on its own.',
 		control: 'food-ready',
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.ChildWorkflowExecutionStarted
 	},
@@ -370,7 +368,7 @@ export const TOUR: readonly TourStep[] = [
 		id: 'queryable-business-snapshot',
 		title: 'Read the queryable business snapshot',
 		instruction:
-			'Click "Get Status" to read the workflow snapshot, including OrderStatus, CustomerTier, and RestaurantId values that make the execution queryable by business dimensions.',
+			'Click "Get Status" to ask this running workflow for its current order snapshot. Queries are read-only: they inspect state without moving the workflow forward.',
 		control: 'query-status',
 		completes: (e) => e.type === 'QueryCompleted'
 	},
@@ -378,7 +376,7 @@ export const TOUR: readonly TourStep[] = [
 		id: 'search-attributes',
 		title: 'Filter with Temporal Visibility',
 		instruction:
-			'Click "List Visibility" to filter executions by the real Search Attributes upserted by the workflow.',
+			'Click "List Visibility" to search across workflow executions by indexed fields like order status, customer tier, and restaurant.',
 		control: 'list-visibility',
 		completes: (e) => e.type === 'QueryCompleted'
 	},
@@ -386,7 +384,7 @@ export const TOUR: readonly TourStep[] = [
 		id: 'durable-recovery',
 		title: 'Kill the worker — watch it recover',
 		instruction:
-			'Click "Kill Worker" to terminate the Node.js process mid-flight. The Temporal server has preserved all workflow state. Restart the worker and watch the workflow resume exactly where it left off — this is the centrepiece of the Sandman demo.',
+			'Click "Kill Worker" to stop the process running your workflow code. Temporal keeps the history, so after you restart the worker the order resumes from the stored state.',
 		control: 'kill-worker',
 		// Completes ONLY on WorkerRestarted — WorkerKilled does not advance this step.
 		completes: (e) => e.type === 'WorkerRestarted'
@@ -395,7 +393,7 @@ export const TOUR: readonly TourStep[] = [
 		id: 'complete-delivery',
 		title: 'Complete the delivery workflow',
 		instruction:
-			'Click "Complete Delivery" to signal the delivery child workflow. The parent workflow observes the child completion and reaches the Delivered terminal state.',
+			'Click "Complete Delivery" to finish the child workflow. The parent observes that result and moves the order to its delivered final state.',
 		control: 'complete-delivery',
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.WorkflowExecutionCompleted
 	}

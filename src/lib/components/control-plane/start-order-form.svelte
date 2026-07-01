@@ -68,7 +68,7 @@
 	];
 
 	let submitting = $state(false);
-	let error = $state<string | null>(null);
+	let error = $state<StartOrderError | null>(null);
 	let selectedQuantities = $state<Record<string, number>>({
 		'spicy-noodles': 1
 	});
@@ -129,10 +129,64 @@
 			const run = await controller.start(input);
 			onstarted(run, input);
 		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
+			error = formatStartOrderError(err);
 		} finally {
 			submitting = false;
 		}
+	}
+
+	type StartOrderError = {
+		title: string;
+		message: string;
+		action: string;
+		detail: string | null;
+	};
+
+	function formatStartOrderError(value: unknown): StartOrderError {
+		const rawMessage = value instanceof Error ? value.message : String(value);
+		const detail = normalizeStartOrderErrorDetail(rawMessage);
+
+		return {
+			title: 'The order workflow did not start',
+			message:
+				'Sandman reached the sandbox, but Temporal did not accept the workflow start command.',
+			action:
+				'Try Place Order again. If it repeats, start a new session so the Temporal worker and command state are clean.',
+			detail
+		};
+	}
+
+	function normalizeStartOrderErrorDetail(message: string): string | null {
+		const withoutPrefix = message.replace(/^Failed to start workflow:\s*/i, '').trim();
+		if (withoutPrefix.length === 0) return null;
+
+		const parsed = parseJsonObject(withoutPrefix);
+		if (parsed !== null) {
+			const parsedMessage =
+				getStringProperty(parsed, 'message') ?? getStringProperty(parsed, 'error');
+			if (parsedMessage !== null && parsedMessage.trim().length > 0) return parsedMessage;
+		}
+
+		return withoutPrefix;
+	}
+
+	function parseJsonObject(value: string): Record<string, unknown> | null {
+		try {
+			const parsed: unknown = JSON.parse(value);
+			if (isRecord(parsed)) return parsed;
+		} catch {
+			return null;
+		}
+		return null;
+	}
+
+	function isRecord(value: unknown): value is Record<string, unknown> {
+		return typeof value === 'object' && value !== null && !Array.isArray(value);
+	}
+
+	function getStringProperty(value: Record<string, unknown>, key: string): string | null {
+		const property = value[key];
+		return typeof property === 'string' ? property : null;
 	}
 </script>
 
@@ -147,6 +201,22 @@
 			<Badge variant="info">{restaurant.eta}</Badge>
 		</div>
 	</section>
+
+	{#if error}
+		<div role="alert" class="error-card">
+			<p class="error-title">{error.title}</p>
+			<p class="error-message">{error.message}</p>
+			<p class="error-action">{error.action}</p>
+			{#if error.detail}
+				<details class="error-detail">
+					<summary>Technical detail</summary>
+					<code>{error.detail}</code>
+				</details>
+			{/if}
+		</div>
+	{/if}
+
+	<Button type="submit" label="Place Order" loading={submitting} disabled={!canSubmit} fullWidth />
 
 	<section class="menu-section" aria-labelledby="menu-title">
 		<h3 id="menu-title">Popular items</h3>
@@ -233,12 +303,6 @@
 			</div>
 		</div>
 	</section>
-
-	{#if error}
-		<p role="alert" class="error">{error}</p>
-	{/if}
-
-	<Button type="submit" label="Place Order" loading={submitting} disabled={!canSubmit} fullWidth />
 </form>
 
 <style>
@@ -246,11 +310,13 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.875rem;
+		min-width: 0;
 	}
 
 	.restaurant-header,
 	.menu-section,
 	.checkout-section {
+		min-width: 0;
 		padding: 1rem;
 		border: 1px solid var(--cinder-border, #334155);
 		border-radius: 0.5rem;
@@ -319,10 +385,11 @@
 	}
 
 	.menu-item {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
+		display: flex;
+		flex-wrap: wrap;
 		gap: 1rem;
-		align-items: center;
+		align-items: flex-start;
+		justify-content: space-between;
 		padding-bottom: 0.75rem;
 		border-bottom: 1px solid var(--cinder-border, #334155);
 	}
@@ -333,11 +400,13 @@
 	}
 
 	.item-copy {
-		min-width: 0;
+		flex: 1 1 16rem;
+		min-width: min(100%, 16rem);
 	}
 
 	.item-title-row {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 0.5rem;
 	}
@@ -347,6 +416,7 @@
 		grid-template-columns: 1.75rem 1.5rem 1.75rem;
 		align-items: center;
 		justify-items: center;
+		margin-left: auto;
 	}
 
 	.quantity-control span {
@@ -361,6 +431,55 @@
 		justify-content: space-between;
 		gap: 1rem;
 		color: var(--cinder-text, #e2e8f0);
+	}
+
+	.error-card {
+		display: flex;
+		flex-direction: column;
+		gap: 0.45rem;
+		border: 1px solid #f97316;
+		border-radius: 0.5rem;
+		background: #2a1407;
+		color: #fed7aa;
+		padding: 0.8rem 0.9rem;
+	}
+
+	.error-title,
+	.error-message,
+	.error-action {
+		margin: 0;
+	}
+
+	.error-title {
+		font-weight: 800;
+		color: #ffedd5;
+	}
+
+	.error-message,
+	.error-action {
+		line-height: 1.45;
+	}
+
+	.error-detail {
+		margin-top: 0.15rem;
+	}
+
+	.error-detail summary {
+		cursor: pointer;
+		font-weight: 700;
+		color: #fdba74;
+	}
+
+	.error-detail summary:focus-visible {
+		outline: 2px solid #fed7aa;
+		outline-offset: 2px;
+	}
+
+	.error-detail code {
+		display: block;
+		margin-top: 0.4rem;
+		overflow-wrap: anywhere;
+		color: #ffedd5;
 	}
 
 	.summary-grid {
@@ -389,22 +508,10 @@
 		font-weight: 800;
 	}
 
-	.error {
-		margin: 0;
-		color: #fecaca;
-	}
-
 	@media (min-width: 38rem) {
 		.order-start {
-			display: grid;
-			grid-template-columns: minmax(0, 1.05fr) minmax(16rem, 0.95fr);
-			align-items: start;
-		}
-
-		.restaurant-header,
-		.error,
-		.order-start > :global(.cinder-button) {
-			grid-column: 1 / -1;
+			display: flex;
+			flex-direction: column;
 		}
 	}
 </style>

@@ -42,14 +42,13 @@ describe('GuidedTour', () => {
 		render(GuidedTour, { props: { progress: initialProgress } });
 		// Count text is in a <span> inside the header
 		await expect.element(page.getByRole('heading', { name: 'Guided Tour' })).toBeInTheDocument();
-		// The span with the count text — use role="generic" (span) or text match
-		const countEl = page.getByRole('navigation', { name: 'Tour progress' });
-		await expect.element(countEl).toBeInTheDocument();
+		await expect.element(page.getByText('Step 1 of 10')).toBeInTheDocument();
 	});
 
-	it('renders all step titles in the navigation list', async () => {
+	it('keeps the full tour map available behind a disclosure', async () => {
 		render(GuidedTour, { props: { progress: initialProgress } });
-		// Each step has a list item in the nav. Check that there are TOUR.length items.
+
+		await page.getByText('Tour map').click();
 		const nav = page.getByRole('navigation', { name: 'Tour progress' });
 		const items = nav.getByRole('listitem');
 		const allItems = await items.all();

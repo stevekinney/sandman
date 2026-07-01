@@ -4,6 +4,7 @@ import { getProductionConfiguration } from '$lib/server/configuration';
 import { getDatabase } from '$lib/server/database/connection';
 import { createDemoSession } from '$lib/server/database/repository';
 import {
+	createSessionCookieOptions,
 	createSignedSessionCookieValue,
 	hashDemoToken,
 	SESSION_COOKIE_NAME,
@@ -62,13 +63,7 @@ export const POST: RequestHandler = async (event) => {
 	event.cookies.set(
 		SESSION_COOKIE_NAME,
 		createSignedSessionCookieValue(sessionId, configuration.sessionSecret),
-		{
-			httpOnly: true,
-			sameSite: 'lax',
-			secure: event.url.protocol === 'https:',
-			path: '/',
-			maxAge: Math.ceil(configuration.sessionTtlMs / 1000)
-		}
+		createSessionCookieOptions(event.url, configuration.sessionTtlMs)
 	);
 
 	logInfo({ event: 'demo_session.created', sessionId, status: 'created' });

@@ -16,15 +16,18 @@
 	import '@lostgradient/cinder/number-input/styles';
 	import '@lostgradient/cinder/textarea/styles';
 	import type { TemporalController } from './types.ts';
+	import type { ControlId } from '$lib/contracts/workflow-api';
 
 	let {
 		controller,
 		workflowId,
-		deliveryWorkflowId
+		deliveryWorkflowId,
+		recommendedControl
 	}: {
 		controller: TemporalController;
 		workflowId: string;
 		deliveryWorkflowId?: string;
+		recommendedControl?: ControlId;
 	} = $props();
 
 	// --- per-signal state -----------------------------------------------------
@@ -42,112 +45,134 @@
 	async function send<T>(fn: () => Promise<T>): Promise<void> {
 		await fn();
 	}
+
+	function shouldShow(control: ControlId): boolean {
+		if (recommendedControl === undefined) return true;
+		return recommendedControl === control;
+	}
 </script>
 
 <section aria-label="Signal controls">
 	<!-- cancelOrder -->
-	<div class="signal-group">
-		<FormField id="cancel-reason" label="Cancellation reason" class="field">
-			<Textarea id="cancel-reason" rows={2} bind:value={cancelReason} placeholder="Enter reason…" />
-		</FormField>
-		<Button
-			label="Cancel Order"
-			variant="danger"
-			onclick={() =>
-				send(() => controller.signal(workflowId, 'cancelOrder', { reason: cancelReason }))}
-		/>
-	</div>
+	{#if shouldShow('cancel-order')}
+		<div class="signal-group">
+			<FormField id="cancel-reason" label="Cancellation reason" class="field">
+				<Textarea
+					id="cancel-reason"
+					rows={2}
+					bind:value={cancelReason}
+					placeholder="Enter reason…"
+				/>
+			</FormField>
+			<Button
+				label="Cancel Order"
+				variant="danger"
+				onclick={() =>
+					send(() => controller.signal(workflowId, 'cancelOrder', { reason: cancelReason }))}
+			/>
+		</div>
+	{/if}
 
 	<!-- restaurantAccepted -->
-	<div class="signal-group">
-		<FormField id="prep-minutes" label="Estimated prep (minutes)" class="field">
-			<NumberInput id="prep-minutes" min={1} bind:value={estimatedPrepMinutes} />
-		</FormField>
-		<Button
-			label="Restaurant Accepted"
-			variant="soft"
-			onclick={() =>
-				send(() =>
-					controller.signal(workflowId, 'restaurantAccepted', {
-						estimatedPrepMinutes: estimatedPrepMinutes ?? 0
-					})
-				)}
-		/>
-	</div>
+	{#if shouldShow('accept-restaurant')}
+		<div class="signal-group">
+			<FormField id="prep-minutes" label="Estimated prep (minutes)" class="field">
+				<NumberInput id="prep-minutes" min={1} bind:value={estimatedPrepMinutes} />
+			</FormField>
+			<Button
+				label="Restaurant Accepted"
+				variant="soft"
+				onclick={() =>
+					send(() =>
+						controller.signal(workflowId, 'restaurantAccepted', {
+							estimatedPrepMinutes: estimatedPrepMinutes ?? 0
+						})
+					)}
+			/>
+		</div>
+	{/if}
 
 	<!-- restaurantRejected -->
-	<div class="signal-group">
-		<FormField id="rejection-reason" label="Rejection reason" class="field">
-			<Textarea
-				id="rejection-reason"
-				rows={2}
-				bind:value={rejectionReason}
-				placeholder="Enter reason…"
+	{#if shouldShow('reject-restaurant')}
+		<div class="signal-group">
+			<FormField id="rejection-reason" label="Rejection reason" class="field">
+				<Textarea
+					id="rejection-reason"
+					rows={2}
+					bind:value={rejectionReason}
+					placeholder="Enter reason…"
+				/>
+			</FormField>
+			<Checkbox
+				id="rejection-retryable"
+				class="field"
+				label="Retryable"
+				bind:checked={rejectionRetryable}
 			/>
-		</FormField>
-		<Checkbox
-			id="rejection-retryable"
-			class="field"
-			label="Retryable"
-			bind:checked={rejectionRetryable}
-		/>
-		<Button
-			label="Restaurant Rejected"
-			variant="soft-danger"
-			onclick={() =>
-				send(() =>
-					controller.signal(workflowId, 'restaurantRejected', {
-						reason: rejectionReason,
-						retryable: rejectionRetryable
-					})
-				)}
-		/>
-	</div>
+			<Button
+				label="Restaurant Rejected"
+				variant="soft-danger"
+				onclick={() =>
+					send(() =>
+						controller.signal(workflowId, 'restaurantRejected', {
+							reason: rejectionReason,
+							retryable: rejectionRetryable
+						})
+					)}
+			/>
+		</div>
+	{/if}
 
 	<!-- foodReady -->
-	<div class="signal-group">
-		<Button
-			label="Food Ready"
-			variant="soft"
-			onclick={() => send(() => controller.signal(workflowId, 'foodReady', {}))}
-		/>
-	</div>
+	{#if shouldShow('food-ready')}
+		<div class="signal-group">
+			<Button
+				label="Food Ready"
+				variant="soft"
+				onclick={() => send(() => controller.signal(workflowId, 'foodReady', {}))}
+			/>
+		</div>
+	{/if}
 
 	<!-- courierLocationUpdate -->
-	<div class="signal-group">
-		<FormField id="courier-lat" label="Courier latitude" class="field">
-			<NumberInput id="courier-lat" step={0.0001} bind:value={courierLat} />
-		</FormField>
-		<FormField id="courier-lng" label="Courier longitude" class="field">
-			<NumberInput id="courier-lng" step={0.0001} bind:value={courierLng} />
-		</FormField>
-		<Button
-			label="Update Courier Location"
-			variant="soft"
-			onclick={() =>
-				send(() =>
-					controller.signal(workflowId, 'courierLocationUpdate', {
-						lat: courierLat ?? 0,
-						lng: courierLng ?? 0
-					})
-				)}
-		/>
-	</div>
+	{#if shouldShow('update-location')}
+		<div class="signal-group">
+			<FormField id="courier-lat" label="Courier latitude" class="field">
+				<NumberInput id="courier-lat" step={0.0001} bind:value={courierLat} />
+			</FormField>
+			<FormField id="courier-lng" label="Courier longitude" class="field">
+				<NumberInput id="courier-lng" step={0.0001} bind:value={courierLng} />
+			</FormField>
+			<Button
+				label="Update Courier Location"
+				variant="soft"
+				onclick={() =>
+					send(() =>
+						controller.signal(workflowId, 'courierLocationUpdate', {
+							lat: courierLat ?? 0,
+							lng: courierLng ?? 0
+						})
+					)}
+			/>
+		</div>
+	{/if}
 
 	<!-- addTip -->
-	<div class="signal-group">
-		<FormField id="tip-amount" label="Tip amount (cents)" class="field">
-			<NumberInput id="tip-amount" min={1} bind:value={tipAmountCents} />
-		</FormField>
-		<Button
-			label="Add Tip"
-			variant="soft"
-			onclick={() =>
-				send(() => controller.signal(workflowId, 'addTip', { amountCents: tipAmountCents ?? 0 }))}
-		/>
-	</div>
+	{#if shouldShow('add-tip')}
+		<div class="signal-group">
+			<FormField id="tip-amount" label="Tip amount (cents)" class="field">
+				<NumberInput id="tip-amount" min={1} bind:value={tipAmountCents} />
+			</FormField>
+			<Button
+				label="Add Tip"
+				variant="soft"
+				onclick={() =>
+					send(() => controller.signal(workflowId, 'addTip', { amountCents: tipAmountCents ?? 0 }))}
+			/>
+		</div>
+	{/if}
 
-	{#if deliveryWorkflowId !== undefined}
+	{#if deliveryWorkflowId !== undefined && shouldShow('complete-delivery')}
 		<div class="signal-group">
 			<Button
 				label="Complete Delivery"

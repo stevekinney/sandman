@@ -13,6 +13,7 @@
 	import Badge from '@lostgradient/cinder/badge';
 	import type { TourProgress } from '$lib/content/tour-engine';
 	import { TOUR } from '$lib/content/demo-script';
+	import type { ControlId } from '$lib/contracts/workflow-api';
 
 	type Props = {
 		/** Current progress snapshot; controls which step is active. */
@@ -30,6 +31,41 @@
 	function handleReset() {
 		onreset?.();
 	}
+
+	function getActionLabel(control: ControlId): string {
+		switch (control) {
+			case 'start-order':
+				return 'Place Order';
+			case 'cancel-order':
+				return 'Cancel Order';
+			case 'accept-restaurant':
+				return 'Restaurant Accepted';
+			case 'reject-restaurant':
+				return 'Restaurant Rejected';
+			case 'food-ready':
+				return 'Food Ready';
+			case 'update-location':
+				return 'Update Courier Location';
+			case 'add-tip':
+				return 'Add Tip';
+			case 'update-address':
+				return 'Update Address';
+			case 'apply-promo':
+				return 'Apply Promo';
+			case 'query-status':
+				return 'Get Status';
+			case 'query-timeline':
+				return 'Get Timeline';
+			case 'kill-worker':
+				return 'Kill Worker, then Restart Worker';
+			case 'complete-delivery':
+				return 'Complete Delivery';
+			case 'list-visibility':
+				return 'List Visibility';
+		}
+		const exhaustive: never = control;
+		return exhaustive;
+	}
 </script>
 
 <section aria-label="Guided tour" class="guided-tour">
@@ -43,36 +79,14 @@
 		</span>
 	</header>
 
-	<!-- Step overview — accessible ordered list with aria-current on the active step -->
-	<nav aria-label="Tour progress" class="guided-tour__nav">
-		<ol class="guided-tour__steps">
-			{#each TOUR as step, i (step.id)}
-				{@const isDone = i < activeStep}
-				{@const isActive = i === activeStep}
-				<li
-					class="guided-tour__step"
-					class:guided-tour__step--done={isDone}
-					class:guided-tour__step--active={isActive}
-					aria-current={isActive ? 'step' : undefined}
-				>
-					<span class="guided-tour__step-marker" aria-hidden="true">
-						{#if isDone}✓{:else}{i + 1}{/if}
-					</span>
-					<span class="guided-tour__step-label">{step.title}</span>
-					{#if step.control}
-						<span class="guided-tour__step-hint">({step.control})</span>
-					{/if}
-				</li>
-			{/each}
-		</ol>
-	</nav>
-
 	<!-- Active step detail + live region so changes are announced to screen readers -->
 	<div role="status" aria-live="polite" aria-atomic="true" class="guided-tour__detail">
 		{#if isComplete}
 			<div class="guided-tour__complete">
 				<p class="guided-tour__complete-message">
-					Tour complete — you have seen all the key Temporal primitives in action.
+					Tour complete. You started a durable workflow, changed it with signals and updates,
+					queried its state, searched it through Visibility, killed the worker, restarted it, and
+					still delivered the order.
 				</p>
 			</div>
 		{:else if currentStep !== undefined}
@@ -82,12 +96,42 @@
 				{#if currentStep.control}
 					<p class="guided-tour__step-control">
 						<span class="guided-tour__step-control-label">Next action:</span>
-						<Badge variant="neutral">{currentStep.control}</Badge>
+						<Badge variant="neutral">{getActionLabel(currentStep.control)}</Badge>
 					</p>
 				{/if}
 			</div>
 		{/if}
 	</div>
+
+	<details class="guided-tour__map">
+		<summary>
+			<span>Tour map</span>
+			<span>{progress.completedStepIds.length} complete</span>
+		</summary>
+		<!-- Step overview — accessible ordered list with aria-current on the active step -->
+		<nav aria-label="Tour progress" class="guided-tour__nav">
+			<ol class="guided-tour__steps">
+				{#each TOUR as step, i (step.id)}
+					{@const isDone = i < activeStep}
+					{@const isActive = i === activeStep}
+					<li
+						class="guided-tour__step"
+						class:guided-tour__step--done={isDone}
+						class:guided-tour__step--active={isActive}
+						aria-current={isActive ? 'step' : undefined}
+					>
+						<span class="guided-tour__step-marker" aria-hidden="true">
+							{#if isDone}✓{:else}{i + 1}{/if}
+						</span>
+						<span class="guided-tour__step-label">{step.title}</span>
+						{#if step.control}
+							<span class="guided-tour__step-hint">{getActionLabel(step.control)}</span>
+						{/if}
+					</li>
+				{/each}
+			</ol>
+		</nav>
+	</details>
 
 	<footer class="guided-tour__footer">
 		<Button variant="ghost" onclick={handleReset}>Reset tour</Button>
@@ -125,6 +169,43 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.25rem;
+	}
+
+	.guided-tour__map {
+		border: 1px solid var(--color-border, #e5e7eb);
+		border-radius: 0.5rem;
+		background: color-mix(in srgb, var(--color-surface-subtle, #f9fafb), transparent 12%);
+	}
+
+	.guided-tour__map > summary {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.65rem 0.75rem;
+		cursor: pointer;
+		list-style: none;
+		color: var(--color-text-primary, #111827);
+		font-weight: 700;
+	}
+
+	.guided-tour__map > summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.guided-tour__map > summary span:last-child {
+		color: var(--color-text-muted, #9ca3af);
+		font-size: 0.78rem;
+		font-weight: 500;
+	}
+
+	.guided-tour__map > summary:focus-visible {
+		outline: 2px solid #38bdf8;
+		outline-offset: 2px;
+	}
+
+	.guided-tour__map .guided-tour__nav {
+		padding: 0 0.75rem 0.75rem;
 	}
 
 	.guided-tour__step {
@@ -209,8 +290,10 @@
 	}
 
 	.guided-tour__complete-message {
-		font-weight: 500;
-		color: var(--color-success, #059669);
+		margin: 0;
+		font-weight: 700;
+		line-height: 1.55;
+		color: #bbf7d0;
 	}
 
 	.guided-tour__footer {

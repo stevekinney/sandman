@@ -85,6 +85,50 @@ describe('start-order form', () => {
 		await expect.element(page.getByRole('textbox', { name: 'Street' })).not.toBeInTheDocument();
 	});
 
+	it('keeps the menu and cart readable in a narrow control panel', async () => {
+		const controller = new MockTemporalController();
+		const { container } = render(ControlPlane, { props: { controller } });
+		container.style.width = '520px';
+		container.style.maxWidth = '520px';
+		await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+		const form = container.querySelector('.order-start');
+		const menuSection = container.querySelector('.menu-section');
+		const checkoutSection = container.querySelector('.checkout-section');
+		const itemCopy = container.querySelector('.item-copy');
+		if (form === null || menuSection === null || checkoutSection === null || itemCopy === null) {
+			throw new Error('Expected start-order layout sections to render.');
+		}
+
+		const formRect = form.getBoundingClientRect();
+		const menuRect = menuSection.getBoundingClientRect();
+		const checkoutRect = checkoutSection.getBoundingClientRect();
+		const itemCopyRect = itemCopy.getBoundingClientRect();
+
+		expect(menuRect.width).toBeGreaterThan(formRect.width * 0.9);
+		expect(checkoutRect.top).toBeGreaterThan(menuRect.bottom - 1);
+		expect(itemCopyRect.width).toBeGreaterThan(240);
+	});
+
+	it('formats workflow start failures without exposing raw server JSON', async () => {
+		const controller = new MockTemporalController();
+		controller.startError = new Error('Failed to start workflow: {"message":"Internal Error"}');
+		render(ControlPlane, { props: { controller } });
+
+		await page.getByRole('button', { name: 'Place Order' }).click();
+
+		const alert = page.getByRole('alert');
+		await expect.element(alert.getByText('The order workflow did not start')).toBeInTheDocument();
+		await expect
+			.element(alert.getByText('Temporal did not accept the workflow start command'))
+			.toBeInTheDocument();
+		await expect.element(alert.getByText('Try Place Order again')).toBeInTheDocument();
+		await expect.element(alert.getByText('{"message":"Internal Error"}')).not.toBeInTheDocument();
+
+		await page.getByText('Technical detail').click();
+		await expect.element(alert.getByText('Internal Error')).toBeInTheDocument();
+	});
+
 	it('displays the workflow run ID in the UI after a successful start', async () => {
 		const controller = new MockTemporalController();
 		controller.startResult = { workflowId: 'wf-display-test', runId: 'run-display-test' };
@@ -112,6 +156,69 @@ describe('start-order form', () => {
 		await expect
 			.element(page.getByLabelText('Recommended next action').getByText('Restaurant Accepted'))
 			.toBeInTheDocument();
+	});
+
+	it('shows a passive timeline-watching next action when the tour has no control to click', async () => {
+		const controller = new MockTemporalController();
+		render(ControlPlane, { props: { controller, recommendedControl: undefined } });
+
+		await startWorkflow(controller);
+
+		await expect
+			.element(
+				page.getByLabelText('Recommended next action').getByText('Watch the timeline advance')
+			)
+			.toBeInTheDocument();
+	});
+
+	it('opens only the current control group while guided mode is active', async () => {
+		const controller = new MockTemporalController();
+		const { container } = render(ControlPlane, {
+			props: { controller, recommendedControl: 'update-address' }
+		});
+
+		await startWorkflow(controller);
+
+		const updates = container.querySelector('[data-control-section="updates"]');
+		const signals = container.querySelector('[data-control-section="signals"]');
+		const queries = container.querySelector('[data-control-section="queries"]');
+		if (updates === null || signals === null || queries === null) {
+			throw new Error('Expected guided control sections to render.');
+		}
+		expect(updates.hasAttribute('open')).toBe(true);
+		expect(signals.hasAttribute('open')).toBe(false);
+		expect(queries.hasAttribute('open')).toBe(false);
+		await expect
+			.element(page.getByText('Make validated changes with an immediate result'))
+			.toBeInTheDocument();
+	});
+
+	it('keeps every control group open when no guided control is active', async () => {
+		const controller = new MockTemporalController();
+		const { container } = render(ControlPlane, { props: { controller } });
+
+		await startWorkflow(controller);
+
+		for (const sectionName of ['signals', 'queries', 'visibility', 'updates', 'worker']) {
+			const section = container.querySelector(`[data-control-section="${sectionName}"]`);
+			if (section === null) throw new Error(`Expected ${sectionName} section to render.`);
+			expect(section.hasAttribute('open')).toBe(true);
+		}
+	});
+
+	it('filters signal controls to the guided action while guided mode is active', async () => {
+		const controller = new MockTemporalController();
+		render(ControlPlane, {
+			props: { controller, recommendedControl: 'accept-restaurant' }
+		});
+
+		await startWorkflow(controller);
+
+		await expect.element(page.getByRole('button', { name: 'Restaurant Accepted' })).toBeVisible();
+		await expect
+			.element(page.getByRole('button', { name: 'Cancel Order' }))
+			.not.toBeInTheDocument();
+		await expect.element(page.getByRole('button', { name: 'Food Ready' })).not.toBeInTheDocument();
 	});
 
 	it('emits command-log entries for start and query operations', async () => {
@@ -280,8 +387,10 @@ describe('query controls', () => {
 			workflowId: controller.startResult.workflowId,
 			name: 'getStatus'
 		});
-		// PayloadInspector renders the value — PREPARING should appear somewhere
-		await expect.element(page.getByText(/PREPARING/)).toBeInTheDocument();
+		await expect
+			.element(page.getByLabelText('Current workflow snapshot').getByText('PREPARING'))
+			.toBeInTheDocument();
+		await expect.element(page.getByText('Query result: getStatus')).toBeInTheDocument();
 	});
 
 	it('calls controller.query with getTimeline and renders result via PayloadInspector', async () => {
@@ -418,6 +527,21 @@ describe('chaos controls', () => {
 
 		expect(controller.killWorkerCount).toBe(1);
 		await expect.element(page.getByText(/Worker killed/i)).toBeInTheDocument();
+	});
+
+	it('emits a WorkerKilled event when the worker is killed', async () => {
+		const controller = new MockTemporalController();
+		const events: WorkflowEvent[] = [];
+		render(ControlPlane, {
+			props: { controller, onworkflowevent: (event: WorkflowEvent) => events.push(event) }
+		});
+		await startWorkflow(controller);
+
+		await page.getByRole('button', { name: 'Kill Worker' }).click();
+
+		expect(events).toEqual(
+			expect.arrayContaining([expect.objectContaining({ type: 'WorkerKilled' })])
+		);
 	});
 
 	it('shows Restart Worker button after worker is killed', async () => {

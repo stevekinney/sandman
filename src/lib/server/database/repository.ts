@@ -219,6 +219,7 @@ export async function updateSandboxStatus(
 		status: SandboxSessionStatus;
 		now: Date;
 		errorMessage?: string;
+		expiresAt?: Date;
 	}
 ): Promise<void> {
 	await database
@@ -227,6 +228,7 @@ export async function updateSandboxStatus(
 			status: input.status,
 			updatedAt: input.now,
 			errorMessage: input.errorMessage,
+			expiresAt: input.expiresAt,
 			bootstrappedAt: input.status === SANDBOX_SESSION_STATUS.Ready ? input.now : undefined,
 			terminatedAt:
 				input.status === SANDBOX_SESSION_STATUS.Terminated ||

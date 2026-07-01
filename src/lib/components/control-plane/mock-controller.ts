@@ -92,6 +92,9 @@ export class MockTemporalController implements TemporalController {
 	/** Result returned by `start()`. Override to test different run IDs. */
 	startResult: WorkflowRun = { workflowId: 'wf-test-1', runId: 'run-test-1' };
 
+	/** When set, `start()` throws this error instead of succeeding. */
+	startError: Error | null = null;
+
 	/**
 	 * Per-query return values. If a query name has no entry, the mock
 	 * returns `null` cast to the expected type.
@@ -129,6 +132,7 @@ export class MockTemporalController implements TemporalController {
 
 	async start(input: OrderInput): Promise<WorkflowRun> {
 		this.startCalls.push(input);
+		if (this.startError !== null) throw this.startError;
 		return this.startResult;
 	}
 

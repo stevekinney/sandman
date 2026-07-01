@@ -150,10 +150,14 @@ export const POST: RequestHandler = async (event) => {
 				now: new Date()
 			});
 			const result = await registry.client.bootstrap(handle);
+			const completedAt = new Date();
 			await updateSandboxStatus(database, {
 				sandboxId: handle.id,
 				status: result.ready ? SANDBOX_SESSION_STATUS.Ready : SANDBOX_SESSION_STATUS.Error,
-				now: new Date(),
+				now: completedAt,
+				expiresAt: result.ready
+					? new Date(completedAt.getTime() + configuration.sessionTtlMs)
+					: undefined,
 				errorMessage: result.ready ? undefined : 'Temporal server did not become ready'
 			});
 			logInfo({

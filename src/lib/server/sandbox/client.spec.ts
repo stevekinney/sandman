@@ -550,6 +550,22 @@ describe('bootstrap() — Temporal CLI install path', () => {
 // ---------------------------------------------------------------------------
 
 describe('restartWorker()', () => {
+	it('can stop the current worker process without starting a replacement', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		calls.length = 0;
+
+		await client.killWorker(handle);
+
+		const killCall = calls.find((c) => c.method === 'commands.kill') as
+			| Extract<CallRecord, { method: 'commands.kill' }>
+			| undefined;
+		expect(killCall).toBeDefined();
+		expect(calls.some((c) => c.method === 'commands.start' && c.cmd.includes('worker'))).toBe(
+			false
+		);
+	});
+
 	it('kills the current worker process by PID', async () => {
 		const { client, calls } = makeClient();
 		const handle = await provisionAndBootstrap(client);

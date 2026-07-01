@@ -39,7 +39,7 @@
 	);
 	let workerStatus = $state<WorkerStatus | null>(null);
 	let isLoading = $state(false);
-	let isMounted = $derived(false);
+	let isMounted = $state(false);
 	let editorContainer = $state<HTMLDivElement | undefined>();
 
 	// ---------------------------------------------------------------------------

@@ -52,11 +52,11 @@ const STORAGE_KEY = 'sandman:tour-progress';
  * Production StorageAdapter backed by localStorage.
  * Safe to call only in a browser environment.
  */
-export function localStorageAdapter(): StorageAdapter {
+export function localStorageAdapter(storageKey = STORAGE_KEY): StorageAdapter {
 	return {
 		load() {
 			try {
-				const raw = localStorage.getItem(STORAGE_KEY);
+				const raw = localStorage.getItem(storageKey);
 				if (!raw) return null;
 				const parsed = JSON.parse(raw) as unknown;
 				if (
@@ -76,14 +76,14 @@ export function localStorageAdapter(): StorageAdapter {
 		},
 		save(progress) {
 			try {
-				localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
+				localStorage.setItem(storageKey, JSON.stringify(progress));
 			} catch {
 				// Quota exceeded or private-browsing restriction — fail silently.
 			}
 		},
 		clear() {
 			try {
-				localStorage.removeItem(STORAGE_KEY);
+				localStorage.removeItem(storageKey);
 			} catch {
 				// Ignore.
 			}

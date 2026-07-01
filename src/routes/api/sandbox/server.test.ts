@@ -4,7 +4,8 @@ import {
 	decrementRateLimitBucket,
 	incrementRateLimitBucket,
 	markSandboxReservationError,
-	reserveSandboxSlot
+	reserveSandboxSlot,
+	updateSandboxStatus
 } from '$lib/server/database/repository';
 import { getSandboxRegistry } from '$lib/server/sandbox/registry';
 
@@ -45,6 +46,7 @@ vi.mock('$lib/server/sandbox/registry', () => ({
 				host: () => 'localhost'
 			}),
 			bootstrap: vi.fn().mockResolvedValue({ ready: true }),
+			killWorker: vi.fn(),
 			terminate: vi.fn().mockResolvedValue(undefined)
 		}
 	})),
@@ -105,6 +107,7 @@ describe('POST /api/sandbox', () => {
 				bootstrap: vi.fn(),
 				exec: vi.fn(),
 				restartWorker: vi.fn(),
+				killWorker: vi.fn(),
 				terminate: vi.fn(),
 				writeFile: vi.fn()
 			},
@@ -145,6 +148,7 @@ describe('POST /api/sandbox', () => {
 				bootstrap: vi.fn(),
 				exec: vi.fn(),
 				restartWorker: vi.fn(),
+				killWorker: vi.fn(),
 				terminate: vi.fn(),
 				writeFile: vi.fn()
 			},
@@ -165,5 +169,29 @@ describe('POST /api/sandbox', () => {
 				message: 'E2B_API_KEY is invalid or missing'
 			}
 		});
+	});
+
+	it('starts sandbox expiration from bootstrap readiness instead of reservation time', async () => {
+		const response = await POST(makeEvent());
+
+		expect(response.status).toBe(200);
+		await vi.waitFor(() => {
+			expect(updateSandboxStatus).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({
+					sandboxId: 'sandbox-1',
+					status: 'ready',
+					expiresAt: expect.any(Date)
+				})
+			);
+		});
+		const readyCall = vi
+			.mocked(updateSandboxStatus)
+			.mock.calls.find(([, input]) => input.status === 'ready');
+		expect(readyCall).toBeDefined();
+		const readyInput = readyCall?.[1];
+		expect(readyInput?.expiresAt?.getTime()).toBe(
+			readyInput === undefined ? undefined : readyInput.now.getTime() + 300_000
+		);
 	});
 });

@@ -10,10 +10,10 @@
  * - expect.requireAssertions is satisfied on every test.
  */
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowEvent } from '$lib/contracts/events';
 import type { StorageAdapter, TourProgress } from './tour-engine';
-import { TourEngine } from './tour-engine';
+import { TourEngine, localStorageAdapter } from './tour-engine';
 import { TOUR } from './demo-script';
 
 // ---------------------------------------------------------------------------
@@ -209,5 +209,28 @@ describe('TourEngine', () => {
 			expect(engine.currentStepIndex).toBe(0);
 			expect(storage.load()).toBeNull();
 		});
+
+		it('localStorageAdapter can isolate progress by storage key', () => {
+			const values = new Map<string, string>();
+			vi.stubGlobal('localStorage', {
+				getItem: (key: string) => values.get(key) ?? null,
+				setItem: (key: string, value: string) => {
+					values.set(key, value);
+				},
+				removeItem: (key: string) => {
+					values.delete(key);
+				}
+			});
+
+			const firstSession = new TourEngine(TOUR, localStorageAdapter('sandman:tour-progress:one'));
+			firstSession.feed(satisfyingEvent(0));
+
+			const secondSession = new TourEngine(TOUR, localStorageAdapter('sandman:tour-progress:two'));
+			expect(secondSession.currentStepIndex).toBe(0);
+		});
 	});
+});
+
+afterEach(() => {
+	vi.unstubAllGlobals();
 });

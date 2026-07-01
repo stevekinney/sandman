@@ -44,8 +44,8 @@ export class FetchController implements TemporalController {
 			body: JSON.stringify(input)
 		});
 		if (!res.ok) {
-			const text = await res.text();
-			throw new Error(`Failed to start workflow: ${text}`);
+			const message = await readErrorMessage(res);
+			throw new Error(`Failed to start workflow: ${message}`);
 		}
 		return res.json() as Promise<WorkflowRun>;
 	}
@@ -139,4 +139,36 @@ export class FetchController implements TemporalController {
 		const body = (await res.json()) as { workflows: VisibilityWorkflowSummary[] };
 		return body.workflows;
 	}
+}
+
+async function readErrorMessage(response: Response): Promise<string> {
+	const body = await response.text();
+	if (body.trim().length === 0) return response.statusText || `HTTP ${response.status}`;
+
+	const parsed = parseJsonObject(body);
+	if (parsed !== null) {
+		const message = getStringProperty(parsed, 'message') ?? getStringProperty(parsed, 'error');
+		if (message !== null && message.trim().length > 0) return message;
+	}
+
+	return body;
+}
+
+function parseJsonObject(value: string): Record<string, unknown> | null {
+	try {
+		const parsed: unknown = JSON.parse(value);
+		if (isRecord(parsed)) return parsed;
+	} catch {
+		return null;
+	}
+	return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getStringProperty(value: Record<string, unknown>, key: string): string | null {
+	const property = value[key];
+	return typeof property === 'string' ? property : null;
 }

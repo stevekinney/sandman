@@ -18,16 +18,19 @@
 	import type { TemporalController } from './types.ts';
 	import { isUpdateRejectionError } from './types.ts';
 	import type {
+		ControlId,
 		UpdateDeliveryAddressResult,
 		ApplyPromoCodeResult
 	} from '$lib/contracts/workflow-api';
 
 	let {
 		controller,
-		workflowId
+		workflowId,
+		recommendedControl
 	}: {
 		controller: TemporalController;
 		workflowId: string;
+		recommendedControl?: ControlId;
 	} = $props();
 
 	// --- updateDeliveryAddress state ------------------------------------------
@@ -91,74 +94,83 @@
 			promoSubmitting = false;
 		}
 	}
+
+	function shouldShow(control: ControlId): boolean {
+		if (recommendedControl === undefined) return true;
+		return recommendedControl === control;
+	}
 </script>
 
 <section aria-label="Update controls">
 	<!-- updateDeliveryAddress -->
-	<div class="update-group">
-		<h3>Update delivery address</h3>
+	{#if shouldShow('update-address')}
+		<div class="update-group">
+			<h3>Update delivery address</h3>
 
-		<FormField id="new-street" label="New street" class="field">
-			<Input id="new-street" type="text" bind:value={newStreet} autocomplete="off" />
-		</FormField>
-		<FormField id="new-city" label="New city" class="field">
-			<Input id="new-city" type="text" bind:value={newCity} autocomplete="off" />
-		</FormField>
-		<FormField id="new-state" label="New state" class="field">
-			<Input id="new-state" type="text" bind:value={newAddressState} autocomplete="off" />
-		</FormField>
-		<FormField id="new-postal-code" label="New postal code" class="field">
-			<Input id="new-postal-code" type="text" bind:value={newPostalCode} autocomplete="off" />
-		</FormField>
+			<FormField id="new-street" label="New street" class="field">
+				<Input id="new-street" type="text" bind:value={newStreet} autocomplete="off" />
+			</FormField>
+			<FormField id="new-city" label="New city" class="field">
+				<Input id="new-city" type="text" bind:value={newCity} autocomplete="off" />
+			</FormField>
+			<FormField id="new-state" label="New state" class="field">
+				<Input id="new-state" type="text" bind:value={newAddressState} autocomplete="off" />
+			</FormField>
+			<FormField id="new-postal-code" label="New postal code" class="field">
+				<Input id="new-postal-code" type="text" bind:value={newPostalCode} autocomplete="off" />
+			</FormField>
 
-		{#if addressError}
-			<p role="alert" class="inline-error" aria-live="polite">{addressError}</p>
-		{/if}
+			{#if addressError}
+				<p role="alert" class="inline-error" aria-live="polite">{addressError}</p>
+			{/if}
 
-		{#if addressResult}
-			<p role="status" class="inline-success">
-				Address updated: {addressResult.effectiveAddress.street}
-			</p>
-		{/if}
+			{#if addressResult}
+				<p role="status" class="inline-success">
+					Address updated: {addressResult.effectiveAddress.street}
+				</p>
+			{/if}
 
-		<Button
-			label="Update Address"
-			variant="secondary"
-			loading={addressSubmitting}
-			onclick={updateAddress}
-		/>
-	</div>
+			<Button
+				label="Update Address"
+				variant="secondary"
+				loading={addressSubmitting}
+				onclick={updateAddress}
+			/>
+		</div>
+	{/if}
 
 	<!-- applyPromoCode -->
-	<div class="update-group">
-		<h3>Apply promo code</h3>
+	{#if shouldShow('apply-promo')}
+		<div class="update-group">
+			<h3>Apply promo code</h3>
 
-		<FormField id="promo-code" label="Promo code" class="field">
-			<Input
-				id="promo-code"
-				type="text"
-				bind:value={promoCode}
-				autocomplete="off"
-				placeholder="e.g. SAVE10"
+			<FormField id="promo-code" label="Promo code" class="field">
+				<Input
+					id="promo-code"
+					type="text"
+					bind:value={promoCode}
+					autocomplete="off"
+					placeholder="e.g. SAVE10"
+				/>
+			</FormField>
+
+			{#if promoError}
+				<p role="alert" class="inline-error" aria-live="polite">{promoError}</p>
+			{/if}
+
+			{#if promoResult}
+				<p role="status" class="inline-success">
+					{promoResult.description}
+					(−{promoResult.discountCents}¢)
+				</p>
+			{/if}
+
+			<Button
+				label="Apply Promo"
+				variant="secondary"
+				loading={promoSubmitting}
+				onclick={applyPromo}
 			/>
-		</FormField>
-
-		{#if promoError}
-			<p role="alert" class="inline-error" aria-live="polite">{promoError}</p>
-		{/if}
-
-		{#if promoResult}
-			<p role="status" class="inline-success">
-				{promoResult.description}
-				(−{promoResult.discountCents}¢)
-			</p>
-		{/if}
-
-		<Button
-			label="Apply Promo"
-			variant="secondary"
-			loading={promoSubmitting}
-			onclick={applyPromo}
-		/>
-	</div>
+		</div>
+	{/if}
 </section>

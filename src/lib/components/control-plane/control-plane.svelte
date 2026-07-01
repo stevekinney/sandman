@@ -101,8 +101,15 @@
 	const deliveryWorkflowId = $derived(
 		activeOrder === null ? undefined : `delivery-${activeOrder.orderId}`
 	);
-	const nextActionLabel = $derived(getControlLabel(recommendedControl));
+	const nextActionLabel = $derived(
+		workflowRun !== null && recommendedControl === undefined
+			? 'Watch the timeline advance'
+			: getControlLabel(recommendedControl)
+	);
+	const guidedMode = $derived(recommendedControl !== undefined);
 	const loggingController = $derived(createLoggingController(controller));
+
+	type ControlSection = 'signals' | 'queries' | 'visibility' | 'updates' | 'worker';
 
 	function formatMoney(cents: number): string {
 		return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(
@@ -260,7 +267,7 @@
 			killWorker: async () => {
 				const entry = recordCommand(
 					buildCommandDraft('Kill Worker', 'worker', 'POST /api/sandbox/[id]/worker/kill', {
-						temporalCommand: 'pkill -f sandbox-template/worker.ts'
+						temporalCommand: 'E2B commands.kill(workerPid)'
 					}),
 					'running'
 				);
@@ -396,6 +403,38 @@
 		}
 	}
 
+	function getControlSection(control: ControlId | undefined): ControlSection | undefined {
+		switch (control) {
+			case 'accept-restaurant':
+			case 'cancel-order':
+			case 'reject-restaurant':
+			case 'food-ready':
+			case 'update-location':
+			case 'add-tip':
+			case 'complete-delivery':
+				return 'signals';
+			case 'query-status':
+			case 'query-timeline':
+				return 'queries';
+			case 'list-visibility':
+				return 'visibility';
+			case 'update-address':
+			case 'apply-promo':
+				return 'updates';
+			case 'kill-worker':
+				return 'worker';
+			case 'start-order':
+				return undefined;
+			case undefined:
+				return undefined;
+		}
+	}
+
+	function isSectionOpen(section: ControlSection): boolean {
+		if (!guidedMode) return true;
+		return getControlSection(recommendedControl) === section;
+	}
+
 	async function listVisibility(): Promise<void> {
 		if (!activeOrder) return;
 		visibilityLoading = true;
@@ -460,8 +499,11 @@
 			</section>
 		{/if}
 
-		<header class="run-header" aria-label="Temporal workflow run">
-			<h3>Temporal controls</h3>
+		<details class="run-header" aria-label="Temporal workflow run" open={!guidedMode}>
+			<summary>
+				<h3>Temporal controls</h3>
+				<span>Workflow IDs</span>
+			</summary>
 			<dl class="run-meta">
 				<div>
 					<dt>Workflow ID</dt>
@@ -472,65 +514,202 @@
 					<dd>{workflowRun.runId}</dd>
 				</div>
 			</dl>
-		</header>
+		</details>
 
-		<SignalControls
-			controller={loggingController}
-			workflowId={workflowRun.workflowId}
-			{deliveryWorkflowId}
-		/>
-
-		<QueryPanel
-			controller={loggingController}
-			workflowId={workflowRun.workflowId}
-			onqueried={(name) => {
-				if (name === 'getStatus') emitControlEvent('QueryCompleted');
-			}}
-		/>
-
-		<section class="visibility-panel" aria-label="Temporal Visibility">
-			<div>
-				<p class="eyebrow">Temporal Visibility</p>
-				<p>
-					Filter real workflow executions by OrderStatus, CustomerTier, and RestaurantId Search
-					Attributes.
-				</p>
-			</div>
-			<Button
-				label="List Visibility"
-				variant={recommendedControl === 'list-visibility' ? 'primary' : 'secondary'}
-				loading={visibilityLoading}
-				onclick={listVisibility}
+		<details
+			class="control-section"
+			data-control-section="signals"
+			aria-label="Signal controls section"
+			open={isSectionOpen('signals')}
+		>
+			<summary>
+				<span>Signals</span>
+				<span>Send outside events into the running workflow</span>
+			</summary>
+			<SignalControls
+				controller={loggingController}
+				workflowId={workflowRun.workflowId}
+				{deliveryWorkflowId}
+				{recommendedControl}
 			/>
-			{#if visibilityError}
-				<p role="alert" class="visibility-error">{visibilityError}</p>
-			{/if}
-			{#if visibilityResults.length > 0}
-				<ul class="visibility-results">
-					{#each visibilityResults as result (`${result.workflowId}:${result.runId}`)}
-						<li>
-							<span>{result.workflowId}</span>
-							<strong>{result.status}</strong>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</section>
+		</details>
 
-		<UpdateControls controller={loggingController} workflowId={workflowRun.workflowId} />
+		<details
+			class="control-section"
+			data-control-section="queries"
+			aria-label="Query controls section"
+			open={isSectionOpen('queries')}
+		>
+			<summary>
+				<span>Queries</span>
+				<span>Read workflow state without moving it forward</span>
+			</summary>
+			<QueryPanel
+				controller={loggingController}
+				workflowId={workflowRun.workflowId}
+				{recommendedControl}
+				onqueried={(name) => {
+					if (name === 'getStatus') emitControlEvent('QueryCompleted');
+				}}
+			/>
+		</details>
 
-		<ChaosControls
-			controller={loggingController}
-			onrestarted={() => emitControlEvent('WorkerRestarted')}
-		/>
+		<details
+			class="control-section"
+			data-control-section="visibility"
+			aria-label="Visibility controls section"
+			open={isSectionOpen('visibility')}
+		>
+			<summary>
+				<span>Visibility</span>
+				<span>Search workflow executions by indexed fields</span>
+			</summary>
+			<section class="visibility-panel" aria-label="Temporal Visibility">
+				<div>
+					<p class="eyebrow">Temporal Visibility</p>
+					<p>
+						Filter real workflow executions by OrderStatus, CustomerTier, and RestaurantId Search
+						Attributes.
+					</p>
+				</div>
+				<Button
+					label="List Visibility"
+					variant={recommendedControl === 'list-visibility' ? 'primary' : 'secondary'}
+					loading={visibilityLoading}
+					onclick={listVisibility}
+				/>
+				{#if visibilityError}
+					<p role="alert" class="visibility-error">{visibilityError}</p>
+				{/if}
+				{#if visibilityResults.length > 0}
+					<ul class="visibility-results">
+						{#each visibilityResults as result (`${result.workflowId}:${result.runId}`)}
+							<li>
+								<span>{result.workflowId}</span>
+								<strong>{result.status}</strong>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</section>
+		</details>
 
-		<EventRail {events} />
+		<details
+			class="control-section"
+			data-control-section="updates"
+			aria-label="Update controls section"
+			open={isSectionOpen('updates')}
+		>
+			<summary>
+				<span>Updates</span>
+				<span>Make validated changes with an immediate result</span>
+			</summary>
+			<UpdateControls
+				controller={loggingController}
+				workflowId={workflowRun.workflowId}
+				{recommendedControl}
+			/>
+		</details>
 
-		<OrderTimeline entries={timelineEntries} />
+		<details
+			class="control-section"
+			data-control-section="worker"
+			aria-label="Worker recovery controls section"
+			open={isSectionOpen('worker')}
+		>
+			<summary>
+				<span>Worker recovery</span>
+				<span>Crash and restart the worker process</span>
+			</summary>
+			<ChaosControls
+				controller={loggingController}
+				onkilled={() => emitControlEvent('WorkerKilled')}
+				onrestarted={() => emitControlEvent('WorkerRestarted')}
+			/>
+		</details>
+
+		<details class="control-section control-section--secondary" open={!guidedMode}>
+			<summary>
+				<span>Event stream</span>
+				<span>Raw workflow events observed by the tour</span>
+			</summary>
+			<EventRail {events} />
+		</details>
+
+		<details class="control-section control-section--secondary" open={!guidedMode}>
+			<summary>
+				<span>Order timeline</span>
+				<span>The business timeline returned by getTimeline</span>
+			</summary>
+			<OrderTimeline entries={timelineEntries} />
+		</details>
 	{/if}
 </div>
 
 <style>
+	.control-section {
+		border: 1px solid var(--cinder-border, #334155);
+		border-radius: 0.5rem;
+		background: color-mix(in srgb, var(--cinder-surface, #0f172a), #000 6%);
+	}
+
+	.control-section[open] {
+		padding-bottom: 1rem;
+	}
+
+	.control-section > summary {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.8rem 1rem;
+		cursor: pointer;
+		list-style: none;
+	}
+
+	.control-section > summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.control-section > summary::after {
+		content: '+';
+		display: grid;
+		place-items: center;
+		width: 1.35rem;
+		height: 1.35rem;
+		flex: 0 0 auto;
+		border: 1px solid var(--cinder-border, #334155);
+		border-radius: 999px;
+		color: var(--cinder-text-muted, #94a3b8);
+		font-weight: 800;
+	}
+
+	.control-section[open] > summary::after {
+		content: '-';
+	}
+
+	.control-section > summary:focus-visible {
+		outline: 2px solid #38bdf8;
+		outline-offset: 2px;
+	}
+
+	.control-section > summary span:first-child {
+		color: var(--cinder-text, #e2e8f0);
+		font-weight: 800;
+	}
+
+	.control-section > summary span:nth-child(2) {
+		color: var(--cinder-text-muted, #94a3b8);
+		font-size: 0.78rem;
+		text-align: right;
+	}
+
+	.control-section > :global(section),
+	.control-section > :global(ol),
+	.control-section > :global(.timeline) {
+		margin: 0 1rem;
+	}
+
 	.next-action {
 		padding: 0.875rem 1rem;
 		border: 1px solid #38bdf8;
@@ -637,10 +816,38 @@
 	}
 
 	.run-header {
+		border: 1px solid var(--cinder-border, #334155);
+		border-radius: 0.5rem;
+		background: color-mix(in srgb, var(--cinder-surface, #0f172a), #000 6%);
+	}
+
+	.run-header > summary {
 		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-		padding-top: 0.5rem;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.75rem 1rem;
+		cursor: pointer;
+		list-style: none;
+	}
+
+	.run-header > summary::-webkit-details-marker {
+		display: none;
+	}
+
+	.run-header > summary span {
+		color: var(--cinder-text-muted, #94a3b8);
+		font-size: 0.78rem;
+	}
+
+	.run-header > summary:focus-visible {
+		outline: 2px solid #38bdf8;
+		outline-offset: 2px;
+	}
+
+	.run-meta {
+		margin: 0;
+		padding: 0 1rem 1rem;
 	}
 
 	.visibility-panel {

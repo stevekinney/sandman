@@ -80,6 +80,19 @@ describe('FetchController.start', () => {
 		const controller = new FetchController('sandbox-abc');
 		await expect(controller.start({} as never)).rejects.toThrow('Failed to start workflow');
 	});
+
+	it('extracts a readable message from JSON error responses', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(mockResponse(500, { message: 'Internal Error' }))
+		);
+
+		const controller = new FetchController('sandbox-abc');
+
+		await expect(controller.start({} as never)).rejects.toThrow(
+			'Failed to start workflow: Internal Error'
+		);
+	});
 });
 
 // ---------------------------------------------------------------------------

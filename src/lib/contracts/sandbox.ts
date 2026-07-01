@@ -77,6 +77,12 @@ export type SandboxClient = {
 	restartWorker(handle: SandboxHandle): Promise<WorkerStatus>;
 
 	/**
+	 * Stops the Temporal worker inside the sandbox without restarting it.
+	 * The Temporal server keeps the workflow state durable until restartWorker.
+	 */
+	killWorker(handle: SandboxHandle): Promise<void>;
+
+	/**
 	 * Runs a shell command inside the sandbox and returns its output.
 	 */
 	exec(handle: SandboxHandle, command: string, opts?: { timeoutMs?: number }): Promise<ExecResult>;

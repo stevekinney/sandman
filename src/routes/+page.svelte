@@ -117,7 +117,6 @@
 				type="password"
 				autocomplete="off"
 				bind:value={demoToken}
-				oninput={(event) => (demoToken = event.currentTarget.value)}
 				disabled={provisioning}
 				placeholder="Enter demo token"
 			/>
