@@ -155,6 +155,21 @@ async function getFreePort(): Promise<number> {
 	});
 }
 
+/**
+ * The `temporal` CLI reads ambient TEMPORAL_* variables. A developer's shell
+ * pointing at Temporal Cloud (TEMPORAL_ADDRESS, TEMPORAL_API_KEY, …) would make
+ * the spawned CLI try to reach the cloud over TLS instead of the local plaintext
+ * dev server, so strip them and let the explicit --address/--port flags govern.
+ */
+function temporalCliEnv(): NodeJS.ProcessEnv {
+	const cleaned: NodeJS.ProcessEnv = {};
+	for (const [key, value] of Object.entries(process.env)) {
+		if (key.startsWith('TEMPORAL_')) continue;
+		cleaned[key] = value;
+	}
+	return cleaned;
+}
+
 async function startTemporalVisibilityServer(): Promise<{
 	address: string;
 	databasePath: string;
@@ -162,21 +177,25 @@ async function startTemporalVisibilityServer(): Promise<{
 }> {
 	const port = await getFreePort();
 	const databasePath = join(tmpdir(), `sandman-visibility-${Date.now()}.db`);
-	const child = spawn('temporal', [
-		'server',
-		'start-dev',
-		'--headless',
-		'--port',
-		String(port),
-		'--db-filename',
-		databasePath,
-		'--search-attribute',
-		'OrderStatus=Keyword',
-		'--search-attribute',
-		'CustomerTier=Keyword',
-		'--search-attribute',
-		'RestaurantId=Keyword'
-	]);
+	const child = spawn(
+		'temporal',
+		[
+			'server',
+			'start-dev',
+			'--headless',
+			'--port',
+			String(port),
+			'--db-filename',
+			databasePath,
+			'--search-attribute',
+			'OrderStatus=Keyword',
+			'--search-attribute',
+			'CustomerTier=Keyword',
+			'--search-attribute',
+			'RestaurantId=Keyword'
+		],
+		{ env: temporalCliEnv() }
+	);
 	const address = `localhost:${port}`;
 	await waitForTemporalVisibilityServer(address);
 	return { address, databasePath, process: child };
@@ -192,7 +211,9 @@ async function waitForTemporalVisibilityServer(address: string): Promise<void> {
 }
 
 async function runTemporalProbe(address: string): Promise<number | null> {
-	const probe = spawn('temporal', ['--address', address, 'workflow', 'list']);
+	const probe = spawn('temporal', ['--address', address, 'workflow', 'list'], {
+		env: temporalCliEnv()
+	});
 	return new Promise((resolve) => {
 		probe.once('exit', (code) => resolve(code));
 	});
