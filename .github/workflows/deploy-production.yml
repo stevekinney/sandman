@@ -115,8 +115,13 @@ jobs:
           template_id="$(bun -e '
             const templates = await Bun.file(process.argv[2]).json();
             const values = Array.isArray(templates) ? templates : Object.values(templates).flat();
-            const match = values.find((template) => template?.template_name === "sandman" || template?.name === "sandman");
-            const id = match?.template_id ?? match?.templateId ?? match?.id;
+            const matches = (template) =>
+              template?.template_name === "sandman" ||
+              template?.name === "sandman" ||
+              (Array.isArray(template?.aliases) && template.aliases.includes("sandman")) ||
+              (Array.isArray(template?.names) && template.names.some((name) => name === "sandman" || name.endsWith("/sandman")));
+            const match = values.find(matches);
+            const id = match?.template_id ?? match?.templateId ?? match?.templateID ?? match?.id;
             if (typeof id === "string" && id.length > 0) console.log(id);
           ' "$RUNNER_TEMP/e2b-templates.json")"
           if [ -z "$template_id" ]; then
