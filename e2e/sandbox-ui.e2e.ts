@@ -2,10 +2,10 @@
  * sandbox-ui.e2e.ts — end-to-end Playwright tests for the session UI shell.
  *
  * Tests:
- *  - Navigating to /{sessionId} renders the three-panel layout.
- *  - The Temporal Web UI iframe is present with the correct proxied src path.
- *  - The editor panel is present.
- *  - The control plane panel is present.
+ *  - Navigating to /{sessionId} renders the tabbed session workbench.
+ *  - The Temporal Web UI iframe is present with the correct proxied src path when selected.
+ *  - The editor panel is present in the Code tab.
+ *  - The workflow state panel is present by default.
  *
  * These tests do NOT require a live E2B sandbox — they verify structure only,
  * and mock the Temporal UI proxy when asserting iframe behavior.
@@ -45,6 +45,7 @@ test('session page shows the sandbox ID in the header', async ({ page }) => {
 test('TemporalUiFrame renders an iframe whose src is the proxied path', async ({ page }) => {
 	await mockReadySandbox(page);
 	await page.goto(`/${TEST_SESSION_ID}`);
+	await page.getByRole('tab', { name: 'Temporal UI' }).click();
 
 	// The iframe must be present in the DOM with the correct same-origin proxy src.
 	const iframe = page.locator('iframe[title="Temporal Web UI"]');
@@ -56,17 +57,33 @@ test('TemporalUiFrame renders an iframe whose src is the proxied path', async ({
 
 test('editor panel is rendered and labelled', async ({ page }) => {
 	await page.goto(`/${TEST_SESSION_ID}`);
+	await page.getByRole('tab', { name: 'Code Editor' }).click();
 	await expect(page.locator('[aria-label="Code editor"]')).toBeVisible();
 });
 
 test('editor file navigation uses Cinder tabs', async ({ page }) => {
 	await page.goto(`/${TEST_SESSION_ID}`);
+	await page.getByRole('tab', { name: 'Code Editor' }).click();
 	await expect(page.locator('.cinder-tabs')).toBeVisible();
 	await expect(page.getByRole('tablist', { name: 'Editor files' })).toHaveClass(/cinder-tab-list/);
 	await expect(page.getByRole('tab', { name: 'workflows.ts' })).toHaveClass(/cinder-tab/);
 });
 
-test('control plane panel is rendered and labelled', async ({ page }) => {
+test('workflow state panel is rendered by default', async ({ page }) => {
 	await page.goto(`/${TEST_SESSION_ID}`);
+	await expect(page.getByRole('tab', { name: 'Workflow State' })).toHaveAttribute(
+		'aria-selected',
+		'true'
+	);
 	await expect(page.locator('[aria-label="Control plane and guided tour"]')).toBeVisible();
+	await expect(page.locator('[aria-label="Command and history inspector"]')).toBeVisible();
+});
+
+test('session workbench exposes the three primary views as tabs', async ({ page }) => {
+	await page.goto(`/${TEST_SESSION_ID}`);
+
+	await expect(page.getByRole('tablist', { name: 'Session views' })).toBeVisible();
+	await expect(page.getByRole('tab', { name: 'Code Editor' })).toBeVisible();
+	await expect(page.getByRole('tab', { name: 'Workflow State' })).toBeVisible();
+	await expect(page.getByRole('tab', { name: 'Temporal UI' })).toBeVisible();
 });

@@ -80,9 +80,40 @@ test('demo token exchange provisions a sandbox and redirects to the session page
 	expect(tokenRequests).toEqual([DEMO_TOKEN]);
 	await expect(page.locator('.session-id')).toContainText(SANDBOX_ID);
 	await expect(page.locator('.session-status')).toHaveText('Ready');
-	await expect(page.locator('[aria-label="Code editor"]')).toBeVisible();
-	await expect(page.locator('[aria-label="Temporal Web UI"]')).toBeVisible();
+	await expect(page.getByRole('tab', { name: 'Workflow State' })).toHaveAttribute(
+		'aria-selected',
+		'true'
+	);
 	await expect(page.locator('[aria-label="Control plane and guided tour"]')).toBeVisible();
+	await page.getByRole('tab', { name: 'Code Editor' }).click();
+	await expect(page.locator('[aria-label="Code editor"]')).toBeVisible();
+	await page.getByRole('tab', { name: 'Temporal UI' }).click();
+	await expect(page.locator('[aria-label="Temporal Web UI"]')).toBeVisible();
+});
+
+test('keyboard users can jump directly to the guided demo and inspect the tour map', async ({
+	page
+}) => {
+	const sandboxId = 'sbx-keyboard-a11y';
+	await mockSandboxStatus(page, sandboxId, 'ready');
+
+	await page.goto(`/${sandboxId}`);
+	await page.keyboard.press('Tab');
+
+	const skipLink = page.getByRole('link', { name: 'Skip to guided demo' });
+	await expect(skipLink).toBeFocused();
+
+	await page.keyboard.press('Enter');
+	const guidedDemo = page.locator('#guided-demo');
+	await expect(guidedDemo).toBeFocused();
+	await expect(page).toHaveURL(new RegExp(`/${sandboxId}#guided-demo$`));
+
+	await page.keyboard.press('Tab');
+	const tourMapSummary = page.locator('summary').filter({ hasText: 'Tour map' });
+	await expect(tourMapSummary).toBeFocused();
+
+	await page.keyboard.press('Enter');
+	await expect(page.getByRole('navigation', { name: 'Tour progress' })).toBeVisible();
 });
 
 test('pressing Enter in the demo token field submits the session form', async ({ page }) => {
@@ -199,7 +230,7 @@ test('bootstrap failure is displayed on the session page', async ({ page }) => {
 
 	await expect(page.locator('.session-status')).toHaveText('Error');
 	await expect(page.getByRole('alert')).toContainText('Temporal server did not become ready');
-	await expect(page.locator('.session-panels')).toHaveAttribute('data-unusable', 'true');
+	await expect(page.locator('.session-workbench')).toHaveAttribute('data-unusable', 'true');
 });
 
 test('expired and terminated sandboxes show explicit unusable states', async ({ page }) => {
@@ -222,7 +253,7 @@ test('expired and terminated sandboxes show explicit unusable states', async ({ 
 
 		await expect(page.locator('.session-status')).toHaveText(label);
 		await expect(page.getByRole('alert')).toContainText(message);
-		await expect(page.locator('.session-panels')).toHaveAttribute('data-unusable', 'true');
+		await expect(page.locator('.session-workbench')).toHaveAttribute('data-unusable', 'true');
 	}
 });
 
