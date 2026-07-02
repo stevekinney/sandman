@@ -19,5 +19,9 @@ ENV PORT=3000
 COPY --from=build /workspace/build ./build
 COPY --from=build /workspace/package.json ./package.json
 COPY --from=dependencies /workspace/node_modules ./node_modules
+# The sandbox worker sources are read at runtime (loadDefaultTemplateFiles) and
+# written into each E2B sandbox during bootstrap. Without them the sandbox has
+# no worker.ts and `tsx worker.ts` crash-loops with ERR_MODULE_NOT_FOUND.
+COPY --from=build /workspace/sandbox-template ./sandbox-template
 EXPOSE 3000
 CMD ["bun", "build/index.js"]

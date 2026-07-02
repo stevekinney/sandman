@@ -17,6 +17,8 @@ import type {
 import { SANDBOX_STATUS } from '$lib/contracts/sandbox';
 import type { E2bAdapter, E2bSandboxSession } from './e2b-adapter.ts';
 import { createRealE2bAdapter } from './e2b-adapter.ts';
+import { WorkerSupervisor } from './worker-supervisor.ts';
+import type { WorkerCrash } from './worker-supervisor.ts';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -47,6 +49,12 @@ function getTemporalServerCommand(sandboxId: string): string {
 /** Command used to run the TypeScript worker inside the sandbox. */
 const WORKER_CMD = 'cd /app && node_modules/.bin/tsx worker.ts';
 
+/**
+ * File inside the sandbox that the worker's combined stdout+stderr is appended
+ * to, so a crashing worker leaves a readable log instead of vanishing silently.
+ */
+const WORKER_LOG_PATH = '/app/worker.log';
+
 /** Command used to install sandbox dependencies. */
 const INSTALL_CMD = 'cd /app && npm install --prefer-offline';
 
@@ -76,12 +84,25 @@ const DEFAULT_SANDBOX_TIMEOUT_MS = 10 * 60 * 1_000;
 
 type InternalSandboxState = {
 	session: E2bSandboxSession;
-	workerPid: number | undefined;
+	worker: WorkerSupervisor | undefined;
 	temporalPid: number | undefined;
 	bootstrapped: boolean;
 	terminated: boolean;
 	createdAt: number;
 };
+
+/**
+ * Logs a worker crash so it is visible in server logs. The worker runs inside
+ * the sandbox with no other place to surface a fatal error, so without this the
+ * reason a worker died (a compile error, a bad import, a failed connection) was
+ * lost entirely.
+ */
+function reportWorkerCrash(sandboxId: string, crash: WorkerCrash): void {
+	console.error(
+		`[sandman] Sandbox ${sandboxId} worker exited unexpectedly (code ${crash.exitCode}). ` +
+			`Recent worker log:\n${crash.log || '(worker log was empty)'}`
+	);
+}
 
 /** Options for `createSandboxClient`. */
 export type SandboxClientOpts = {
@@ -104,6 +125,12 @@ export type SandboxClientOpts = {
 	maxReadinessRetries?: number;
 	/** Milliseconds to wait between readiness probes. */
 	readinessDelayMs?: number;
+	/** Max consecutive worker auto-restarts after a crash. Test hook; defaults to the supervisor's own default. */
+	workerMaxRestarts?: number;
+	/** Delay before a worker auto-restart, in ms. Test hook; defaults to the supervisor's own default. */
+	workerRestartDelayMs?: number;
+	/** Timer used to schedule worker auto-restarts. Test hook for synchronous restarts. */
+	workerSchedule?: (run: () => void, delayMs: number) => () => void;
 	/**
 	 * ID of a prebuilt E2B template to use when provisioning sandboxes.
 	 * Falls back to `process.env.E2B_TEMPLATE_ID` when unset here.
@@ -345,6 +372,27 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 
 	const sandboxes = new Map<string, InternalSandboxState>();
 
+	/**
+	 * Builds a worker supervisor for a sandbox. The supervisor owns the worker
+	 * process lifecycle: real liveness, crash auto-restart, and log capture.
+	 * Test hooks (`workerMaxRestarts`, `workerRestartDelayMs`, `workerSchedule`)
+	 * are threaded through when provided.
+	 */
+	function createWorkerSupervisor(session: E2bSandboxSession, sandboxId: string): WorkerSupervisor {
+		return new WorkerSupervisor({
+			session,
+			command: WORKER_CMD,
+			logPath: WORKER_LOG_PATH,
+			// Let E2B keep the worker alive for the sandbox's whole lifetime rather
+			// than its 60s command default (which would kill the worker mid-demo).
+			commandTimeoutMs: sandboxTimeoutMs,
+			maxRestarts: opts.workerMaxRestarts,
+			restartDelayMs: opts.workerRestartDelayMs,
+			schedule: opts.workerSchedule,
+			onCrash: (crash) => reportWorkerCrash(sandboxId, crash)
+		});
+	}
+
 	// ------------------------------------------------------------------
 	// provision
 	// ------------------------------------------------------------------
@@ -359,7 +407,7 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 
 		const state: InternalSandboxState = {
 			session,
-			workerPid: undefined,
+			worker: undefined,
 			temporalPid: undefined,
 			bootstrapped: false,
 			terminated: false,
@@ -395,6 +443,19 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		const files =
 			opts.templateFiles !== undefined ? opts.templateFiles : await loadDefaultTemplateFiles();
 
+		// A production sandbox with no worker sources is dead on arrival —
+		// `tsx worker.ts` crash-loops with ERR_MODULE_NOT_FOUND. This happens when
+		// `sandbox-template/` is missing from the deployed image, which
+		// loadDefaultTemplateFiles otherwise swallows. Fail loudly at the boundary
+		// instead of provisioning a sandbox whose worker can never start. (Tests
+		// may pass an explicit empty `templateFiles` to skip file writing.)
+		if (opts.templateFiles === undefined && Object.keys(files).length === 0) {
+			throw new Error(
+				'No sandbox-template files found on the server. The deployed image is missing ' +
+					'the sandbox-template/ directory, so the worker cannot start.'
+			);
+		}
+
 		// 2. Write template files into the sandbox.
 		for (const [path, contents] of Object.entries(files)) {
 			await session.files.write(path, contents);
@@ -419,9 +480,16 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 			readinessDelayMs
 		);
 
-		// 6. Start the worker in its own supervised background process.
-		const workerHandle = await session.commands.start(WORKER_CMD, { timeoutMs: 300_000 });
-		state.workerPid = workerHandle.pid;
+		// 6. Start the worker under a supervisor that keeps it alive (auto-restart
+		//    on crash), reports honest liveness, and captures its log. Only start
+		//    it when Temporal is actually reachable — a worker launched against a
+		//    server that never came up would just crash-loop against the restart
+		//    budget. When not ready, the sandbox surfaces that to the caller and
+		//    the worker is started later by startServer once the server recovers.
+		state.worker = createWorkerSupervisor(session, handle.id);
+		if (ready) {
+			await state.worker.start();
+		}
 
 		state.bootstrapped = true;
 
@@ -434,22 +502,18 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 
 	async function killWorker(handle: SandboxHandle): Promise<void> {
 		const state = getState(handle.id);
-		if (state.workerPid !== undefined) {
-			await state.session.commands.kill(state.workerPid);
-			state.workerPid = undefined;
-		}
+		// A deliberate stop — the supervisor will NOT auto-restart, so the worker
+		// stays down until restartWorker (the durable-recovery demo depends on it).
+		await state.worker?.stop();
 	}
 
 	async function restartWorker(handle: SandboxHandle): Promise<WorkerStatus> {
 		const state = getState(handle.id);
-		const { session } = state;
-
-		await killWorker(handle);
+		state.worker ??= createWorkerSupervisor(state.session, handle.id);
 
 		// Restart ONLY the worker; the Temporal server keeps running.
 		try {
-			const workerHandle = await session.commands.start(WORKER_CMD, { timeoutMs: 300_000 });
-			state.workerPid = workerHandle.pid;
+			await state.worker.restart();
 			return { ok: true, phase: 'restarting' };
 		} catch (err) {
 			const stderr = err instanceof Error ? err.message : String(err);
@@ -465,12 +529,11 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		const state = getState(handle.id);
 
 		// The worker's `Worker.run()` throws a fatal error the moment its gRPC
-		// connection to the Temporal server dies (see @temporalio/worker), and
-		// WORKER_CMD is run with no supervisor to catch and restart it — so
-		// killing the server leaves the worker process crashing (or already
-		// dead) with nothing to bring it back. Kill it here too so our PID
-		// bookkeeping matches reality; startServer restarts it once the new
-		// server is ready.
+		// connection to the Temporal server dies (see @temporalio/worker). Stop
+		// the worker deliberately BEFORE killing the server so its supervisor
+		// treats the exit as intentional and does not thrash trying to restart
+		// it against a server that is going away. startServer restarts it once
+		// the new server is ready.
 		await killWorker(handle);
 
 		if (state.temporalPid !== undefined) {
@@ -554,6 +617,9 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 			return;
 		}
 		state.terminated = true;
+		// Stop supervising the worker so a pending auto-restart can't fire against
+		// a torn-down sandbox.
+		state.worker?.dispose();
 		sandboxes.delete(handle.id);
 		await state.session.kill();
 	}
@@ -570,17 +636,19 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 	}
 
 	/**
-	 * Best-effort process liveness from the tracked PIDs. Reads the state map
-	 * directly (not `getState`, which throws) so it can return `null` for an
-	 * unknown/terminated sandbox instead of throwing — it's polled by /status
-	 * and must never take the status endpoint down.
+	 * Process liveness for the /status endpoint. The server signal is the tracked
+	 * PID; the worker signal is the supervisor's real liveness — the worker
+	 * process is actually running, not merely that a PID was assigned at spawn
+	 * time (a crashed worker used to report online forever, masking a dead demo).
+	 * Reads the state map directly (not `getState`, which throws) so it returns
+	 * `null` for an unknown/terminated sandbox instead of taking /status down.
 	 */
 	function processLiveness(handle: SandboxHandle): ProcessLiveness | null {
 		const state = sandboxes.get(handle.id);
 		if (!state || state.terminated) return null;
 		return {
 			serverOnline: state.temporalPid !== undefined,
-			workerOnline: state.workerPid !== undefined
+			workerOnline: state.worker?.online ?? false
 		};
 	}
 

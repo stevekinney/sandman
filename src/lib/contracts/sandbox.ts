@@ -56,7 +56,11 @@ export type WorkerStatus = {
 export type ProcessLiveness = {
 	/** The Temporal dev server process is running (not stopped). */
 	serverOnline: boolean;
-	/** The Temporal worker process is running (not killed). */
+	/**
+	 * The Temporal worker process is actually running — reflecting a real process
+	 * exit (via the command handle), not merely that a PID was assigned at spawn
+	 * time. A worker that crashes flips this to false until it recovers.
+	 */
 	workerOnline: boolean;
 };
 
@@ -110,11 +114,11 @@ export type SandboxClient = {
 	startServer(handle: SandboxHandle): Promise<void>;
 
 	/**
-	 * Best-effort liveness of the Temporal server and worker processes, derived
-	 * from the PIDs this client is tracking in memory. "Online" means "we
-	 * started the process and have not killed/stopped it" — a process that
-	 * started and then crashed on its own still has a tracked PID, so this can
-	 * briefly over-report until the next explicit kill/restart reconciles it.
+	 * Liveness of the Temporal server and worker processes. The server signal is
+	 * the tracked PID; the worker signal is real — driven by the actual process
+	 * exit reported by the E2B command handle, so a worker that crashes on its
+	 * own flips to offline (and auto-restarts) instead of reporting online from a
+	 * stale PID.
 	 *
 	 * This is the authoritative source the UI reconciles against so process
 	 * state stays correct across page reloads and editor save-restarts (the
