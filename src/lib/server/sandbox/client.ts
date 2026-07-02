@@ -503,8 +503,12 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		);
 		// Mirror bootstrap: a server that never becomes reachable is a failure,
 		// not a silent success — otherwise the UI marks the server recovered
-		// while gRPC/Web UI are still down and later controls fail.
+		// while gRPC/Web UI are still down and later controls fail. Clear the
+		// tracked PID before throwing so `processLiveness` (polled by /status)
+		// doesn't report the server online from a process that never came up.
 		if (!readiness.ready) {
+			await session.commands.kill(temporalHandle.pid);
+			state.temporalPid = undefined;
 			throw new Error('Temporal server did not become ready after restart.');
 		}
 

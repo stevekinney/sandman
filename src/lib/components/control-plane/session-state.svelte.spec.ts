@@ -133,6 +133,58 @@ describe('SessionState', () => {
 		]);
 	});
 
+	it('rejectRestaurant signals the running workflow', async () => {
+		const { controller, session } = makeSession();
+		await session.placeOrder();
+		await session.rejectRestaurant();
+		expect(controller.signalCalls.at(-1)).toEqual({
+			workflowId: controller.startResult.workflowId,
+			name: 'restaurantRejected',
+			payload: { reason: 'Kitchen is over capacity', retryable: false }
+		});
+	});
+
+	it('updateLocation signals the courier location', async () => {
+		const { controller, session } = makeSession();
+		await session.placeOrder();
+		await session.updateLocation();
+		expect(controller.signalCalls.at(-1)).toEqual({
+			workflowId: controller.startResult.workflowId,
+			name: 'courierLocationUpdate',
+			payload: { lat: 39.7392, lng: -104.9903, speedKmh: 24 }
+		});
+	});
+
+	it('applyPromo updates the workflow and summarizes the discount', async () => {
+		const { controller, session, notifications } = makeSession();
+		controller.updateResults.set('applyPromoCode', {
+			discountCents: 500,
+			newTotalCents: 1500,
+			description: '10% off your order'
+		});
+		await session.placeOrder();
+		await session.applyPromo();
+
+		expect(controller.updateCalls.at(-1)).toEqual({
+			workflowId: controller.startResult.workflowId,
+			name: 'applyPromoCode',
+			input: { code: 'SAVE10' }
+		});
+		expect(notifications.at(-1)?.variant).toBe('success');
+		expect(notifications.at(-1)?.message).toContain('$15.00');
+	});
+
+	it('applyPromo surfaces a validator rejection as a toast instead of an error', async () => {
+		const { controller, session, notifications } = makeSession();
+		controller.updateRejection = { kind: 'rejection', reason: 'invalid-code' };
+		await session.placeOrder();
+		await session.applyPromo();
+
+		const rejection = notifications.at(-1);
+		expect(rejection?.variant).toBe('danger');
+		expect(rejection?.message).toContain('invalid-code');
+	});
+
 	it('completeDelivery signals the child delivery workflow', async () => {
 		const { controller, session } = makeSession();
 		await session.placeOrder();
@@ -169,6 +221,26 @@ describe('SessionState', () => {
 
 		expect(session.workflowEvents.at(-1)?.type).toBe('QueryCompleted');
 		expect(notifications.at(-1)?.message).toContain('$20.19');
+	});
+
+	it('queryTimeline emits a QueryCompleted event and ingests the returned entries', async () => {
+		const { controller, session, notifications } = makeSession();
+		await session.placeOrder();
+		const entries = [
+			timelineEntry(0, ORDER_STATUS.Created, 'WorkflowExecutionStarted'),
+			timelineEntry(1, ORDER_STATUS.Validating, 'ActivityTaskCompleted')
+		];
+		controller.queryResults.set('getTimeline', entries);
+
+		await session.queryTimeline();
+
+		expect(controller.queryCalls.at(-1)).toEqual({
+			workflowId: controller.startResult.workflowId,
+			name: 'getTimeline'
+		});
+		expect(session.timelineEntries).toEqual(entries);
+		expect(session.workflowEvents.at(-1)?.type).toBe('QueryCompleted');
+		expect(notifications.at(-1)?.message).toContain('2 entries');
 	});
 
 	it('listVisibility filters by the current order status and search attributes', async () => {

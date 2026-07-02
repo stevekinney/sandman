@@ -128,7 +128,9 @@ export const DEMO_ORDER_DEFAULTS = {
 	customerId: 'customer-2187',
 	estimatedPrepMinutes: 20,
 	tipCents: 500,
-	cancelReason: 'Customer cancelled from the sandbox control plane'
+	cancelReason: 'Customer cancelled from the sandbox control plane',
+	rejectReason: 'Kitchen is over capacity',
+	promoCode: 'SAVE10'
 } as const;
 
 /** Address the update-address control switches the order to. */
@@ -139,6 +141,13 @@ export const DEMO_UPDATED_ADDRESS: DeliveryAddress = {
 	postalCode: '80209',
 	notes: 'Ring the doorbell twice'
 };
+
+/** Courier location the update-location control signals mid-delivery. */
+export const DEMO_COURIER_LOCATION = {
+	lat: 39.7392,
+	lng: -104.9903,
+	speedKmh: 24
+} as const;
 
 /** Build a fresh demo order input (new orderId each call). */
 export function buildDemoOrder(): OrderInput {

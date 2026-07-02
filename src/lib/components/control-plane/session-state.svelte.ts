@@ -14,6 +14,7 @@ import type { TourState } from '$lib/components/explainer';
 import type { TemporalController, WorkflowRun } from './types.ts';
 import { isUpdateRejectionError } from './types.ts';
 import {
+	DEMO_COURIER_LOCATION,
 	DEMO_ORDER_DEFAULTS,
 	DEMO_UPDATED_ADDRESS,
 	buildDemoOrder,
@@ -104,14 +105,22 @@ export class SessionState {
 				return this.placeOrder();
 			case 'accept-restaurant':
 				return this.acceptRestaurant();
+			case 'reject-restaurant':
+				return this.rejectRestaurant();
 			case 'food-ready':
 				return this.foodReady();
 			case 'complete-delivery':
 				return this.completeDelivery();
 			case 'update-address':
 				return this.updateAddress();
+			case 'update-location':
+				return this.updateLocation();
+			case 'apply-promo':
+				return this.applyPromo();
 			case 'query-status':
 				return this.queryStatus();
+			case 'query-timeline':
+				return this.queryTimeline();
 			case 'list-visibility':
 				return this.listVisibility();
 			case 'add-tip':
@@ -120,11 +129,6 @@ export class SessionState {
 				return this.cancelOrder();
 			case 'kill-worker':
 				return this.workerOnline ? this.killWorker() : this.restartWorker();
-			case 'reject-restaurant':
-			case 'update-location':
-			case 'apply-promo':
-			case 'query-timeline':
-				return; // Not exposed in the one-click toolbar.
 		}
 	}
 
@@ -225,6 +229,18 @@ export class SessionState {
 		);
 	}
 
+	async rejectRestaurant(): Promise<void> {
+		const workflowId = this.run?.workflowId;
+		if (workflowId === undefined) return;
+		await this.#perform('reject-restaurant', 'cs', async () => {
+			await this.#controller.signal(workflowId, 'restaurantRejected', {
+				reason: DEMO_ORDER_DEFAULTS.rejectReason,
+				retryable: false
+			});
+			this.notify('Rejection signaled — saga compensation refunds the payment.', 'warning');
+		});
+	}
+
 	async foodReady(): Promise<void> {
 		const workflowId = this.run?.workflowId;
 		if (workflowId === undefined) return;
@@ -293,6 +309,39 @@ export class SessionState {
 		});
 	}
 
+	async updateLocation(): Promise<void> {
+		const workflowId = this.run?.workflowId;
+		if (workflowId === undefined) return;
+		await this.#perform('update-location', 'cs', () =>
+			this.#controller.signal(workflowId, 'courierLocationUpdate', DEMO_COURIER_LOCATION)
+		);
+	}
+
+	async applyPromo(): Promise<void> {
+		const workflowId = this.run?.workflowId;
+		if (workflowId === undefined) return;
+		await this.#perform('apply-promo', 'cs', async () => {
+			try {
+				const result = await this.#controller.update(workflowId, 'applyPromoCode', {
+					code: DEMO_ORDER_DEFAULTS.promoCode
+				});
+				this.notify(
+					`Promo applied — ${result.description}, new total ${formatMoney(result.newTotalCents)}.`,
+					'success'
+				);
+			} catch (error) {
+				if (isUpdateRejectionError(error)) {
+					this.notify(
+						`Promo rejected by the validator (${error.reason}) — no state changed, no history written.`,
+						'danger'
+					);
+					return;
+				}
+				throw error;
+			}
+		});
+	}
+
 	async queryStatus(): Promise<void> {
 		const workflowId = this.run?.workflowId;
 		if (workflowId === undefined) return;
@@ -301,6 +350,20 @@ export class SessionState {
 			this.#emitSyntheticEvent('QueryCompleted', workflowId);
 			this.notify(
 				`Snapshot: status ${snapshot.status}, total ${formatMoney(snapshot.totalCents)} — read-only, no history event.`,
+				'info'
+			);
+		});
+	}
+
+	async queryTimeline(): Promise<void> {
+		const workflowId = this.run?.workflowId;
+		if (workflowId === undefined) return;
+		await this.#perform('query-timeline', 'cs', async () => {
+			const entries = await this.#controller.query(workflowId, 'getTimeline');
+			this.ingestTimeline(entries);
+			this.#emitSyntheticEvent('QueryCompleted', workflowId);
+			this.notify(
+				`Timeline snapshot: ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} — read-only, no history event.`,
 				'info'
 			);
 		});

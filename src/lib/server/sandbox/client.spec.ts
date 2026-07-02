@@ -808,7 +808,7 @@ describe('startServer()', () => {
 	it('throws when the Temporal server never becomes ready after restart', async () => {
 		// Public host keeps serving the closed-port placeholder, so readiness
 		// never flips — startServer must surface that instead of reporting success.
-		const { adapter } = createMockAdapter('sbx-start-not-ready');
+		const { adapter, calls } = createMockAdapter('sbx-start-not-ready');
 		const client = createSandboxClient({
 			adapter,
 			publicUiFetch: async () =>
@@ -819,8 +819,19 @@ describe('startServer()', () => {
 		});
 		const handle = await client.provision();
 		await client.bootstrap(handle);
+		calls.length = 0;
 
 		await expect(client.startServer(handle)).rejects.toThrow(/did not become ready/);
+
+		// Regression: the not-ready process must not be left tracked as live —
+		// otherwise /status reports serverOnline: true from a process that never
+		// came up, and the client reconciles the topology back to "recovered".
+		const newTemporalStart = calls.find(
+			(c) => c.method === 'commands.start' && c.cmd.includes('temporal server start-dev')
+		) as Extract<CallRecord, { method: 'commands.start' }> | undefined;
+		expect(newTemporalStart).toBeDefined();
+		expect(calls).toContainEqual({ method: 'commands.kill', pid: newTemporalStart?.pid });
+		expect(client.processLiveness(handle)?.serverOnline).toBe(false);
 	});
 
 	it('throws with the worker stderr when the worker fails to restart during recovery', async () => {

@@ -59,7 +59,10 @@
 	const workerButtonDisabled = $derived(
 		session.workerOnline
 			? !session.canDo('kill-worker')
-			: session.pendingControl !== null || session.serverPending !== null || !session.serverOnline
+			: session.pendingControl !== null ||
+				session.serverPending !== null ||
+				!session.serverOnline ||
+				!sandboxReady
 	);
 	const workerRecommended = $derived(session.recommendedControl === 'kill-worker');
 </script>
