@@ -617,6 +617,262 @@ describe('restartWorker()', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: processLiveness
+// ---------------------------------------------------------------------------
+
+describe('processLiveness()', () => {
+	it('reports both online after bootstrap', async () => {
+		const { client } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		expect(client.processLiveness(handle)).toEqual({ serverOnline: true, workerOnline: true });
+	});
+
+	it('reflects a killed worker while the server stays up', async () => {
+		const { client } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.killWorker(handle);
+		expect(client.processLiveness(handle)).toEqual({ serverOnline: true, workerOnline: false });
+	});
+
+	it('reports the worker back online after a restart (e.g. an editor save)', async () => {
+		const { client } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.killWorker(handle);
+		await client.restartWorker(handle);
+		expect(client.processLiveness(handle)).toEqual({ serverOnline: true, workerOnline: true });
+	});
+
+	it('reports both offline after stopServer', async () => {
+		const { client } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.stopServer(handle);
+		expect(client.processLiveness(handle)).toEqual({ serverOnline: false, workerOnline: false });
+	});
+
+	it('returns null for a terminated sandbox instead of throwing', async () => {
+		const { client } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.terminate(handle);
+		expect(client.processLiveness(handle)).toBeNull();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: stopServer
+// ---------------------------------------------------------------------------
+
+describe('stopServer()', () => {
+	it('kills the temporal dev server process by PID', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		calls.length = 0;
+
+		await client.stopServer(handle);
+
+		expect(calls).toContainEqual({ method: 'commands.kill', pid: 100 });
+	});
+
+	it('also kills the worker process, since its connection dies with the server', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		calls.length = 0;
+
+		await client.stopServer(handle);
+
+		const killedPids = calls
+			.filter(
+				(c): c is Extract<CallRecord, { method: 'commands.kill' }> => c.method === 'commands.kill'
+			)
+			.map((c) => c.pid);
+		// Bootstrap started temporal (pid 100) then the worker (pid 101).
+		expect(killedPids).toContain(100);
+		expect(killedPids).toContain(101);
+	});
+
+	it('does not start any new process', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		calls.length = 0;
+
+		await client.stopServer(handle);
+
+		expect(calls.some((c) => c.method === 'commands.start')).toBe(false);
+	});
+
+	it('is idempotent — calling twice does not throw', async () => {
+		const { client } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+
+		await client.stopServer(handle);
+		await expect(client.stopServer(handle)).resolves.toBeUndefined();
+	});
+
+	it('is idempotent — second call issues no additional kill commands', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+
+		await client.stopServer(handle);
+		const countAfterFirst = calls.length;
+		await client.stopServer(handle);
+
+		expect(calls.length).toBe(countAfterFirst);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: startServer
+// ---------------------------------------------------------------------------
+
+describe('startServer()', () => {
+	it('starts a new temporal server process', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.stopServer(handle);
+		calls.length = 0;
+
+		await client.startServer(handle);
+
+		const temporalStart = calls.find(
+			(c) => c.method === 'commands.start' && c.cmd.includes('temporal server start-dev')
+		);
+		expect(temporalStart).toBeDefined();
+	});
+
+	it('re-registers the Temporal Search Attributes', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.stopServer(handle);
+		calls.length = 0;
+
+		await client.startServer(handle);
+
+		const registeredAttribute = calls.some(
+			(c) =>
+				c.method === 'commands.run' && c.cmd.includes('search-attribute create --name OrderStatus')
+		);
+		expect(registeredAttribute).toBe(true);
+	});
+
+	it('restarts the worker after the server is ready', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.stopServer(handle);
+		calls.length = 0;
+
+		await client.startServer(handle);
+
+		const temporalIdx = calls.findIndex(
+			(c) => c.method === 'commands.start' && c.cmd.includes('temporal server start-dev')
+		);
+		const workerIdx = calls.findIndex(
+			(c) =>
+				c.method === 'commands.start' &&
+				c.cmd.includes('worker') &&
+				!c.cmd.includes('temporal server')
+		);
+		expect(temporalIdx).toBeGreaterThanOrEqual(0);
+		expect(workerIdx).toBeGreaterThan(temporalIdx);
+	});
+
+	it('is idempotent when called without a preceding stopServer — kills the running server first', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		calls.length = 0;
+
+		await client.startServer(handle);
+
+		const killIdx = calls.findIndex(
+			(c) => c.method === 'commands.kill' && c.pid === 100 // original temporal PID from bootstrap
+		);
+		const startIdx = calls.findIndex(
+			(c) => c.method === 'commands.start' && c.cmd.includes('temporal server start-dev')
+		);
+		expect(killIdx).toBeGreaterThanOrEqual(0);
+		expect(startIdx).toBeGreaterThan(killIdx);
+	});
+
+	it('recovers workflow state via --db-filename when restarting after a stop', async () => {
+		const { client, calls } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.stopServer(handle);
+		calls.length = 0;
+
+		await client.startServer(handle);
+
+		const temporalCall = calls.find(
+			(c) => c.method === 'commands.start' && c.cmd.includes('temporal server start-dev')
+		) as Extract<CallRecord, { method: 'commands.start' }> | undefined;
+		expect(temporalCall?.cmd).toContain('--db-filename /tmp/sandman.db');
+	});
+
+	it('throws when the Temporal server never becomes ready after restart', async () => {
+		// Public host keeps serving the closed-port placeholder, so readiness
+		// never flips — startServer must surface that instead of reporting success.
+		const { adapter, calls } = createMockAdapter('sbx-start-not-ready');
+		const client = createSandboxClient({
+			adapter,
+			publicUiFetch: async () =>
+				new Response('Closed Port Error: Connection refused on port 8233', { status: 200 }),
+			templateFiles: { '/app/worker.ts': '// placeholder worker' },
+			maxReadinessRetries: 1,
+			readinessDelayMs: 0
+		});
+		const handle = await client.provision();
+		await client.bootstrap(handle);
+		calls.length = 0;
+
+		await expect(client.startServer(handle)).rejects.toThrow(/did not become ready/);
+
+		// Regression: the not-ready process must not be left tracked as live —
+		// otherwise /status reports serverOnline: true from a process that never
+		// came up, and the client reconciles the topology back to "recovered".
+		const newTemporalStart = calls.find(
+			(c) => c.method === 'commands.start' && c.cmd.includes('temporal server start-dev')
+		) as Extract<CallRecord, { method: 'commands.start' }> | undefined;
+		expect(newTemporalStart).toBeDefined();
+		expect(calls).toContainEqual({ method: 'commands.kill', pid: newTemporalStart?.pid });
+		expect(client.processLiveness(handle)?.serverOnline).toBe(false);
+	});
+
+	it('throws with the worker stderr when the worker fails to restart during recovery', async () => {
+		// The server comes back, but the worker restart fails (e.g. a compile
+		// error in saved code). startServer must not report the worker recovered.
+		const { adapter } = createMockAdapter('sbx-worker-fail');
+		let failWorkerStart = false;
+		const client = createSandboxClient({
+			adapter: {
+				async create(opts) {
+					const session = await adapter.create(opts);
+					return {
+						...session,
+						commands: {
+							...session.commands,
+							async start(cmd, startOpts) {
+								if (failWorkerStart && cmd.includes('worker') && !cmd.includes('temporal server')) {
+									throw new Error('worker.ts(3,1): compile error');
+								}
+								return session.commands.start(cmd, startOpts);
+							}
+						}
+					};
+				}
+			},
+			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
+			templateFiles: { '/app/worker.ts': '// placeholder worker' },
+			maxReadinessRetries: 1,
+			readinessDelayMs: 0
+		});
+		const handle = await client.provision();
+		await client.bootstrap(handle);
+		await client.stopServer(handle);
+		// Only fail the worker restart that happens inside startServer.
+		failWorkerStart = true;
+
+		await expect(client.startServer(handle)).rejects.toThrow(/compile error/);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Tests: exec
 // ---------------------------------------------------------------------------
 

@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getActiveDemoSession } from '$lib/server/database/repository';
+import {
+	getActiveDemoSession,
+	touchActiveDemoSession,
+	touchSandboxSession
+} from '$lib/server/database/repository';
+import { touchHandle } from '$lib/server/sandbox/registry';
+import { logError } from '$lib/server/logging';
 import {
 	createSignedSessionCookieValue,
 	readSignedSessionCookieValue,
 	SESSION_COOKIE_NAME
 } from './session.ts';
-import { requireAuthenticatedDemoSession } from './guards.ts';
+import { requireAuthenticatedDemoSession, touchSessionActivity } from './guards.ts';
 
 vi.mock('$lib/server/database/connection', () => ({
 	getDatabase: vi.fn(() => ({}))
@@ -16,10 +22,20 @@ vi.mock('$lib/server/database/repository', () => ({
 		id: 'session-1',
 		tokenHash: 'token-hash'
 	}),
-	sandboxBelongsToSession: vi.fn()
+	sandboxBelongsToSession: vi.fn(),
+	touchActiveDemoSession: vi.fn().mockResolvedValue(true),
+	touchSandboxSession: vi.fn().mockResolvedValue(true)
 }));
 
-function makeEvent(cookieValue: string) {
+vi.mock('$lib/server/sandbox/registry', () => ({
+	touchHandle: vi.fn()
+}));
+
+vi.mock('$lib/server/logging', () => ({
+	logError: vi.fn()
+}));
+
+function makeEvent(cookieValue: string | undefined) {
 	const cookies = {
 		get: vi.fn((name: string) => (name === SESSION_COOKIE_NAME ? cookieValue : undefined)),
 		set: vi.fn()
@@ -45,7 +61,7 @@ describe('requireAuthenticatedDemoSession', () => {
 		vi.clearAllMocks();
 	});
 
-	it('refreshes the signed session cookie after a valid authenticated request', async () => {
+	it('validates the session without sliding its expiry (GETs must not extend the cookie)', async () => {
 		const cookieValue = createSignedSessionCookieValue('session-1', 'session-secret');
 		const event = makeEvent(cookieValue);
 
@@ -55,18 +71,69 @@ describe('requireAuthenticatedDemoSession', () => {
 		});
 
 		expect(getActiveDemoSession).toHaveBeenCalledOnce();
+		// This is the crux of idle-based expiry: a plain authenticated read
+		// (as used by passive polling routes) must not refresh the cookie.
+		// Only `touchSessionActivity`, called from mutation routes, may do that.
+		expect(event.cookies.set).not.toHaveBeenCalled();
+	});
+});
+
+describe('touchSessionActivity', () => {
+	beforeEach(() => {
+		vi.stubEnv('SANDMAN_SESSION_SECRET', 'session-secret');
+		vi.stubEnv('SANDMAN_SESSION_TTL_MS', '300000');
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+		vi.clearAllMocks();
+	});
+
+	it('slides the demo session and sandbox session rows, refreshes the cookie, and resets the reaper timer', async () => {
+		const cookieValue = createSignedSessionCookieValue('session-1', 'session-secret');
+		const event = makeEvent(cookieValue);
+
+		await touchSessionActivity(event, 'sandbox-1');
+
+		expect(touchActiveDemoSession).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ sessionId: 'session-1' })
+		);
+		expect(touchSandboxSession).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ sandboxId: 'sandbox-1', ttlMs: 300_000 })
+		);
+		expect(touchHandle).toHaveBeenCalledWith('sandbox-1');
+
 		expect(event.cookies.set).toHaveBeenCalledWith(
 			SESSION_COOKIE_NAME,
 			expect.any(String),
-			expect.objectContaining({
-				httpOnly: true,
-				sameSite: 'lax',
-				secure: false,
-				path: '/',
-				maxAge: 300
-			})
+			expect.objectContaining({ maxAge: 300 })
 		);
 		const refreshedValue = event.cookies.set.mock.calls[0]?.[1];
 		expect(readSignedSessionCookieValue(refreshedValue, 'session-secret')).toBe('session-1');
+	});
+
+	it('does not touch anything when the session cookie is missing or invalid', async () => {
+		const event = makeEvent(undefined);
+
+		await touchSessionActivity(event, 'sandbox-1');
+
+		expect(touchActiveDemoSession).not.toHaveBeenCalled();
+		expect(touchSandboxSession).not.toHaveBeenCalled();
+		expect(event.cookies.set).not.toHaveBeenCalled();
+	});
+
+	it('logs and swallows failures instead of throwing (a touch failure must not fail the request)', async () => {
+		vi.mocked(touchSandboxSession).mockRejectedValueOnce(new Error('database exploded'));
+		const cookieValue = createSignedSessionCookieValue('session-1', 'session-secret');
+		const event = makeEvent(cookieValue);
+
+		await expect(touchSessionActivity(event, 'sandbox-1')).resolves.toBeUndefined();
+
+		expect(logError).toHaveBeenCalledWith(
+			expect.objectContaining({ event: 'session.touch.failed', sandboxId: 'sandbox-1' })
+		);
+		expect(event.cookies.set).not.toHaveBeenCalled();
 	});
 });

@@ -1,15 +1,16 @@
 /**
- * guided-tour.svelte.spec.ts — browser tests for GuidedTour.
+ * guided-tour.svelte.spec.ts — browser tests for the guided journey rail.
  * Runs in the "client" vitest project (headless Chromium).
  *
  * These tests verify:
- * - Component renders the first step initially.
+ * - Component renders the first step (concept, title, instruction, watch line).
  * - The active step is announced via a live region.
- * - Progress can be reset.
- * - Concept is conveyed by text, not color alone.
+ * - The CTA appears only when enabled and dispatches the step's control.
+ * - The full step list is always visible with the active step marked.
+ * - The completed-tour state renders when all steps are done.
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { render } from 'vitest-browser-svelte';
 import GuidedTour from './guided-tour.svelte';
@@ -22,43 +23,118 @@ const initialProgress: TourProgress = { currentStepIndex: 0, completedStepIds: [
 describe('GuidedTour', () => {
 	it('renders the first tour step title in the detail heading', async () => {
 		render(GuidedTour, { props: { progress: initialProgress } });
-		// The active step title is rendered as an h3 inside the detail region.
 		await expect.element(page.getByRole('heading', { name: TOUR[0].title })).toBeInTheDocument();
 	});
 
-	it('renders the first tour step instruction', async () => {
+	it('renders the first tour step concept, instruction, and watch line', async () => {
 		render(GuidedTour, { props: { progress: initialProgress } });
+		await expect.element(page.getByText(TOUR[0].concept)).toBeInTheDocument();
 		await expect.element(page.getByText(TOUR[0].instruction, { exact: false })).toBeInTheDocument();
+		await expect.element(page.getByText(TOUR[0].watch, { exact: false })).toBeInTheDocument();
 	});
 
 	it('has a live region so step changes are announced to screen readers', async () => {
 		render(GuidedTour, { props: { progress: initialProgress } });
-		// The detail area has role="status" which is a live region.
 		const status = page.getByRole('status');
 		await expect.element(status).toBeInTheDocument();
 	});
 
 	it('renders a progress indicator showing step count', async () => {
 		render(GuidedTour, { props: { progress: initialProgress } });
-		// Count text is in a <span> inside the header
-		await expect.element(page.getByRole('heading', { name: 'Guided Tour' })).toBeInTheDocument();
+		await expect.element(page.getByRole('heading', { name: 'Guided journey' })).toBeInTheDocument();
 		await expect.element(page.getByText('Step 1 of 10')).toBeInTheDocument();
 	});
 
-	it('keeps the full tour map available behind a disclosure', async () => {
+	it('always shows the full step list with the active step marked', async () => {
 		render(GuidedTour, { props: { progress: initialProgress } });
 
-		await page.getByText('Tour map').click();
 		const nav = page.getByRole('navigation', { name: 'Tour progress' });
 		const items = nav.getByRole('listitem');
 		const allItems = await items.all();
 		expect(allItems.length).toBe(TOUR.length);
+		await expect
+			.element(nav.getByText(TOUR[0].title).element().closest('li'))
+			.toHaveAttribute('aria-current', 'step');
 	});
 
-	it('displays a reset button', async () => {
-		render(GuidedTour, { props: { progress: initialProgress } });
-		const resetBtn = page.getByRole('button', { name: /reset/i });
-		await expect.element(resetBtn).toBeInTheDocument();
+	it('shows the CTA when enabled and dispatches the step control', async () => {
+		const oncta = vi.fn();
+		render(GuidedTour, { props: { progress: initialProgress, ctaEnabled: true, oncta } });
+
+		const cta = page.getByRole('button', { name: 'Place order' });
+		await expect.element(cta).toBeInTheDocument();
+		await cta.click();
+		expect(oncta).toHaveBeenCalledWith('start-order');
+	});
+
+	it('hides the CTA when the control cannot run yet', async () => {
+		render(GuidedTour, { props: { progress: initialProgress, ctaEnabled: false } });
+		const buttons = await page.getByRole('button').all();
+		expect(buttons.length).toBe(0);
+	});
+
+	it('shows a watching indicator on steps without a control', async () => {
+		// Step 2 (activities-run) has no control — it completes from events alone.
+		const progress: TourProgress = { currentStepIndex: 1, completedStepIds: [TOUR[0].id] };
+		render(GuidedTour, { props: { progress, ctaEnabled: false } });
+		await expect
+			.element(page.getByText('Watching the system respond', { exact: false }))
+			.toBeInTheDocument();
+	});
+
+	it('flips the kill-worker CTA label when the worker is offline', async () => {
+		const killStepIndex = TOUR.findIndex((step) => step.control === 'kill-worker');
+		const progress: TourProgress = {
+			currentStepIndex: killStepIndex,
+			completedStepIds: TOUR.slice(0, killStepIndex).map((step) => step.id)
+		};
+		render(GuidedTour, { props: { progress, ctaEnabled: true, workerOnline: false } });
+		await expect
+			.element(page.getByRole('button', { name: 'Restart the worker' }))
+			.toBeInTheDocument();
+	});
+
+	it('offers a code experiment on steps that carry one', async () => {
+		// The durable-timer step ships a "shrink the deadline" experiment.
+		const timerStepIndex = TOUR.findIndex((step) => step.id === 'durable-timer');
+		const step = TOUR[timerStepIndex];
+		expect(step.experiment).toBeDefined();
+
+		const onshowcode = vi.fn();
+		const progress: TourProgress = {
+			currentStepIndex: timerStepIndex,
+			completedStepIds: TOUR.slice(0, timerStepIndex).map((s) => s.id)
+		};
+		render(GuidedTour, { props: { progress, onshowcode } });
+
+		await expect.element(page.getByText('Try changing the code')).toBeInTheDocument();
+		// The prompt renders as Markdown (inline code splits text nodes), so
+		// assert on a plain-text fragment rather than the full string.
+		await expect
+			.element(page.getByText('Shrink the deadline', { exact: false }))
+			.toBeInTheDocument();
+
+		await page.getByRole('button', { name: 'Show me the code' }).click();
+		expect(onshowcode).toHaveBeenCalledWith(step.experiment);
+	});
+
+	it('offers a "where to look" callout that navigates to a surface', async () => {
+		// The durable-timer step points into the Temporal Web UI.
+		const timerStepIndex = TOUR.findIndex((step) => step.id === 'durable-timer');
+		const step = TOUR[timerStepIndex];
+		expect(step.lookAt).toBeDefined();
+		expect(step.lookAt!.surface).toBe('temporal-ui');
+
+		const onlookat = vi.fn();
+		const progress: TourProgress = {
+			currentStepIndex: timerStepIndex,
+			completedStepIds: TOUR.slice(0, timerStepIndex).map((s) => s.id)
+		};
+		render(GuidedTour, { props: { progress, onlookat } });
+
+		await expect.element(page.getByText('Where to look')).toBeInTheDocument();
+		await page.getByRole('button', { name: 'Open the Temporal UI' }).click();
+		expect(onlookat).toHaveBeenCalledWith(step.lookAt);
 	});
 
 	it('shows a completed-tour state when all steps are done', async () => {
@@ -72,7 +148,6 @@ describe('GuidedTour', () => {
 
 	it('concept is conveyed by text, not color alone', async () => {
 		render(GuidedTour, { props: { progress: initialProgress } });
-		// The step detail heading must be visible as text (not color-only encoding)
 		const heading = page.getByRole('heading', { name: TOUR[0].title });
 		await expect.element(heading).toBeVisible();
 	});

@@ -17,7 +17,7 @@ import type { SandboxClient, SandboxHandle } from '$lib/contracts/sandbox';
 import { writeAndRestart } from '$lib/components/editor/write-and-restart';
 import { FILE_DESCRIPTORS } from '$lib/components/editor/file-descriptors';
 import { assertSameOrigin } from '$lib/server/security/origin';
-import { requireOwnedSandbox } from '$lib/server/security/guards';
+import { requireOwnedSandbox, touchSessionActivity } from '$lib/server/security/guards';
 import { resolveEntry } from '$lib/server/sandbox/registry';
 
 /** Function that resolves a live sandbox client and handle for a given sandbox ID. */
@@ -66,6 +66,7 @@ export const POST: RequestHandler = async (event) => {
 	const { id } = params;
 	assertSameOrigin(event);
 	await requireOwnedSandbox(event, id);
+	await touchSessionActivity(event, id);
 
 	let body: unknown;
 	try {

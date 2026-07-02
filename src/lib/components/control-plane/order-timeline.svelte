@@ -4,7 +4,7 @@
 	 * query onto Cinder's `RunStepTimeline` step format.
 	 */
 	import RunStepTimeline from '@lostgradient/cinder/run-step-timeline';
-	import type { RunStep, RunStepStatus } from '@lostgradient/cinder';
+	import type { RunStep, RunStepStatus } from '@lostgradient/cinder/run-step-timeline';
 	import type { TimelineEntry, OrderStatus } from '$lib/contracts/workflow-api';
 
 	let { entries }: { entries: TimelineEntry[] } = $props();

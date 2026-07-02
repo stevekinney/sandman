@@ -9,7 +9,7 @@ When you open Sandman, an ephemeral [E2B](https://e2b.dev) Firecracker MicroVM b
 
 The browser shows three surfaces side by side:
 
-1. **Monaco editor** — edit `workflows.ts` and `activities.ts` live; saving re-syncs the file into the sandbox and hot-restarts the worker (the Temporal server keeps running, so in-flight workflows survive the restart — this is the durability demo)
+1. **Monaco editor** — edit `order-workflow.ts`, `delivery-workflow.ts`, `definitions.ts`, and `activities.ts` live; saving re-syncs the file into the sandbox and hot-restarts the worker (the Temporal server keeps running, so in-flight workflows survive the restart — this is the durability demo)
 2. **Temporal Web UI** — the real Temporal Web UI, reverse-proxied same-origin into an iframe
 3. **Control plane** — start a workflow, send signals, run queries and updates, and a "kill worker" chaos button that demonstrates durable recovery
 
@@ -206,31 +206,31 @@ Sandman demonstrates the following Temporal features through a deliberately over
 The tour advances step-by-step as real Temporal workflow events arrive — not on button clicks.
 
 1. **Place a food order** (control: `start-order`)
-   Click "Place Order" to start one durable order workflow. Temporal records the start event in history, then a worker begins running your workflow code.
+   Start one durable order workflow. Temporal records the start event in history, then a worker begins running your workflow code.
 
-2. **Activities run — watch automatic retry**
+2. **Activities run — with automatic retries**
    Payment charge, restaurant notification, and courier dispatch each run as activities. If a transient failure occurs, Temporal retries automatically with exponential backoff. You do not write retry loops.
 
-3. **A durable timer guards the restaurant deadline**
+3. **A durable timer guards the deadline**
    The workflow starts a timer for the restaurant-acceptance deadline. This timer lives in the Temporal server — it will fire even if the worker crashes and restarts.
 
-4. **Send a signal to resume the workflow** (control: `accept-restaurant`)
-   Click "Restaurant Accepted" to send a signal into the waiting workflow. The order has been paused until the restaurant responds; the signal lets it continue.
+4. **Send a signal to resume** (control: `accept-restaurant`)
+   The order is parked waiting for the restaurant. Sending the restaurant-accepted signal appends an event to history and resumes the workflow.
 
-5. **Updates with synchronous validators** (control: `update-address`)
-   Update the delivery address while the order is preparing. Temporal validates the request before the workflow accepts it, so bad changes can be rejected immediately.
+5. **Update with a synchronous validator** (control: `update-address`)
+   Update the delivery address while the order is preparing. A validator accepts or rejects the change before any workflow state mutates — bad changes are rejected immediately.
 
-6. **A child workflow handles delivery** (control: `food-ready`)
-   Click "Food Ready" to hand delivery to a child workflow. The parent keeps owning the order, while the delivery workflow can be tracked on its own.
+6. **Hand delivery to a child workflow** (control: `food-ready`)
+   Food ready spawns a DeliveryWorkflow child. The parent keeps owning the order, while the delivery workflow can be tracked on its own in the Temporal UI.
 
-7. **Read the queryable business snapshot** (control: `query-status`)
-   Click "Get Status" to ask this running workflow for its current order snapshot. Queries are read-only: they inspect state without moving the workflow forward.
+7. **Read state with a query** (control: `query-status`)
+   Ask the running workflow for its current order snapshot. Queries are read-only: they inspect state without moving the workflow forward.
 
-8. **Filter with Temporal Visibility** (control: `list-visibility`)
-   Click "List Visibility" to search across workflow executions by indexed fields like order status, customer tier, and restaurant.
+8. **Search across workflows** (control: `list-visibility`)
+   List executions by indexed Search Attributes — order status, customer tier, and restaurant — across every workflow, no specific handle needed.
 
 9. **Kill the worker — watch it recover** (control: `kill-worker`)
-   Click "Kill Worker" to stop the process running your workflow code. Temporal keeps the history, so after you restart the worker the order resumes from the stored state.
+   Kill the process running your workflow code. State lives in the Temporal server, so after you restart the worker it replays history and resumes exactly where it left off.
 
-10. **Complete the delivery workflow** (control: `complete-delivery`)
-   Click "Complete Delivery" to finish the child workflow. The parent observes that result and moves the order to its delivered final state.
+10. **Finish the delivery** (control: `complete-delivery`)
+   Complete the child delivery workflow. The parent observes that result and moves the order to its delivered final state.

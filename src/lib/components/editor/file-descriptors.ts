@@ -13,7 +13,9 @@
  * by the app, only embedded as string literals.
  */
 
-import workflowsRaw from '../../../../sandbox-template/workflows.ts?raw';
+import orderWorkflowRaw from '../../../../sandbox-template/order-workflow.ts?raw';
+import deliveryWorkflowRaw from '../../../../sandbox-template/delivery-workflow.ts?raw';
+import definitionsRaw from '../../../../sandbox-template/definitions.ts?raw';
 import signalsRaw from '../../../../sandbox-template/signals.ts?raw';
 import activitiesRaw from '../../../../sandbox-template/activities.ts?raw';
 import workerRaw from '../../../../sandbox-template/worker.ts?raw';
@@ -42,11 +44,35 @@ export type FileDescriptor = {
  */
 export const FILE_DESCRIPTORS: FileDescriptor[] = [
 	{
-		name: 'workflows.ts',
+		name: 'order-workflow.ts',
 		purpose:
-			'Workflow definitions: deterministic orchestration, signals, queries, updates, timers, and child workflow calls.',
+			'The main workflow: durable state, signals, a deadline timer, a saga, and a delivery child — every await survives a crash.',
 		language: 'typescript',
-		initialContents: workflowsRaw,
+		initialContents: orderWorkflowRaw,
+		readOnly: false
+	},
+	{
+		name: 'delivery-workflow.ts',
+		purpose:
+			'The delivery child workflow: its own history and UI page, courier heartbeats, and a durable SLA timer.',
+		language: 'typescript',
+		initialContents: deliveryWorkflowRaw,
+		readOnly: false
+	},
+	{
+		name: 'definitions.ts',
+		purpose:
+			'Activities, retry policies, timeouts, queries, and updates — the knobs to tweak without touching workflow logic.',
+		language: 'typescript',
+		initialContents: definitionsRaw,
+		readOnly: false
+	},
+	{
+		name: 'activities.ts',
+		purpose:
+			'Activity implementations: side effects, simulated failures, heartbeats, and cancellation outside the workflow sandbox.',
+		language: 'typescript',
+		initialContents: activitiesRaw,
 		readOnly: false
 	},
 	{
@@ -56,14 +82,6 @@ export const FILE_DESCRIPTORS: FileDescriptor[] = [
 		language: 'typescript',
 		initialContents: signalsRaw,
 		readOnly: true
-	},
-	{
-		name: 'activities.ts',
-		purpose:
-			'Activity implementations: side effects, retries, heartbeats, and cancellation outside the workflow sandbox.',
-		language: 'typescript',
-		initialContents: activitiesRaw,
-		readOnly: false
 	},
 	{
 		name: 'worker.ts',

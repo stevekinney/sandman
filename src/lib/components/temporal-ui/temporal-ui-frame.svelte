@@ -35,6 +35,20 @@
 	let connectionState = $state<StatusDotConnectionState>('connecting');
 	let iframeRevision = $state(0);
 
+	// The proxied Temporal Web UI is same-origin, so it shares localStorage
+	// with this app. Its theme is a persisted store under the key "dark mode"
+	// (JSON-encoded) — seed it before the iframe boots so the embedded UI
+	// matches the workbench's dark theme. Runs client-side only ($effect).
+	$effect(() => {
+		try {
+			if (localStorage.getItem('dark mode') === null) {
+				localStorage.setItem('dark mode', 'true');
+			}
+		} catch {
+			// Storage may be unavailable (privacy mode) — the UI just stays light.
+		}
+	});
+
 	const src = $derived(`/sbx/${sandboxId}/ui/`);
 	const iframeReady = $derived(connectionState === 'connected');
 	const startupTitle = $derived(

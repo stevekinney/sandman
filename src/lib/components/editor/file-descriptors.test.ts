@@ -7,17 +7,25 @@ import { describe, expect, it } from 'vitest';
 import { FILE_DESCRIPTORS, SHARED_FILE_NAME } from './file-descriptors.ts';
 
 describe('FILE_DESCRIPTORS', () => {
-	it('contains exactly five files', () => {
-		expect(FILE_DESCRIPTORS).toHaveLength(5);
+	it('contains exactly seven files', () => {
+		expect(FILE_DESCRIPTORS).toHaveLength(7);
 	});
 
-	it('includes workflows.ts, signals.ts, activities.ts, worker.ts, and shared.ts', () => {
+	it('includes the split workflow files plus signals, activities, worker, and shared', () => {
 		const names = FILE_DESCRIPTORS.map((f) => f.name);
-		expect(names).toContain('workflows.ts');
-		expect(names).toContain('signals.ts');
-		expect(names).toContain('activities.ts');
-		expect(names).toContain('worker.ts');
-		expect(names).toContain('shared.ts');
+		expect(names).toEqual([
+			'order-workflow.ts',
+			'delivery-workflow.ts',
+			'definitions.ts',
+			'activities.ts',
+			'signals.ts',
+			'worker.ts',
+			'shared.ts'
+		]);
+	});
+
+	it('the main order workflow is the default (first) tab', () => {
+		expect(FILE_DESCRIPTORS[0].name).toBe('order-workflow.ts');
 	});
 
 	it('shared.ts and signals.ts are readOnly', () => {
@@ -29,11 +37,17 @@ describe('FILE_DESCRIPTORS', () => {
 		expect(signals?.readOnly).toBe(true);
 	});
 
-	it('workflows.ts, activities.ts, and worker.ts are NOT readOnly', () => {
+	it('the workflow, definitions, activities, and worker files are NOT readOnly', () => {
 		const editables = FILE_DESCRIPTORS.filter((f) =>
-			['workflows.ts', 'activities.ts', 'worker.ts'].includes(f.name)
+			[
+				'order-workflow.ts',
+				'delivery-workflow.ts',
+				'definitions.ts',
+				'activities.ts',
+				'worker.ts'
+			].includes(f.name)
 		);
-		expect(editables).toHaveLength(3);
+		expect(editables).toHaveLength(5);
 		for (const f of editables) {
 			expect(f.readOnly, `${f.name} should not be readOnly`).toBe(false);
 		}
@@ -57,22 +71,23 @@ describe('FILE_DESCRIPTORS', () => {
 });
 
 describe('FILE_DESCRIPTORS — contents reflect the real deployed sandbox-template files', () => {
-	it('workflows.ts initialContents uses the real camelCase export name orderFoodWorkflow', () => {
-		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'workflows.ts');
+	it('order-workflow.ts initialContents defines the real orderFoodWorkflow', () => {
+		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'order-workflow.ts');
 		expect(descriptor).toBeDefined();
-		// The deployed sandbox-template/workflows.ts uses `orderFoodWorkflow` (camelCase).
-		// The old hand-written stub used `OrderFoodWorkflow` (PascalCase). This
-		// assertion is red on the stub and green on the real file.
-		expect(descriptor?.initialContents).toContain('orderFoodWorkflow');
+		expect(descriptor?.initialContents).toContain('export async function orderFoodWorkflow(');
 	});
 
-	it('workflows.ts initialContents is substantially longer than the ~70-line stub', () => {
-		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'workflows.ts');
+	it('delivery-workflow.ts initialContents defines the child deliveryWorkflow', () => {
+		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'delivery-workflow.ts');
 		expect(descriptor).toBeDefined();
-		// The real file is ~870 lines. The stub was ~70 lines. Any value over 200
-		// lines distinguishes the two unambiguously.
-		const lineCount = (descriptor?.initialContents ?? '').split('\n').length;
-		expect(lineCount).toBeGreaterThan(200);
+		expect(descriptor?.initialContents).toContain('export async function deliveryWorkflow(');
+	});
+
+	it('definitions.ts initialContents carries the activity retry policy', () => {
+		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'definitions.ts');
+		expect(descriptor).toBeDefined();
+		expect(descriptor?.initialContents).toContain('maximumAttempts: 5');
+		expect(descriptor?.initialContents).toContain('proxyActivities');
 	});
 
 	it('signals.ts initialContents comes from the deployed sandbox-template file', () => {
@@ -84,17 +99,12 @@ describe('FILE_DESCRIPTORS — contents reflect the real deployed sandbox-templa
 	it('activities.ts initialContents comes from the deployed sandbox-template file', () => {
 		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'activities.ts');
 		expect(descriptor).toBeDefined();
-		// The real activities.ts imports Context heartbeat and uses it.
-		// The stub comment said "replace with your real provider" — use the absence
-		// of that stub-only phrase as the discriminator.
 		expect(descriptor?.initialContents).not.toContain('replace with your real provider');
 	});
 
 	it('shared.ts initialContents comes from the deployed sandbox-template file', () => {
 		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === SHARED_FILE_NAME);
 		expect(descriptor).toBeDefined();
-		// The real shared.ts does not re-export from a non-existent ./workflow-api-types
-		// module — the stub had a bogus `export type ... from './workflow-api-types'` line.
 		expect(descriptor?.initialContents).not.toContain('./workflow-api-types');
 	});
 });

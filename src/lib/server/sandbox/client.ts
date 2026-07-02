@@ -11,6 +11,7 @@ import type {
 	SandboxClient,
 	SandboxHandle,
 	WorkerStatus,
+	ProcessLiveness,
 	ExecResult
 } from '$lib/contracts/sandbox';
 import { SANDBOX_STATUS } from '$lib/contracts/sandbox';
@@ -284,6 +285,39 @@ async function waitForPublicTemporalUi(
 	return false;
 }
 
+/**
+ * Waits for a freshly (re)started Temporal dev server to become fully
+ * reachable — gRPC (7233), the local Web UI (8233), and the same public E2B
+ * host the iframe uses — then registers the custom Search Attributes a
+ * fresh server process always starts without.
+ *
+ * Shared by `bootstrap` and `startServer`, which both start the same
+ * `temporal server start-dev` process and must wait on it identically.
+ */
+async function waitForTemporalReady(
+	session: E2bSandboxSession,
+	handle: SandboxHandle,
+	publicUiFetch: typeof fetch,
+	maxRetries: number,
+	delayMs: number
+): Promise<{ ready: boolean; uiUrl: string }> {
+	const temporalReady = await waitForTemporal(session, maxRetries, delayMs);
+	const localTemporalUiReady = temporalReady
+		? await waitForTemporalUi(session, maxRetries, delayMs)
+		: false;
+	const uiUrl = handle.host(TEMPORAL_UI_PORT);
+	const publicTemporalUiReady = localTemporalUiReady
+		? await waitForPublicTemporalUi(uiUrl, handle.accessToken, publicUiFetch, maxRetries, delayMs)
+		: false;
+	const ready = temporalReady && localTemporalUiReady && publicTemporalUiReady;
+
+	if (temporalReady) {
+		await registerSearchAttributes(session);
+	}
+
+	return { ready, uiUrl };
+}
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -375,29 +409,17 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		});
 		state.temporalPid = temporalHandle.pid;
 
-		// 5. Wait for gRPC (7233) and the Web UI (8233) to be reachable.
-		const temporalReady = await waitForTemporal(session, maxReadinessRetries, readinessDelayMs);
-		const localTemporalUiReady = temporalReady
-			? await waitForTemporalUi(session, maxReadinessRetries, readinessDelayMs)
-			: false;
-		const uiUrl = handle.host(TEMPORAL_UI_PORT);
-		const publicTemporalUiReady = localTemporalUiReady
-			? await waitForPublicTemporalUi(
-					uiUrl,
-					handle.accessToken,
-					publicUiFetch,
-					maxReadinessRetries,
-					readinessDelayMs
-				)
-			: false;
-		const ready = temporalReady && localTemporalUiReady && publicTemporalUiReady;
+		// 5. Wait for gRPC (7233) and the Web UI (8233) to be reachable, then
+		//    register custom Search Attributes before workflows can upsert them.
+		const { ready, uiUrl } = await waitForTemporalReady(
+			session,
+			handle,
+			publicUiFetch,
+			maxReadinessRetries,
+			readinessDelayMs
+		);
 
-		// 6. Register custom Search Attributes before workflows can upsert them.
-		if (temporalReady) {
-			await registerSearchAttributes(session);
-		}
-
-		// 7. Start the worker in its own supervised background process.
+		// 6. Start the worker in its own supervised background process.
 		const workerHandle = await session.commands.start(WORKER_CMD, { timeoutMs: 300_000 });
 		state.workerPid = workerHandle.pid;
 
@@ -432,6 +454,70 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		} catch (err) {
 			const stderr = err instanceof Error ? err.message : String(err);
 			return { ok: false, phase: 'compile-error', stderr };
+		}
+	}
+
+	// ------------------------------------------------------------------
+	// stopServer / startServer
+	// ------------------------------------------------------------------
+
+	async function stopServer(handle: SandboxHandle): Promise<void> {
+		const state = getState(handle.id);
+
+		// The worker's `Worker.run()` throws a fatal error the moment its gRPC
+		// connection to the Temporal server dies (see @temporalio/worker), and
+		// WORKER_CMD is run with no supervisor to catch and restart it — so
+		// killing the server leaves the worker process crashing (or already
+		// dead) with nothing to bring it back. Kill it here too so our PID
+		// bookkeeping matches reality; startServer restarts it once the new
+		// server is ready.
+		await killWorker(handle);
+
+		if (state.temporalPid !== undefined) {
+			await state.session.commands.kill(state.temporalPid);
+			state.temporalPid = undefined;
+		}
+	}
+
+	async function startServer(handle: SandboxHandle): Promise<void> {
+		const state = getState(handle.id);
+		const { session } = state;
+
+		// Idempotent — kill any existing temporal process before starting a new one.
+		if (state.temporalPid !== undefined) {
+			await session.commands.kill(state.temporalPid);
+			state.temporalPid = undefined;
+		}
+
+		const temporalHandle = await session.commands.start(getTemporalServerCommand(handle.id), {
+			timeoutMs: 300_000
+		});
+		state.temporalPid = temporalHandle.pid;
+
+		const readiness = await waitForTemporalReady(
+			session,
+			handle,
+			publicUiFetch,
+			maxReadinessRetries,
+			readinessDelayMs
+		);
+		// Mirror bootstrap: a server that never becomes reachable is a failure,
+		// not a silent success — otherwise the UI marks the server recovered
+		// while gRPC/Web UI are still down and later controls fail. Clear the
+		// tracked PID before throwing so `processLiveness` (polled by /status)
+		// doesn't report the server online from a process that never came up.
+		if (!readiness.ready) {
+			await session.commands.kill(temporalHandle.pid);
+			state.temporalPid = undefined;
+			throw new Error('Temporal server did not become ready after restart.');
+		}
+
+		// The worker's connection died with the old server process; restart it
+		// against the new one. Surface a failed restart (e.g. a compile error in
+		// saved code) instead of reporting the worker recovered when it is not.
+		const workerStatus = await restartWorker(handle);
+		if (!workerStatus.ok) {
+			throw new Error(workerStatus.stderr ?? 'Worker failed to restart after server recovery.');
 		}
 	}
 
@@ -483,7 +569,33 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		return state;
 	}
 
-	return { provision, bootstrap, restartWorker, killWorker, exec, writeFile, terminate };
+	/**
+	 * Best-effort process liveness from the tracked PIDs. Reads the state map
+	 * directly (not `getState`, which throws) so it can return `null` for an
+	 * unknown/terminated sandbox instead of throwing — it's polled by /status
+	 * and must never take the status endpoint down.
+	 */
+	function processLiveness(handle: SandboxHandle): ProcessLiveness | null {
+		const state = sandboxes.get(handle.id);
+		if (!state || state.terminated) return null;
+		return {
+			serverOnline: state.temporalPid !== undefined,
+			workerOnline: state.workerPid !== undefined
+		};
+	}
+
+	return {
+		provision,
+		bootstrap,
+		restartWorker,
+		killWorker,
+		stopServer,
+		startServer,
+		processLiveness,
+		exec,
+		writeFile,
+		terminate
+	};
 }
 
 // Re-export the port constants so other modules can reference them.

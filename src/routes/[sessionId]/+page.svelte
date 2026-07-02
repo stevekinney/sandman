@@ -1,31 +1,53 @@
 <script lang="ts">
 	/**
-	 * +page.svelte — two-column Sandman session layout.
+	 * +page.svelte — the single-screen Temporal Sandbox workbench.
 	 *
-	 * Renders the demo as a tabbed workbench:
-	 *  - Code Editor: code edit → hot-restart worker
-	 *  - Workflow State: guided tour, controls, command history, and timeline
-	 *  - Temporal UI: full-size proxied Temporal Web UI
+	 * Layout (per the "Temporal sandbox UI redesign" Claude Design project):
+	 *  - Status bar: sandbox / order / workflow chips and a global Reset.
+	 *  - Control toolbar: one-click Temporal controls + Code / Temporal UI switch.
+	 *  - Left rail: the guided journey (event-driven tour with a CTA).
+	 *  - Center: client → server → worker topology strip above the live code
+	 *    editor (save = hot-restart worker) or the proxied Temporal Web UI.
+	 *  - Right rail: workflow history as a live event stream or friendly steps.
+	 *  - Toasts (bottom center) narrate recoveries, rejections, and results.
 	 *
-	 * The sandboxId from the URL param drives all three surfaces.
-	 * Components degrade gracefully when no live sandbox is provisioned
-	 * (editor saves fail with 503, Temporal UI shows startup/error states,
-	 * API calls show errors).
+	 * All surfaces are driven by the real sandbox APIs and degrade gracefully
+	 * while the sandbox is provisioning or unusable.
 	 */
 	import type { PageData } from './$types';
-	import type { CommandLogEntry, WorkflowRun } from '$lib/components/control-plane/types';
-	import type { TimelineEntry } from '$lib/contracts/workflow-api';
-	import type { WorkflowEvent } from '$lib/contracts/events';
+	import type { ProcessLiveness } from '$lib/contracts/sandbox';
+	import Alert from '@lostgradient/cinder/alert';
+	import Button from '@lostgradient/cinder/button';
+	import StatusDot from '@lostgradient/cinder/status-dot';
+	import ToastRegion from '@lostgradient/cinder/toast-region';
+	import '@lostgradient/cinder/alert/styles';
+	import '@lostgradient/cinder/button/styles';
+	import '@lostgradient/cinder/status-dot/styles';
+	import '@lostgradient/cinder/toast-region/styles';
 	import Editor from '$lib/components/editor/editor.svelte';
 	import TemporalUiFrame from '$lib/components/temporal-ui/temporal-ui-frame.svelte';
-	import ControlPlane from '$lib/components/control-plane/control-plane.svelte';
-	import CommandInspector from '$lib/components/control-plane/command-inspector.svelte';
+	import ControlToolbar from '$lib/components/control-plane/control-toolbar.svelte';
+	import TopologyStrip from '$lib/components/control-plane/topology-strip.svelte';
+	import HistoryRail from '$lib/components/control-plane/history-rail.svelte';
 	import { FetchController } from '$lib/components/control-plane/fetch-controller';
+	import { SessionState } from '../../lib/components/control-plane/session-state.svelte.ts';
+	import {
+		executionPointerFor,
+		orderStageDot,
+		orderStageLabel,
+		sandboxDot,
+		workflowDot,
+		workflowTag,
+		type CenterView
+	} from '$lib/components/control-plane/session-actions';
+	import type { CodeReveal } from '$lib/components/editor/execution-pointer';
 	import { GuidedTour, TourState } from '$lib/components/explainer';
+	import type { TourExperiment, TourLookAt } from '$lib/content/demo-script';
 	import type { StorageAdapter, TourProgress } from '$lib/content/tour-engine';
-	import { tick } from 'svelte';
-	import Button from '@lostgradient/cinder/button';
-	import '@lostgradient/cinder/button/styles';
+	import EmptyState from '@lostgradient/cinder/empty-state';
+	import '@lostgradient/cinder/empty-state/styles';
+	import ToastBridge from './toast-bridge.svelte';
+	import { SESSION_DESCRIPTION, SESSION_TITLE } from '$lib/metadata';
 	import {
 		getSandboxStatusDisplayLabel,
 		getSandboxStatusFailureMessage,
@@ -35,33 +57,54 @@
 
 	let { data }: { data: PageData } = $props();
 
-	const controller = $derived(new FetchController(data.sandboxId));
 	const tourState = new TourState(createVolatileTourStorage());
+	const session = $derived(new SessionState(new FetchController(data.sandboxId), tourState));
 
-	// Live order timeline: poll `getTimeline` while a run is active and feed the
-	// result to the control plane's `RunStepTimeline`. The control plane emits the
-	// run via `onstarted` since it owns the start-order form.
-	let run = $state<WorkflowRun | null>(null);
-	let timelineEntries = $state<TimelineEntry[]>([]);
-	let workflowEvents = $state<WorkflowEvent[]>([]);
-	let commandLogEntries = $state<CommandLogEntry[]>([]);
 	let sandboxStatus = $state<string>('provisioning');
 	let sandboxStatusError = $state<string | null>(null);
-	let workerOnline = $state(true);
-	let lastFedTimelineWorkflowId: string | null = null;
-	let lastFedTimelineEntryIndex = -1;
+	let centerView = $state<CenterView>('code');
+	let historyLens = $state<'events' | 'steps'>('events');
+	let codeReveal = $state<CodeReveal | null>(null);
+
 	const sandboxFailureMessage = $derived(
 		getSandboxStatusFailureMessage(sandboxStatus, sandboxStatusError)
 	);
 	const sandboxUnusable = $derived(isSandboxUnusable(sandboxStatus));
 	const inviteRequired = $derived(sandboxStatus === 'authentication-required');
-	const latestWorkflowEvent = $derived(workflowEvents.at(-1));
-	const recommendedControl = $derived(tourState.currentStep?.control);
-	type SessionView = 'code' | 'workflow' | 'temporal';
-	let activeSessionView = $state<SessionView>('workflow');
+	const tourProgress = $derived<TourProgress>({
+		currentStepIndex: tourState.currentStepIndex,
+		completedStepIds: [...tourState.completedStepIds]
+	});
+	const ctaEnabled = $derived(
+		session.recommendedControl !== undefined && session.canDo(session.recommendedControl)
+	);
+	const execution = $derived(
+		executionPointerFor(session.phase, session.workerOnline, session.workerRestarting)
+	);
 
+	/** Jump the editor to an experiment's code and flash the anchor line. */
+	function showExperimentCode(experiment: TourExperiment): void {
+		centerView = 'code';
+		codeReveal = {
+			file: experiment.file,
+			anchor: experiment.anchor,
+			nonce: (codeReveal?.nonce ?? 0) + 1
+		};
+	}
+
+	/** Navigate to the surface a tour step's "where to look" callout names. */
+	function navigateToLookAt(lookAt: TourLookAt): void {
+		if (lookAt.surface === 'temporal-ui') {
+			centerView = 'temporal';
+			return;
+		}
+		historyLens = lookAt.surface;
+	}
+
+	// Poll the sandbox status so the chips, banner, and control gating stay live.
 	$effect(() => {
 		const sandboxId = data.sandboxId;
+		const activeSession = session;
 		let cancelled = false;
 
 		async function pollStatus(): Promise<void> {
@@ -75,16 +118,25 @@
 							response.status,
 							responseBody
 						);
+						activeSession.sandboxUsable = false;
 					}
 					return;
 				}
 				const payload = (await response.json()) as {
 					status: string;
 					errorMessage: string | null;
+					processes?: ProcessLiveness | null;
 				};
 				if (!cancelled) {
 					sandboxStatus = payload.status;
 					sandboxStatusError = payload.errorMessage;
+					activeSession.sandboxUsable = payload.status === 'ready';
+					// Backend process liveness is authoritative; reconcile so the
+					// topology survives reloads and editor save-restarts. Absent or
+					// `null` means "unknown" (handle gone) — leave the current value.
+					if (payload.processes) {
+						activeSession.reconcileLiveness(payload.processes);
+					}
 				}
 			} catch (err) {
 				if (!cancelled) sandboxStatusError = err instanceof Error ? err.message : String(err);
@@ -99,24 +151,22 @@
 		};
 	});
 
+	// Poll `getTimeline` while a run is active — queries execute on the worker,
+	// so polling pauses while the worker is down and resumes after restart.
 	$effect(() => {
-		// Read `controller` synchronously so the effect is tracked against it and
-		// re-subscribes if the sandbox (and thus the controller) identity changes.
-		const activeController = controller;
-		if (run === null || !workerOnline) return;
-		const activeRun = run;
-		const workflowId = activeRun.workflowId;
+		const activeSession = session;
+		const run = activeSession.run;
+		if (run === null || !activeSession.workerOnline) return;
+		const workflowId = run.workflowId;
+		const controller = new FetchController(data.sandboxId);
 		let cancelled = false;
 
 		async function poll(): Promise<void> {
 			try {
-				const entries = await activeController.query(workflowId, 'getTimeline');
-				if (!cancelled && Array.isArray(entries)) {
-					timelineEntries = entries;
-					feedTimelineEvents(activeRun, entries);
-				}
+				const entries = await controller.query(workflowId, 'getTimeline');
+				if (!cancelled && Array.isArray(entries)) activeSession.ingestTimeline(entries);
 			} catch {
-				// No live sandbox / worker yet — keep the last known entries.
+				// No live worker yet — keep the last known entries.
 			}
 		}
 
@@ -127,57 +177,6 @@
 			clearInterval(handle);
 		};
 	});
-
-	function feedTimelineEvents(activeRun: WorkflowRun, entries: TimelineEntry[]): void {
-		if (lastFedTimelineWorkflowId !== activeRun.workflowId) {
-			lastFedTimelineWorkflowId = activeRun.workflowId;
-			lastFedTimelineEntryIndex = -1;
-		}
-
-		for (const entry of entries) {
-			if (entry.index <= lastFedTimelineEntryIndex || entry.eventType === undefined) continue;
-			handleWorkflowEvent({
-				sequence: entry.index,
-				type: entry.eventType,
-				timestamp: entry.timestamp,
-				workflowId: activeRun.workflowId,
-				payload: {
-					description: entry.description,
-					status: entry.status,
-					featureId: entry.featureId
-				}
-			});
-			lastFedTimelineEntryIndex = entry.index;
-		}
-	}
-
-	function handleRunStarted(nextRun: WorkflowRun): void {
-		run = nextRun;
-		timelineEntries = [];
-		workflowEvents = [];
-		commandLogEntries = [];
-		workerOnline = true;
-		lastFedTimelineWorkflowId = nextRun.workflowId;
-		lastFedTimelineEntryIndex = -1;
-	}
-
-	function handleWorkflowEvent(event: WorkflowEvent): void {
-		if (event.type === 'WorkerKilled') workerOnline = false;
-		if (event.type === 'WorkerRestarted') workerOnline = true;
-		tourState.feed(event);
-		workflowEvents = [...workflowEvents, event];
-	}
-
-	function handleCommandEntry(entry: CommandLogEntry): void {
-		const existingIndex = commandLogEntries.findIndex((candidate) => candidate.id === entry.id);
-		if (existingIndex === -1) {
-			commandLogEntries = [...commandLogEntries, entry];
-			return;
-		}
-		commandLogEntries = commandLogEntries.map((candidate, index) =>
-			index === existingIndex ? entry : candidate
-		);
-	}
 
 	function createVolatileTourStorage(): StorageAdapter {
 		let progress: TourProgress | null = null;
@@ -195,264 +194,236 @@
 		};
 	}
 
-	async function focusGuidedDemo(event: MouseEvent): Promise<void> {
+	function focusGuidedJourney(event: MouseEvent): void {
 		event.preventDefault();
-		activeSessionView = 'workflow';
-		await tick();
-		const target = document.getElementById('guided-demo');
+		const target = document.getElementById('guided-journey');
 		if (target === null) return;
-
 		target.focus();
 		target.scrollIntoView({ block: 'start' });
-		history.replaceState(null, '', '#guided-demo');
-	}
-
-	async function focusSessionTab(view: SessionView): Promise<void> {
-		await tick();
-		document.getElementById(`session-tab-${view}`)?.focus();
-	}
-
-	function handleSessionTabKeydown(event: KeyboardEvent): void {
-		const views: SessionView[] = ['code', 'workflow', 'temporal'];
-		const currentIndex = views.indexOf(activeSessionView);
-		if (currentIndex === -1) return;
-
-		let nextIndex: number | null = null;
-		if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % views.length;
-		if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + views.length) % views.length;
-		if (event.key === 'Home') nextIndex = 0;
-		if (event.key === 'End') nextIndex = views.length - 1;
-		if (nextIndex === null) return;
-
-		event.preventDefault();
-		activeSessionView = views[nextIndex] ?? activeSessionView;
-		void focusSessionTab(activeSessionView);
+		history.replaceState(null, '', '#guided-journey');
 	}
 </script>
 
-<div class="sandman-session">
-	<a class="skip-demo-link" href="#guided-demo" onclick={focusGuidedDemo}>Skip to guided demo</a>
+<svelte:head>
+	<title>{SESSION_TITLE}</title>
+	<meta name="description" content={SESSION_DESCRIPTION} />
+	<!-- Session URLs are ephemeral, invite-gated, and unguessable — keep them
+	     out of search indexes while still unfurling nicely when shared. -->
+	<meta name="robots" content="noindex, nofollow" />
+	<meta property="og:title" content={SESSION_TITLE} />
+	<meta property="og:description" content={SESSION_DESCRIPTION} />
+	<meta name="twitter:title" content={SESSION_TITLE} />
+	<meta name="twitter:description" content={SESSION_DESCRIPTION} />
+</svelte:head>
 
-	<header class="session-header">
-		<h1 class="session-title">Sandman</h1>
-		<span class="session-id" title="Sandbox ID">{data.sandboxId}</span>
-		<span class="session-status" data-status={sandboxStatus}>
-			{getSandboxStatusDisplayLabel(sandboxStatus)}
-		</span>
-	</header>
+<ToastRegion position="bottom-center">
+	<ToastBridge
+		register={(api) => {
+			session.notify = (message, variant) => api.show(message, { variant });
+		}}
+	/>
 
-	{#if sandboxFailureMessage}
-		<div class="session-error" role="alert">
-			<div class="session-error__copy">
-				<strong>{inviteRequired ? 'Invite session required' : 'Sandbox unavailable'}</strong>
-				<span>{sandboxFailureMessage}</span>
+	<div class="session" data-theme="dark" data-unusable={sandboxUnusable}>
+		<a class="skip-link" href="#guided-journey" onclick={focusGuidedJourney}>
+			Skip to guided journey
+		</a>
+
+		<header class="session__bar">
+			<h1 class="session__brand">Sandman</h1>
+			<div class="session__chip" data-chip="sandbox">
+				<StatusDot status={sandboxDot(sandboxStatus)} label="Sandbox status" showLabel={false} />
+				<span class="session__chip-name">Sandbox</span>
+				<span class="session__chip-value">{getSandboxStatusDisplayLabel(sandboxStatus)}</span>
 			</div>
-			{#if inviteRequired}
-				<Button href="/" label="Enter invite code" variant="secondary" size="sm" />
-			{/if}
-		</div>
-	{/if}
-
-	<main class="session-workbench" data-unusable={sandboxUnusable}>
-		<div class="session-view-tabs" role="tablist" aria-label="Session views">
-			<button
-				id="session-tab-code"
-				type="button"
-				role="tab"
-				class="session-view-tab"
-				aria-selected={activeSessionView === 'code'}
-				aria-controls="session-panel-code"
-				tabindex={activeSessionView === 'code' ? 0 : -1}
-				onclick={() => (activeSessionView = 'code')}
-				onkeydown={handleSessionTabKeydown}
-			>
-				Code Editor
-			</button>
-			<button
-				id="session-tab-workflow"
-				type="button"
-				role="tab"
-				class="session-view-tab"
-				aria-selected={activeSessionView === 'workflow'}
-				aria-controls="session-panel-workflow"
-				tabindex={activeSessionView === 'workflow' ? 0 : -1}
-				onclick={() => (activeSessionView = 'workflow')}
-				onkeydown={handleSessionTabKeydown}
-			>
-				Workflow State
-			</button>
-			<button
-				id="session-tab-temporal"
-				type="button"
-				role="tab"
-				class="session-view-tab"
-				aria-selected={activeSessionView === 'temporal'}
-				aria-controls="session-panel-temporal"
-				tabindex={activeSessionView === 'temporal' ? 0 : -1}
-				onclick={() => (activeSessionView = 'temporal')}
-				onkeydown={handleSessionTabKeydown}
-			>
-				Temporal UI
-			</button>
-		</div>
-
-		{#if activeSessionView === 'code'}
-			<div
-				id="session-panel-code"
-				role="tabpanel"
-				aria-labelledby="session-tab-code"
-				class="session-view session-view--code"
-			>
-				<section class="panel panel--editor" aria-label="Code editor">
-					<Editor sandboxId={data.sandboxId} />
-				</section>
+			<div class="session__chip" data-chip="order">
+				<StatusDot status={orderStageDot(session.phase)} label="Order stage" showLabel={false} />
+				<span class="session__chip-name">Order</span>
+				<span class="session__chip-value">{orderStageLabel(session.phase)}</span>
 			</div>
-		{:else if activeSessionView === 'workflow'}
-			<div
-				id="session-panel-workflow"
-				role="tabpanel"
-				aria-labelledby="session-tab-workflow"
-				class="session-view session-view--workflow"
-			>
-				<div class="workflow-state-grid">
-					<section class="panel panel--inspector" aria-label="Command and history inspector">
-						<CommandInspector entries={commandLogEntries} latestEvent={latestWorkflowEvent} />
-					</section>
+			<div class="session__chip" data-chip="workflow">
+				<StatusDot status={workflowDot(session.phase)} label="Workflow status" showLabel={false} />
+				<span class="session__chip-name">Workflow</span>
+				<span class="session__chip-value">{workflowTag(session.phase)}</span>
+			</div>
+			<span class="session__id" title="Sandbox ID">{data.sandboxId}</span>
+			<Button
+				variant="soft-danger"
+				size="sm"
+				label="Reset"
+				class="session__reset"
+				onclick={() => session.reset()}
+			/>
+		</header>
 
-					<aside
-						id="guided-demo"
-						tabindex="-1"
-						class="panel panel--control"
-						aria-label="Control plane and guided tour"
-					>
-						<div class="guided-tour-panel">
-							<GuidedTour
-								progress={{
-									currentStepIndex: tourState.currentStepIndex,
-									completedStepIds: [...tourState.completedStepIds]
-								}}
-								onreset={() => tourState.reset()}
-							/>
-						</div>
-						<ControlPlane
-							{controller}
-							{timelineEntries}
-							{recommendedControl}
-							events={workflowEvents}
-							onstarted={handleRunStarted}
-							onworkflowevent={handleWorkflowEvent}
-							oncommand={handleCommandEntry}
-						/>
-					</aside>
+		{#if sandboxFailureMessage && !sandboxUnusable}
+			<Alert variant="danger" class="session__alert">
+				<span class="session__alert-copy">{sandboxFailureMessage}</span>
+			</Alert>
+		{/if}
+
+		<ControlToolbar {session} bind:view={centerView} />
+
+		{#if sandboxUnusable}
+			<!-- The workbench below is inert; a centered gate explains why and
+			     offers the way back instead of a screaming full-width banner. -->
+			<div class="session__gate" role="alert">
+				<div class="session__gate-card">
+					<p class="session__gate-eyebrow">
+						{inviteRequired ? 'Invite session required' : 'Sandbox unavailable'}
+					</p>
+					<h2 class="session__gate-title">
+						{inviteRequired ? 'This sandbox link needs a session' : 'This sandbox is done'}
+					</h2>
+					<p class="session__gate-copy">{sandboxFailureMessage}</p>
+					<Button
+						href="/"
+						label={inviteRequired ? 'Enter invite code' : 'Start a new session'}
+						variant="primary"
+					/>
 				</div>
 			</div>
-		{:else}
-			<div
-				id="session-panel-temporal"
-				role="tabpanel"
-				aria-labelledby="session-tab-temporal"
-				class="session-view session-view--temporal"
-			>
-				<section class="panel panel--temporal-ui" aria-label="Temporal Web UI">
-					<TemporalUiFrame sandboxId={data.sandboxId} {sandboxStatus} />
-				</section>
-			</div>
 		{/if}
-	</main>
-</div>
+
+		<div class="session__body">
+			<aside id="guided-journey" tabindex="-1" class="session__journey">
+				<GuidedTour
+					progress={tourProgress}
+					{ctaEnabled}
+					workerOnline={session.workerOnline}
+					oncta={(control) => void session.dispatch(control)}
+					onshowcode={showExperimentCode}
+					onlookat={navigateToLookAt}
+				/>
+			</aside>
+
+			<main class="session__center">
+				<TopologyStrip {session} {sandboxStatus} />
+				<!-- Both panels stay mounted so Monaco and the Temporal UI iframe
+				     keep their state across view switches; CSS hides the inactive one. -->
+				<div
+					id="center-panel-code"
+					role="tabpanel"
+					aria-label="Code editor"
+					class="session__panel"
+					class:session__panel--hidden={centerView !== 'code'}
+				>
+					<Editor sandboxId={data.sandboxId} {execution} reveal={codeReveal} />
+				</div>
+				<div
+					id="center-panel-temporal"
+					role="tabpanel"
+					aria-label="Temporal Web UI"
+					class="session__panel"
+					class:session__panel--hidden={centerView !== 'temporal'}
+				>
+					{#if !session.serverOnline}
+						<div class="session__server-down">
+							<EmptyState
+								title="Temporal Server is stopped"
+								description="Its Web UI is down with it. Workflow state is persisted to disk — start the server from the topology strip to reconnect and resume."
+							/>
+						</div>
+					{:else}
+						<!-- Keyed by run + server lifecycle so the embedded UI reloads with a
+						     fresh workflow list instead of showing a stale pre-run snapshot. -->
+						{#key `${session.run?.workflowId ?? 'no-run'}:${session.serverOnline}`}
+							<TemporalUiFrame sandboxId={data.sandboxId} {sandboxStatus} />
+						{/key}
+					{/if}
+				</div>
+			</main>
+
+			<div class="session__history">
+				<HistoryRail {session} bind:lens={historyLens} />
+			</div>
+		</div>
+	</div>
+</ToastRegion>
 
 <style>
-	.sandman-session {
+	.session {
 		display: flex;
 		flex-direction: column;
 		height: 100dvh;
 		overflow: hidden;
-		background: #020617;
+		color-scheme: dark;
+		background: var(--cinder-bg, #0b0f17);
 		color: var(--cinder-text, #e5e7eb);
+		font-size: 0.875rem;
 	}
 
-	.session-header {
-		display: flex;
-		align-items: center;
-		gap: 0.875rem;
-		padding: 0.625rem 0.875rem;
-		background: #111827;
-		color: var(--cinder-text-subtle, #cbd5e1);
-		border-bottom: 1px solid #334155;
-		flex-shrink: 0;
-	}
-
-	.skip-demo-link {
+	.skip-link {
 		position: fixed;
 		top: 0.75rem;
 		left: 0.75rem;
 		z-index: 1000;
 		transform: translateY(-150%);
-		border: 1px solid #38bdf8;
+		border: 1px solid var(--cinder-accent);
 		border-radius: 0.375rem;
-		background: #082f49;
-		color: #e0f2fe;
+		background: var(--cinder-surface-raised);
+		color: var(--cinder-text);
 		padding: 0.55rem 0.75rem;
 		font-size: 0.875rem;
 		font-weight: 700;
 		text-decoration: none;
 	}
 
-	.skip-demo-link:focus {
+	.skip-link:focus {
 		transform: translateY(0);
-		outline: 2px solid #bae6fd;
+		outline: 2px solid var(--cinder-accent);
 		outline-offset: 2px;
 	}
 
-	.session-title {
-		font-size: 1.125rem;
-		font-weight: 700;
-		margin: 0;
-		color: #fff;
-	}
-
-	.session-id {
-		font-family: monospace;
-		font-size: 0.75rem;
-		color: var(--cinder-text-muted, #94a3b8);
-	}
-
-	.session-status {
-		margin-left: auto;
-		border: 1px solid #475569;
-		border-radius: 999px;
-		padding: 0.25rem 0.65rem;
-		font-size: 0.75rem;
-		text-transform: capitalize;
-		font-weight: 600;
-		color: var(--cinder-text, #e2e8f0);
-	}
-
-	.session-status[data-status='ready'] {
-		border-color: #16a34a;
-		color: #86efac;
-	}
-
-	.session-status[data-status='error'],
-	.session-status[data-status='expired'],
-	.session-status[data-status='terminated'] {
-		border-color: #dc2626;
-		color: #fca5a5;
-	}
-
-	.session-error {
+	.session__bar {
+		flex: none;
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
 		gap: 1rem;
-		background: #2a1113;
-		border-bottom: 1px solid #7f1d1d;
-		color: #fecaca;
-		padding: 0.6rem 1rem;
-		font-size: 0.875rem;
+		padding: 0.5rem 1rem;
+		background: var(--cinder-surface);
+		border-bottom: 1px solid var(--cinder-border);
 	}
 
-	.session-error__copy {
+	.session__brand {
+		margin: 0;
+		font-size: 0.9375rem;
+		font-weight: 800;
+		color: var(--cinder-text);
+	}
+
+	.session__chip {
+		display: flex;
+		align-items: center;
+		gap: 0.4375rem;
+		padding: 0.3125rem 0.625rem;
+		background: var(--cinder-surface-inset);
+		border: 1px solid var(--cinder-border-muted);
+		border-radius: 0.5rem;
+	}
+
+	.session__chip-name {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: var(--cinder-text);
+	}
+
+	.session__chip-value {
+		font-size: 0.6875rem;
+		color: var(--cinder-text-muted);
+	}
+
+	.session__id {
+		margin-left: auto;
+		font-family: var(--cinder-font-mono, monospace);
+		font-size: 0.6875rem;
+		color: var(--cinder-text-subtle);
+	}
+
+	.session :global(.session__alert) {
+		border-radius: 0;
+	}
+
+	.session__alert-copy {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.35rem 0.75rem;
@@ -460,196 +431,148 @@
 		min-width: 0;
 	}
 
-	.session-error__copy strong {
-		color: #fee2e2;
-	}
-
-	.session-workbench {
-		display: flex;
-		flex-direction: column;
+	.session__body {
 		flex: 1;
 		min-height: 0;
-		overflow: hidden;
-		background: #020617;
-	}
-
-	.session-view-tabs {
 		display: flex;
-		align-items: flex-end;
-		gap: 0.25rem;
-		padding: 0.55rem 0.75rem 0;
-		border-bottom: 1px solid #1f2937;
-		background: #08111f;
-		flex-shrink: 0;
-		overflow-x: auto;
+		overflow: hidden;
 	}
 
-	.session-view-tab {
-		border: 1px solid transparent;
-		border-bottom: none;
-		border-radius: 0.375rem 0.375rem 0 0;
-		background: transparent;
-		color: #94a3b8;
-		cursor: pointer;
-		font: inherit;
-		font-size: 0.875rem;
-		font-weight: 700;
-		padding: 0.62rem 0.85rem;
-		white-space: nowrap;
+	.session__journey {
+		flex: none;
+		width: 20rem;
+		min-height: 0;
+		background: var(--cinder-surface);
+		border-right: 1px solid var(--cinder-border);
 	}
 
-	.session-view-tab:hover {
-		background: #111827;
-		color: #e2e8f0;
-	}
-
-	.session-view-tab[aria-selected='true'] {
-		background: #0f172a;
-		border-color: #334155;
-		color: #f8fafc;
-	}
-
-	.session-view-tab:focus-visible {
-		outline: 2px solid #60a5fa;
+	.session__journey:focus {
+		outline: 2px solid var(--cinder-accent);
 		outline-offset: -2px;
 	}
 
-	.session-view {
+	.session__center {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+		background: var(--cinder-bg, #0b0f17);
+	}
+
+	.session__panel {
 		flex: 1;
 		min-height: 0;
 		overflow: hidden;
-		background: #020617;
-	}
-
-	.panel {
-		min-height: 0;
-		overflow: auto;
-	}
-
-	.panel--editor {
-		height: 100%;
-		overflow: hidden;
-	}
-
-	.workflow-state-grid {
-		display: grid;
-		grid-template-columns: minmax(22rem, 0.9fr) minmax(28rem, 1.1fr);
-		height: 100%;
-		min-height: 0;
-		overflow: hidden;
-	}
-
-	.panel--inspector {
-		min-width: 0;
-		border-right: 1px solid #1f2937;
-		background: #08111f;
-	}
-
-	.panel--temporal-ui {
-		height: 100%;
-		min-width: 0;
-		overflow: hidden;
-		background: #020817;
-	}
-
-	.panel--control {
-		--cinder-surface: #0f172a;
-		--cinder-surface-raised: #111f32;
-		--cinder-surface-inset: #0b1422;
-		--cinder-surface-hover: #17263a;
-		--cinder-border: #334155;
-		--cinder-border-muted: #1f2937;
-		--cinder-border-strong: #4b647f;
-		--cinder-text: #e2e8f0;
-		--cinder-text-muted: #94a3b8;
-		--cinder-text-subtle: #64748b;
-		--cinder-text-disabled: #475569;
-		--color-text-primary: #e2e8f0;
-		--color-text-secondary: #cbd5e1;
-		--color-text-muted: #94a3b8;
-		--color-surface-subtle: #111827;
-		--color-border: #334155;
-		min-width: 0;
-		border-right: none;
-		padding: 1rem 1.125rem;
-		overflow-y: auto;
 		display: flex;
 		flex-direction: column;
-		gap: 1.25rem;
-		background: #0f172a;
-		color: var(--cinder-text, #e2e8f0);
 	}
 
-	.session-workbench[data-unusable='true'] .panel {
-		opacity: 0.52;
+	.session__panel > :global(*) {
+		flex: 1;
+		min-height: 0;
 	}
 
-	.guided-tour-panel {
-		border-bottom: 1px solid #334155;
-		padding-bottom: 1.25rem;
+	.session__panel--hidden {
+		display: none;
 	}
 
-	.panel--control :global(.cinder-input),
-	.panel--control :global(.cinder-number-input),
-	.panel--control :global(.cinder-select) {
-		background: #111f32;
-		border-color: #334155;
-		color: #e2e8f0;
+	.session__server-down {
+		flex: 1;
+		display: grid;
+		place-items: center;
+		padding: 2rem;
 	}
 
-	.panel--control :global(.cinder-input-field__label),
-	.panel--control :global(.cinder-select-field__label),
-	.panel--control :global(label),
-	.panel--control :global(h2),
-	.panel--control :global(h3) {
-		color: #e2e8f0;
+	.session__history {
+		flex: none;
+		width: 22rem;
+		min-height: 0;
+		background: var(--cinder-surface);
+		border-left: 1px solid var(--cinder-border);
 	}
 
-	.panel--control :global(p),
-	.panel--control :global(li),
-	.panel--control :global(dt),
-	.panel--control :global(dd) {
-		color: #cbd5e1;
+	.session[data-unusable='true'] .session__body {
+		opacity: 0.35;
+		filter: saturate(0.4);
+		pointer-events: none;
+		user-select: none;
 	}
 
-	.panel--control :global(.guided-tour__detail) {
-		background: #111827;
-		border-color: #334155;
+	.session__gate {
+		position: absolute;
+		inset: 0;
+		z-index: 40;
+		display: grid;
+		place-items: center;
+		padding: 2rem;
+		background: color-mix(in oklch, var(--cinder-bg, #0b0f17), transparent 35%);
+		backdrop-filter: blur(2px);
 	}
 
-	.panel--control :global(.guided-tour__step--active) {
-		color: #f8fafc;
+	.session {
+		position: relative;
 	}
 
-	@media (max-width: 64rem) {
-		.workflow-state-grid {
-			grid-template-columns: 1fr;
-			grid-template-rows: minmax(16rem, 0.65fr) minmax(28rem, 1fr);
-			overflow-y: auto;
+	.session__gate-card {
+		max-width: 26rem;
+		padding: 1.5rem 1.625rem;
+		border: 1px solid var(--cinder-border);
+		border-radius: 0.875rem;
+		background: var(--cinder-surface-raised);
+		box-shadow: var(--cinder-shadow-lg);
+		display: flex;
+		flex-direction: column;
+		gap: 0.625rem;
+		align-items: flex-start;
+	}
+
+	.session__gate-eyebrow {
+		margin: 0;
+		font-size: 0.625rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--cinder-color-warning-fg, #fbbf24);
+	}
+
+	.session__gate-title {
+		margin: 0;
+		font-size: 1.125rem;
+		font-weight: 750;
+		line-height: 1.25;
+		color: var(--cinder-text);
+	}
+
+	.session__gate-copy {
+		margin: 0 0 0.375rem;
+		font-size: 0.8125rem;
+		line-height: 1.55;
+		color: var(--cinder-text-muted);
+	}
+
+	@media (max-width: 68rem) {
+		.session {
+			height: auto;
+			min-height: 100dvh;
+			overflow: auto;
 		}
 
-		.panel--inspector {
+		.session__body {
+			flex-direction: column;
+			overflow: visible;
+		}
+
+		.session__journey,
+		.session__history {
+			width: auto;
 			border-right: none;
-			border-bottom: 1px solid #1f2937;
-		}
-	}
-
-	@media (max-width: 42rem) {
-		.session-header {
-			flex-wrap: wrap;
+			border-left: none;
+			border-bottom: 1px solid var(--cinder-border);
 		}
 
-		.session-status {
-			margin-left: 0;
-		}
-
-		.session-view-tabs {
-			padding-inline: 0.5rem;
-		}
-
-		.session-view-tab {
-			font-size: 0.8125rem;
-			padding-inline: 0.65rem;
+		.session__center {
+			min-height: 32rem;
 		}
 	}
 </style>

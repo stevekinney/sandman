@@ -5,11 +5,11 @@
  * configurable results. It is intentionally a plain class (no Svelte
  * runes) so it works in both browser and node test environments.
  *
- * Usage in browser component tests:
+ * Usage in browser tests:
  * ```ts
  * const controller = new MockTemporalController();
- * render(ControlPlane, { props: { controller } });
- * // interact …
+ * const session = new SessionState(controller, tour);
+ * await session.placeOrder();
  * expect(controller.startCalls).toHaveLength(1);
  * ```
  */
@@ -86,6 +86,12 @@ export class MockTemporalController implements TemporalController {
 
 	/** Number of `restartWorker()` invocations. */
 	restartWorkerCount = 0;
+
+	/** Number of `stopServer()` invocations. */
+	stopServerCount = 0;
+
+	/** Number of `startServer()` invocations. */
+	startServerCount = 0;
 
 	// ---- configurable results -----------------------------------------------
 
@@ -167,6 +173,14 @@ export class MockTemporalController implements TemporalController {
 
 	async restartWorker(): Promise<void> {
 		this.restartWorkerCount++;
+	}
+
+	async stopServer(): Promise<void> {
+		this.stopServerCount++;
+	}
+
+	async startServer(): Promise<void> {
+		this.startServerCount++;
 	}
 
 	async visibility(filter: VisibilityFilter): Promise<VisibilityWorkflowSummary[]> {

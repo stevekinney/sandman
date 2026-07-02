@@ -125,6 +125,9 @@ describe('SandboxClient interface', () => {
 			bootstrap: async () => ({ ready: true, uiUrl: 'http://localhost:8233' }),
 			restartWorker: async () => ({ ok: true, phase: 'ready' }),
 			killWorker: async () => {},
+			stopServer: async () => {},
+			startServer: async () => {},
+			processLiveness: () => null,
 			exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
 			writeFile: async () => {},
 			terminate: async () => {}
@@ -133,6 +136,9 @@ describe('SandboxClient interface', () => {
 		expect(typeof mockClient.bootstrap).toBe('function');
 		expect(typeof mockClient.restartWorker).toBe('function');
 		expect(typeof mockClient.killWorker).toBe('function');
+		expect(typeof mockClient.stopServer).toBe('function');
+		expect(typeof mockClient.startServer).toBe('function');
+		expect(typeof mockClient.processLiveness).toBe('function');
 		expect(typeof mockClient.exec).toBe('function');
 		expect(typeof mockClient.writeFile).toBe('function');
 		expect(typeof mockClient.terminate).toBe('function');

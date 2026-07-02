@@ -61,8 +61,8 @@ export class FetchController implements TemporalController {
 			body: JSON.stringify({ workflowId, name, payload })
 		});
 		if (!res.ok) {
-			const text = await res.text();
-			throw new Error(`Signal ${name} failed: ${text}`);
+			const message = await readErrorMessage(res);
+			throw new Error(`Signal ${name} failed: ${message}`);
 		}
 	}
 
@@ -73,8 +73,8 @@ export class FetchController implements TemporalController {
 
 		const res = await fetch(url.toString());
 		if (!res.ok) {
-			const text = await res.text();
-			throw new Error(`Query ${name} failed: ${text}`);
+			const message = await readErrorMessage(res);
+			throw new Error(`Query ${name} failed: ${message}`);
 		}
 		return res.json() as Promise<QueryReturnMap[N]>;
 	}
@@ -100,8 +100,8 @@ export class FetchController implements TemporalController {
 		}
 
 		if (!res.ok) {
-			const text = await res.text();
-			throw new Error(`Update ${name} failed: ${text}`);
+			const message = await readErrorMessage(res);
+			throw new Error(`Update ${name} failed: ${message}`);
 		}
 		return res.json() as Promise<UpdateResultMap[N]>;
 	}
@@ -109,16 +109,32 @@ export class FetchController implements TemporalController {
 	async killWorker(): Promise<void> {
 		const res = await fetch(`${this.base}/worker/kill`, { method: 'POST' });
 		if (!res.ok) {
-			const text = await res.text();
-			throw new Error(`Kill worker failed: ${text}`);
+			const message = await readErrorMessage(res);
+			throw new Error(`Kill worker failed: ${message}`);
 		}
 	}
 
 	async restartWorker(): Promise<void> {
 		const res = await fetch(`${this.base}/worker/restart`, { method: 'POST' });
 		if (!res.ok) {
-			const text = await res.text();
-			throw new Error(`Restart worker failed: ${text}`);
+			const message = await readErrorMessage(res);
+			throw new Error(`Restart worker failed: ${message}`);
+		}
+	}
+
+	async stopServer(): Promise<void> {
+		const res = await fetch(`${this.base}/server/stop`, { method: 'POST' });
+		if (!res.ok) {
+			const message = await readErrorMessage(res);
+			throw new Error(`Stop server failed: ${message}`);
+		}
+	}
+
+	async startServer(): Promise<void> {
+		const res = await fetch(`${this.base}/server/start`, { method: 'POST' });
+		if (!res.ok) {
+			const message = await readErrorMessage(res);
+			throw new Error(`Start server failed: ${message}`);
 		}
 	}
 
@@ -133,8 +149,8 @@ export class FetchController implements TemporalController {
 
 		const res = await fetch(url.toString());
 		if (!res.ok) {
-			const text = await res.text();
-			throw new Error(`Visibility query failed: ${text}`);
+			const message = await readErrorMessage(res);
+			throw new Error(`Visibility query failed: ${message}`);
 		}
 		const body = (await res.json()) as { workflows: VisibilityWorkflowSummary[] };
 		return body.workflows;

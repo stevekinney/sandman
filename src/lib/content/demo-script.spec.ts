@@ -8,6 +8,10 @@
 
 import { describe, expect, it } from 'vitest';
 import { FEATURES, ORDER_STATUS } from '$lib/contracts/workflow-api';
+import orderWorkflowSource from '../../../sandbox-template/order-workflow.ts?raw';
+import deliveryWorkflowSource from '../../../sandbox-template/delivery-workflow.ts?raw';
+import definitionsSource from '../../../sandbox-template/definitions.ts?raw';
+import activitiesSource from '../../../sandbox-template/activities.ts?raw';
 import {
 	FEATURE_MAP,
 	SIGNAL_FEATURE,
@@ -173,6 +177,44 @@ describe('TOUR', () => {
 		const ids = TOUR.map((s) => s.id);
 		const unique = new Set(ids);
 		expect(unique.size).toBe(ids.length);
+	});
+
+	it('every step has a concept eyebrow and a watch line', () => {
+		for (const step of TOUR) {
+			expect(step.concept.length, `concept missing for step "${step.id}"`).toBeGreaterThan(0);
+			expect(step.watch.length, `watch missing for step "${step.id}"`).toBeGreaterThan(0);
+		}
+	});
+
+	it('every experiment anchor exists verbatim in its named sandbox file (anti-drift)', () => {
+		const sources: Record<string, string> = {
+			'order-workflow.ts': orderWorkflowSource,
+			'delivery-workflow.ts': deliveryWorkflowSource,
+			'definitions.ts': definitionsSource,
+			'activities.ts': activitiesSource
+		};
+		for (const step of TOUR) {
+			if (step.experiment === undefined) continue;
+			const source = sources[step.experiment.file];
+			expect(source, `step "${step.id}" experiment names unknown file`).toBeDefined();
+			expect(
+				source.includes(step.experiment.anchor),
+				`step "${step.id}" experiment anchor (${step.experiment.anchor}) must exist in sandbox-template/${step.experiment.file}`
+			).toBe(true);
+			expect(step.experiment.prompt.length).toBeGreaterThan(0);
+		}
+	});
+
+	it('every lookAt callout names a real surface and has a note', () => {
+		const surfaces = new Set(['temporal-ui', 'events', 'steps']);
+		for (const step of TOUR) {
+			if (step.lookAt === undefined) continue;
+			expect(
+				surfaces.has(step.lookAt.surface),
+				`step "${step.id}" lookAt surface "${step.lookAt.surface}" is unknown`
+			).toBe(true);
+			expect(step.lookAt.note.length, `step "${step.id}" lookAt note`).toBeGreaterThan(0);
+		}
 	});
 
 	it('durable-recovery step completes only on WorkerRestarted, not WorkerKilled', () => {
