@@ -185,7 +185,9 @@ export class SessionState {
 			this.activeOrder = order;
 			this.timelineEntries = [];
 			this.workflowEvents = [];
-			this.workerOnline = true;
+			// Starting a workflow does not restart a dead worker, so don't claim
+			// one is online: if the worker was killed, `workerOnline` stays false
+			// and the topology keeps showing it down until an actual restart.
 			this.#lastFedTimelineIndex = -1;
 			this.#emitSyntheticEvent('WorkflowExecutionStarted', run.workflowId);
 		});

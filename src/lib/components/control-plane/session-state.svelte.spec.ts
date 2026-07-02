@@ -81,6 +81,18 @@ describe('SessionState', () => {
 		expect(tour.currentStepIndex).toBe(1);
 	});
 
+	it('placeOrder does not fabricate a live worker when one was killed', async () => {
+		const { session } = makeSession();
+		await session.placeOrder();
+		await session.killWorker();
+		expect(session.workerOnline).toBe(false);
+
+		// Placing another order starts a workflow but does not restart the worker,
+		// so the topology must keep showing it down rather than lying that it came back.
+		await session.placeOrder();
+		expect(session.workerOnline).toBe(false);
+	});
+
 	it('ingestTimeline feeds only new annotated entries into the event feed', async () => {
 		const { session } = makeSession();
 		await session.placeOrder();
