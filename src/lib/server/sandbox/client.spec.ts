@@ -9,7 +9,12 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { createSandboxClient, loadDefaultTemplateFiles } from './client.ts';
 import { SANDBOX_STATUS } from '$lib/contracts/sandbox';
-import type { E2bAdapter, E2bCreateOpts, E2bSandboxSession } from './e2b-adapter.ts';
+import type {
+	E2bAdapter,
+	E2bCreateOpts,
+	E2bSandboxSession,
+	SandboxCommandResult
+} from './e2b-adapter.ts';
 import type { SandboxHandle } from '$lib/contracts/sandbox';
 
 // ---------------------------------------------------------------------------
@@ -32,6 +37,19 @@ function createMockAdapter(sandboxId = 'mock-sandbox-id'): {
 	const calls: CallRecord[] = [];
 	let pidCounter = 100;
 
+	// Background commands model a long-running process: `wait()` stays pending
+	// until the process is killed (by PID or via the handle), then resolves with
+	// a SIGKILL-like non-zero code. This lets the WorkerSupervisor observe real
+	// process exits the way it does against live E2B.
+	const pendingWaits = new Map<number, (result: SandboxCommandResult) => void>();
+	const resolveWait = (pid: number): void => {
+		const resolve = pendingWaits.get(pid);
+		if (resolve) {
+			pendingWaits.delete(pid);
+			resolve({ exitCode: 137, stdout: '', stderr: '' });
+		}
+	};
+
 	const session: E2bSandboxSession = {
 		sandboxId,
 		trafficAccessToken: 'mock-access-token',
@@ -46,12 +64,16 @@ function createMockAdapter(sandboxId = 'mock-sandbox-id'): {
 			async start(cmd) {
 				const pid = pidCounter++;
 				calls.push({ method: 'commands.start', cmd, pid });
+				const waitPromise = new Promise<SandboxCommandResult>((resolve) => {
+					pendingWaits.set(pid, resolve);
+				});
 				return {
 					pid,
-					async wait() {
-						return { exitCode: 0, stdout: '', stderr: '' };
+					wait() {
+						return waitPromise;
 					},
 					async kill() {
+						resolveWait(pid);
 						return true;
 					}
 				};
@@ -59,6 +81,7 @@ function createMockAdapter(sandboxId = 'mock-sandbox-id'): {
 
 			async kill(pid) {
 				calls.push({ method: 'commands.kill', pid });
+				resolveWait(pid);
 				return true;
 			}
 		},
@@ -654,6 +677,52 @@ describe('processLiveness()', () => {
 		const handle = await provisionAndBootstrap(client);
 		await client.terminate(handle);
 		expect(client.processLiveness(handle)).toBeNull();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: worker supervision wiring
+// ---------------------------------------------------------------------------
+
+describe('worker supervision', () => {
+	it('starts the worker with its output redirected to a log file', async () => {
+		const { client, calls } = makeClient();
+		await provisionAndBootstrap(client);
+
+		const workerStart = calls.find(
+			(c) =>
+				c.method === 'commands.start' &&
+				c.cmd.includes('worker.ts') &&
+				!c.cmd.includes('temporal server')
+		) as Extract<CallRecord, { method: 'commands.start' }> | undefined;
+
+		expect(workerStart?.cmd).toContain('>> /app/worker.log 2>&1');
+	});
+
+	it('does NOT start the worker when Temporal never becomes ready', async () => {
+		const { adapter, calls } = createMockAdapter('sbx-worker-skip');
+		const client = createSandboxClient({
+			adapter,
+			// Public host keeps serving the closed-port placeholder → never ready.
+			publicUiFetch: async () =>
+				new Response('Closed Port Error: Connection refused on port 8233', { status: 200 }),
+			templateFiles: { '/app/worker.ts': '// placeholder worker' },
+			maxReadinessRetries: 1,
+			readinessDelayMs: 0
+		});
+
+		const handle = await client.provision();
+		const result = await client.bootstrap(handle);
+
+		expect(result.ready).toBe(false);
+		const startedWorker = calls.some(
+			(c) =>
+				c.method === 'commands.start' &&
+				c.cmd.includes('worker.ts') &&
+				!c.cmd.includes('temporal server')
+		);
+		expect(startedWorker).toBe(false);
+		expect(client.processLiveness(handle)?.workerOnline).toBe(false);
 	});
 });
 
