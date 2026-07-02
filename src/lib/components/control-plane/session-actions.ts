@@ -57,11 +57,20 @@ export type ControlContext = {
 /**
  * Whether a control-plane action can run right now.
  *
- * Every workflow operation needs the Temporal server up. Signals and updates
- * do NOT need the worker (they append to history even while it is down —
- * that is part of the lesson), so only `complete-delivery` requires a live
- * worker to observe the child finishing. `update-address` stays enabled in
- * delivery so learners can watch the validator reject it.
+ * Every workflow operation needs the Temporal server up. Beyond that, the
+ * split is by who actually serves the call:
+ *
+ *  - **Signals** (accept/reject restaurant, food-ready, add-tip, cancel,
+ *    update-location) are accepted by the *server* and appended to history
+ *    even while the worker is down — they replay once it returns. They stay
+ *    enabled without a worker; that durability is part of the lesson.
+ *  - **`list-visibility`** hits the server-side Visibility API (Search
+ *    Attributes), so it also does not need the worker.
+ *  - **Queries** (get-status, get-timeline), **updates** (update-address,
+ *    apply-promo — their validators and handlers run on the worker),
+ *    **starting** a workflow (nothing advances it without a poller), and
+ *    **observing the delivery child** (complete-delivery) are all
+ *    worker-served, so they gate on `workerOnline`.
  */
 export function canUseControl(control: ControlId, context: ControlContext): boolean {
 	const { phase, sandboxUsable, serverOnline, workerOnline } = context;
@@ -70,7 +79,7 @@ export function canUseControl(control: ControlId, context: ControlContext): bool
 
 	switch (control) {
 		case 'start-order':
-			return phase === 'idle';
+			return phase === 'idle' && workerOnline;
 		case 'accept-restaurant':
 		case 'reject-restaurant':
 			return phase === ORDER_STATUS.AwaitingRestaurant;
@@ -79,10 +88,11 @@ export function canUseControl(control: ControlId, context: ControlContext): bool
 		case 'update-address':
 		case 'apply-promo':
 			return (
-				phase === ORDER_STATUS.AwaitingRestaurant ||
-				phase === ORDER_STATUS.Preparing ||
-				phase === ORDER_STATUS.AwaitingCourier ||
-				phase === ORDER_STATUS.InDelivery
+				workerOnline &&
+				(phase === ORDER_STATUS.AwaitingRestaurant ||
+					phase === ORDER_STATUS.Preparing ||
+					phase === ORDER_STATUS.AwaitingCourier ||
+					phase === ORDER_STATUS.InDelivery)
 			);
 		case 'add-tip':
 			return (
@@ -96,6 +106,7 @@ export function canUseControl(control: ControlId, context: ControlContext): bool
 			return phase === ORDER_STATUS.InDelivery && workerOnline;
 		case 'query-status':
 		case 'query-timeline':
+			return phase !== 'idle' && workerOnline;
 		case 'list-visibility':
 			return phase !== 'idle';
 		case 'kill-worker':

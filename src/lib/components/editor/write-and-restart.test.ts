@@ -32,6 +32,7 @@ describe('writeAndRestart', () => {
 			exec: vi.fn(),
 			terminate: vi.fn(),
 			killWorker: vi.fn(),
+			processLiveness: vi.fn(() => null),
 			writeFile: vi.fn(async () => {
 				invocationOrder.push('writeFile');
 			}),
@@ -56,6 +57,7 @@ describe('writeAndRestart', () => {
 			exec: vi.fn(),
 			terminate: vi.fn(),
 			killWorker: vi.fn(),
+			processLiveness: vi.fn(() => null),
 			writeFile: vi.fn(async () => {}),
 			restartWorker: vi.fn(async (): Promise<WorkerStatus> => ({ ok: true, phase: 'ready' }))
 		};
@@ -78,6 +80,7 @@ describe('writeAndRestart', () => {
 			exec: vi.fn(),
 			terminate: vi.fn(),
 			killWorker: vi.fn(),
+			processLiveness: vi.fn(() => null),
 			writeFile: vi.fn(async () => {}),
 			restartWorker: vi.fn(async (): Promise<WorkerStatus> => ({ ok: true, phase: 'ready' }))
 		};
@@ -99,6 +102,7 @@ describe('writeAndRestart', () => {
 			exec: vi.fn(),
 			terminate: vi.fn(),
 			killWorker: vi.fn(),
+			processLiveness: vi.fn(() => null),
 			writeFile: vi.fn(async () => {}),
 			restartWorker: vi.fn(async (): Promise<WorkerStatus> => expectedStatus)
 		};
@@ -121,6 +125,7 @@ describe('writeAndRestart', () => {
 			exec: vi.fn(),
 			terminate: vi.fn(),
 			killWorker: vi.fn(),
+			processLiveness: vi.fn(() => null),
 			writeFile: vi.fn(async () => {
 				throw new Error('E2B write failed');
 			}),

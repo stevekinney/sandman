@@ -99,10 +99,12 @@ describe('canUseControl', () => {
 		).toBe(false);
 	});
 
-	it('only allows start-order while idle', () => {
+	it('only allows start-order while idle and a worker is live', () => {
 		expect(canUseControl('start-order', context())).toBe(true);
 		expect(canUseControl('start-order', context({ phase: ORDER_STATUS.Preparing }))).toBe(false);
 		expect(canUseControl('start-order', context({ phase: ORDER_STATUS.Delivered }))).toBe(false);
+		// A fresh workflow needs a worker to advance it, so idle-but-worker-down is gated.
+		expect(canUseControl('start-order', context({ workerOnline: false }))).toBe(false);
 	});
 
 	it('gates lifecycle signals to their phases', () => {
@@ -130,7 +132,7 @@ describe('canUseControl', () => {
 		).toBe(true);
 	});
 
-	it('requires a live worker only for complete-delivery and kill-worker', () => {
+	it('gates worker-served controls (queries, updates, delivery, kill) on a live worker', () => {
 		expect(
 			canUseControl(
 				'complete-delivery',
@@ -144,14 +146,44 @@ describe('canUseControl', () => {
 			canUseControl('kill-worker', context({ phase: ORDER_STATUS.Preparing, workerOnline: false }))
 		).toBe(false);
 		expect(canUseControl('kill-worker', context({ phase: ORDER_STATUS.Preparing }))).toBe(true);
+		// Queries and updates are served/validated by the worker, so they gate too.
+		expect(
+			canUseControl('query-status', context({ phase: ORDER_STATUS.Preparing, workerOnline: false }))
+		).toBe(false);
+		expect(
+			canUseControl(
+				'query-timeline',
+				context({ phase: ORDER_STATUS.Preparing, workerOnline: false })
+			)
+		).toBe(false);
+		expect(
+			canUseControl(
+				'update-address',
+				context({ phase: ORDER_STATUS.InDelivery, workerOnline: false })
+			)
+		).toBe(false);
+		expect(
+			canUseControl('apply-promo', context({ phase: ORDER_STATUS.Preparing, workerOnline: false }))
+		).toBe(false);
 	});
 
-	it('allows queries and visibility for any started run', () => {
+	it('keeps server-side visibility available without a worker, unlike worker-served queries', () => {
 		for (const phase of [ORDER_STATUS.Created, ORDER_STATUS.Delivered] as SessionPhase[]) {
 			expect(canUseControl('query-status', context({ phase }))).toBe(true);
 			expect(canUseControl('list-visibility', context({ phase }))).toBe(true);
 		}
 		expect(canUseControl('query-status', context())).toBe(false);
+		// Visibility hits the server-side Search Attribute index, so it survives a worker outage
+		// while the worker-served query does not.
+		expect(
+			canUseControl(
+				'list-visibility',
+				context({ phase: ORDER_STATUS.Preparing, workerOnline: false })
+			)
+		).toBe(true);
+		expect(
+			canUseControl('query-status', context({ phase: ORDER_STATUS.Preparing, workerOnline: false }))
+		).toBe(false);
 	});
 
 	it('allows cancel only while the run is active', () => {

@@ -15,6 +15,7 @@
 	 * while the sandbox is provisioning or unusable.
 	 */
 	import type { PageData } from './$types';
+	import type { ProcessLiveness } from '$lib/contracts/sandbox';
 	import Alert from '@lostgradient/cinder/alert';
 	import Button from '@lostgradient/cinder/button';
 	import StatusDot from '@lostgradient/cinder/status-dot';
@@ -124,11 +125,18 @@
 				const payload = (await response.json()) as {
 					status: string;
 					errorMessage: string | null;
+					processes?: ProcessLiveness | null;
 				};
 				if (!cancelled) {
 					sandboxStatus = payload.status;
 					sandboxStatusError = payload.errorMessage;
 					activeSession.sandboxUsable = payload.status === 'ready';
+					// Backend process liveness is authoritative; reconcile so the
+					// topology survives reloads and editor save-restarts. Absent or
+					// `null` means "unknown" (handle gone) — leave the current value.
+					if (payload.processes) {
+						activeSession.reconcileLiveness(payload.processes);
+					}
 				}
 			} catch (err) {
 				if (!cancelled) sandboxStatusError = err instanceof Error ? err.message : String(err);

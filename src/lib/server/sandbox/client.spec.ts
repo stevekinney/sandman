@@ -617,6 +617,47 @@ describe('restartWorker()', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: processLiveness
+// ---------------------------------------------------------------------------
+
+describe('processLiveness()', () => {
+	it('reports both online after bootstrap', async () => {
+		const { client } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		expect(client.processLiveness(handle)).toEqual({ serverOnline: true, workerOnline: true });
+	});
+
+	it('reflects a killed worker while the server stays up', async () => {
+		const { client } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.killWorker(handle);
+		expect(client.processLiveness(handle)).toEqual({ serverOnline: true, workerOnline: false });
+	});
+
+	it('reports the worker back online after a restart (e.g. an editor save)', async () => {
+		const { client } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.killWorker(handle);
+		await client.restartWorker(handle);
+		expect(client.processLiveness(handle)).toEqual({ serverOnline: true, workerOnline: true });
+	});
+
+	it('reports both offline after stopServer', async () => {
+		const { client } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.stopServer(handle);
+		expect(client.processLiveness(handle)).toEqual({ serverOnline: false, workerOnline: false });
+	});
+
+	it('returns null for a terminated sandbox instead of throwing', async () => {
+		const { client } = makeClient();
+		const handle = await provisionAndBootstrap(client);
+		await client.terminate(handle);
+		expect(client.processLiveness(handle)).toBeNull();
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Tests: stopServer
 // ---------------------------------------------------------------------------
 

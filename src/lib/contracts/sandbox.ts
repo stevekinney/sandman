@@ -52,6 +52,14 @@ export type WorkerStatus = {
 	stderr?: string;
 };
 
+/** Liveness of the in-sandbox Temporal server and worker processes. */
+export type ProcessLiveness = {
+	/** The Temporal dev server process is running (not stopped). */
+	serverOnline: boolean;
+	/** The Temporal worker process is running (not killed). */
+	workerOnline: boolean;
+};
+
 /**
  * Primary interface for all sandbox lifecycle operations.
  * Implemented by Track A; consumed by Tracks B, C, and the control plane.
@@ -100,6 +108,20 @@ export type SandboxClient = {
 	 * its connection died with the previous server process.
 	 */
 	startServer(handle: SandboxHandle): Promise<void>;
+
+	/**
+	 * Best-effort liveness of the Temporal server and worker processes, derived
+	 * from the PIDs this client is tracking in memory. "Online" means "we
+	 * started the process and have not killed/stopped it" — a process that
+	 * started and then crashed on its own still has a tracked PID, so this can
+	 * briefly over-report until the next explicit kill/restart reconciles it.
+	 *
+	 * This is the authoritative source the UI reconciles against so process
+	 * state stays correct across page reloads and editor save-restarts (the
+	 * client state lives in the server process, which outlives a browser
+	 * reload). Returns `null` when the sandbox is unknown or already terminated.
+	 */
+	processLiveness(handle: SandboxHandle): ProcessLiveness | null;
 
 	/**
 	 * Runs a shell command inside the sandbox and returns its output.

@@ -257,4 +257,52 @@ describe('SessionState', () => {
 		expect(session.serverPending).toBeNull();
 		expect(session.canDo('start-order')).toBe(false);
 	});
+
+	describe('reconcileLiveness', () => {
+		it('adopts backend liveness while idle', () => {
+			const { session } = makeSession();
+			session.reconcileLiveness({ serverOnline: false, workerOnline: false });
+			expect(session.serverOnline).toBe(false);
+			expect(session.workerOnline).toBe(false);
+
+			session.reconcileLiveness({ serverOnline: true, workerOnline: true });
+			expect(session.serverOnline).toBe(true);
+			expect(session.workerOnline).toBe(true);
+		});
+
+		it('recovers worker liveness a backend save-restart applied out of band', () => {
+			const { session } = makeSession();
+			// Worker shown down (killed earlier); an editor save restarted it on the
+			// backend via the files route, which never touches this client.
+			session.workerOnline = false;
+			session.reconcileLiveness({ serverOnline: true, workerOnline: true });
+			expect(session.workerOnline).toBe(true);
+		});
+
+		it('skips reconciliation while an action is in flight so it cannot flicker', () => {
+			const { session } = makeSession();
+			session.workerOnline = false;
+
+			// A poll that raced an in-flight control/server op must not overwrite
+			// the optimistic state.
+			session.pendingControl = 'kill-worker';
+			session.reconcileLiveness({ serverOnline: true, workerOnline: true });
+			expect(session.workerOnline).toBe(false);
+
+			session.pendingControl = null;
+			session.workerRestarting = true;
+			session.reconcileLiveness({ serverOnline: true, workerOnline: true });
+			expect(session.workerOnline).toBe(false);
+
+			session.workerRestarting = false;
+			session.serverPending = 'starting';
+			session.reconcileLiveness({ serverOnline: true, workerOnline: true });
+			expect(session.workerOnline).toBe(false);
+
+			// Once nothing is in flight, the next poll reconciles.
+			session.serverPending = null;
+			session.reconcileLiveness({ serverOnline: true, workerOnline: true });
+			expect(session.workerOnline).toBe(true);
+		});
+	});
 });

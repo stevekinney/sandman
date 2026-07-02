@@ -8,6 +8,7 @@
  * (wired to the page's toast region).
  */
 import type { ControlId, OrderInput, TimelineEntry } from '$lib/contracts/workflow-api';
+import type { ProcessLiveness } from '$lib/contracts/sandbox';
 import type { WorkflowEvent } from '$lib/contracts/events';
 import type { TourState } from '$lib/components/explainer';
 import type { TemporalController, WorkflowRun } from './types.ts';
@@ -173,6 +174,27 @@ export class SessionState {
 		this.#lastFedTimelineIndex = -1;
 		this.#nextSyntheticSequence = SYNTHETIC_SEQUENCE_START;
 		this.tour.reset();
+	}
+
+	/**
+	 * Reconcile process liveness from the backend status poll — the authoritative
+	 * source for whether the Temporal server and worker are actually running.
+	 *
+	 * This keeps the topology honest across cases the client can't observe
+	 * locally: a page reload (a fresh `SessionState` would otherwise default both
+	 * flags to `true`) and an editor save that hot-restarts the worker through
+	 * the files route (which never goes through this client).
+	 *
+	 * Skipped while an operation is in flight so a poll that raced an in-progress
+	 * kill/restart/stop/start can't briefly overwrite the optimistic update and
+	 * flicker the topology.
+	 */
+	reconcileLiveness(liveness: ProcessLiveness): void {
+		if (this.pendingControl !== null || this.serverPending !== null || this.workerRestarting) {
+			return;
+		}
+		this.serverOnline = liveness.serverOnline;
+		this.workerOnline = liveness.workerOnline;
 	}
 
 	// -- actions --------------------------------------------------------------

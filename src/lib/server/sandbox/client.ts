@@ -11,6 +11,7 @@ import type {
 	SandboxClient,
 	SandboxHandle,
 	WorkerStatus,
+	ProcessLiveness,
 	ExecResult
 } from '$lib/contracts/sandbox';
 import { SANDBOX_STATUS } from '$lib/contracts/sandbox';
@@ -564,6 +565,21 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		return state;
 	}
 
+	/**
+	 * Best-effort process liveness from the tracked PIDs. Reads the state map
+	 * directly (not `getState`, which throws) so it can return `null` for an
+	 * unknown/terminated sandbox instead of throwing — it's polled by /status
+	 * and must never take the status endpoint down.
+	 */
+	function processLiveness(handle: SandboxHandle): ProcessLiveness | null {
+		const state = sandboxes.get(handle.id);
+		if (!state || state.terminated) return null;
+		return {
+			serverOnline: state.temporalPid !== undefined,
+			workerOnline: state.workerPid !== undefined
+		};
+	}
+
 	return {
 		provision,
 		bootstrap,
@@ -571,6 +587,7 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		killWorker,
 		stopServer,
 		startServer,
+		processLiveness,
 		exec,
 		writeFile,
 		terminate
