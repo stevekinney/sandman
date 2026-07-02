@@ -159,6 +159,20 @@ describe('SessionState', () => {
 		expect(notifications.at(-1)?.message).toContain('$20.19');
 	});
 
+	it('listVisibility filters by the current order status and search attributes', async () => {
+		const { controller, session } = makeSession();
+		await session.placeOrder();
+		// The latest timeline entry supplies the current order status filter.
+		session.ingestTimeline([timelineEntry(0, ORDER_STATUS.Preparing)]);
+
+		await session.listVisibility();
+
+		const call = controller.visibilityCalls.at(-1);
+		expect(call?.filter.status).toBe(ORDER_STATUS.Preparing);
+		expect(call?.filter.customerTier).toBe(session.activeOrder?.customerTier);
+		expect(call?.filter.restaurantId).toBe(session.activeOrder?.restaurantId);
+	});
+
 	it('kill and restart round-trip the worker with recovery events', async () => {
 		const { controller, tour, session } = makeSession();
 		await session.placeOrder();
@@ -210,10 +224,13 @@ describe('SessionState', () => {
 		expect(notifications.at(-1)).toEqual({ message: 'temporal exploded', variant: 'danger' });
 	});
 
-	it('reset clears the run, events, and tour progress', async () => {
+	it('reset clears the run and restores server/worker topology', async () => {
 		const { tour, session } = makeSession();
 		await session.placeOrder();
 		expect(session.run).not.toBeNull();
+		// Stop the server so reset has stale topology to restore.
+		await session.stopServer();
+		expect(session.serverOnline).toBe(false);
 
 		session.reset();
 		expect(session.run).toBeNull();
@@ -221,5 +238,8 @@ describe('SessionState', () => {
 		expect(session.timelineEntries).toEqual([]);
 		expect(session.phase).toBe('idle');
 		expect(tour.currentStepIndex).toBe(0);
+		// Regression: reset must restore the server topology, not leave it stopped.
+		expect(session.serverOnline).toBe(true);
+		expect(session.serverPending).toBeNull();
 	});
 });

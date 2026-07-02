@@ -160,6 +160,8 @@ export class SessionState {
 		this.workflowEvents = [];
 		this.workerOnline = true;
 		this.workerRestarting = false;
+		this.serverOnline = true;
+		this.serverPending = null;
 		this.pendingControl = null;
 		this.flows = [];
 		this.#lastFedTimelineIndex = -1;
@@ -279,6 +281,7 @@ export class SessionState {
 		if (order === null) return;
 		await this.#perform('list-visibility', 'cs', async () => {
 			const workflows = await this.#controller.visibility({
+				status: this.timelineEntries.at(-1)?.status,
 				customerTier: order.customerTier,
 				restaurantId: order.restaurantId
 			});

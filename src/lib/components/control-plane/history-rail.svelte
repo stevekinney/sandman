@@ -12,7 +12,7 @@
 	import SegmentedControl from '@lostgradient/cinder/segmented-control';
 	import '@lostgradient/cinder/empty-state/styles';
 	import '@lostgradient/cinder/segmented-control/styles';
-	import type { EventStreamState } from '@lostgradient/cinder';
+	import type { EventStreamState } from '@lostgradient/cinder/event-stream-viewer';
 	import EventRail from './event-rail.svelte';
 	import OrderTimeline from './order-timeline.svelte';
 	import type { SessionState } from './session-state.svelte.ts';

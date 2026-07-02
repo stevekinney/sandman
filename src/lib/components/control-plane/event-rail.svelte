@@ -9,9 +9,8 @@
 	 * events use a high sequence range), so gaps carry no meaning here.
 	 */
 	import EventStreamViewer from '@lostgradient/cinder/event-stream-viewer';
-	import type { StreamEvent } from '@lostgradient/cinder';
+	import type { StreamEvent, EventStreamState } from '@lostgradient/cinder/event-stream-viewer';
 	import type { WorkflowEvent } from '$lib/contracts/events';
-	import type { EventStreamState } from '@lostgradient/cinder';
 
 	let {
 		events = [],
