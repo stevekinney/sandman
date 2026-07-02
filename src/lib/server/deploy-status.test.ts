@@ -6,7 +6,9 @@ describe('deploy status helpers', () => {
 		expect(buildNextCommands(true)).toContain(
 			'MIGRATION_DATABASE_URL="<direct-neon-url>" bun run db:migrate'
 		);
+		expect(buildNextCommands(true)).toContain('flyctl deploy . --config deployment/fly/web.toml');
 		expect(buildNextCommands(true)).not.toContain('bun run db:migrate');
+		expect(buildNextCommands(true).join('\n')).not.toContain('--dockerfile');
 	});
 
 	it('reports missing GitHub Actions names without requiring values', () => {

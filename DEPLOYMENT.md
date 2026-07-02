@@ -170,7 +170,7 @@ MIGRATION_DATABASE_URL="<direct-neon-url>" bun run db:migrate
 Deploy:
 
 ```sh
-flyctl deploy . --config deployment/fly/web.toml --dockerfile deployment/containers/web.Dockerfile
+flyctl deploy . --config deployment/fly/web.toml
 ```
 
 ## Health Gates

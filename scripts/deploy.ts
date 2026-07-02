@@ -59,9 +59,7 @@ export function buildNextCommands(appExists: boolean): string[] {
 	if (!appExists) commands.push(`flyctl apps create ${APP_NAME}`);
 	commands.push('MIGRATION_DATABASE_URL="<direct-neon-url>" bun run db:migrate');
 	commands.push('flyctl config validate --config deployment/fly/web.toml');
-	commands.push(
-		'flyctl deploy . --config deployment/fly/web.toml --dockerfile deployment/containers/web.Dockerfile'
-	);
+	commands.push('flyctl deploy . --config deployment/fly/web.toml');
 	return commands;
 }
 

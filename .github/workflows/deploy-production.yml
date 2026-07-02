@@ -142,7 +142,7 @@ jobs:
         run: bun run db:migrate
 
       - name: Deploy web
-        run: flyctl deploy . --config deployment/fly/web.toml --dockerfile deployment/containers/web.Dockerfile
+        run: flyctl deploy . --config deployment/fly/web.toml
 
       - name: Verify public health check
         shell: bash
