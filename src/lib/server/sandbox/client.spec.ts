@@ -763,6 +763,61 @@ describe('startServer()', () => {
 		) as Extract<CallRecord, { method: 'commands.start' }> | undefined;
 		expect(temporalCall?.cmd).toContain('--db-filename /tmp/sandman.db');
 	});
+
+	it('throws when the Temporal server never becomes ready after restart', async () => {
+		// Public host keeps serving the closed-port placeholder, so readiness
+		// never flips — startServer must surface that instead of reporting success.
+		const { adapter } = createMockAdapter('sbx-start-not-ready');
+		const client = createSandboxClient({
+			adapter,
+			publicUiFetch: async () =>
+				new Response('Closed Port Error: Connection refused on port 8233', { status: 200 }),
+			templateFiles: { '/app/worker.ts': '// placeholder worker' },
+			maxReadinessRetries: 1,
+			readinessDelayMs: 0
+		});
+		const handle = await client.provision();
+		await client.bootstrap(handle);
+
+		await expect(client.startServer(handle)).rejects.toThrow(/did not become ready/);
+	});
+
+	it('throws with the worker stderr when the worker fails to restart during recovery', async () => {
+		// The server comes back, but the worker restart fails (e.g. a compile
+		// error in saved code). startServer must not report the worker recovered.
+		const { adapter } = createMockAdapter('sbx-worker-fail');
+		let failWorkerStart = false;
+		const client = createSandboxClient({
+			adapter: {
+				async create(opts) {
+					const session = await adapter.create(opts);
+					return {
+						...session,
+						commands: {
+							...session.commands,
+							async start(cmd, startOpts) {
+								if (failWorkerStart && cmd.includes('worker') && !cmd.includes('temporal server')) {
+									throw new Error('worker.ts(3,1): compile error');
+								}
+								return session.commands.start(cmd, startOpts);
+							}
+						}
+					};
+				}
+			},
+			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
+			templateFiles: { '/app/worker.ts': '// placeholder worker' },
+			maxReadinessRetries: 1,
+			readinessDelayMs: 0
+		});
+		const handle = await client.provision();
+		await client.bootstrap(handle);
+		await client.stopServer(handle);
+		// Only fail the worker restart that happens inside startServer.
+		failWorkerStart = true;
+
+		await expect(client.startServer(handle)).rejects.toThrow(/compile error/);
+	});
 });
 
 // ---------------------------------------------------------------------------

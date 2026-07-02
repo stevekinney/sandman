@@ -224,11 +224,11 @@ describe('SessionState', () => {
 		expect(notifications.at(-1)).toEqual({ message: 'temporal exploded', variant: 'danger' });
 	});
 
-	it('reset clears the run and restores server/worker topology', async () => {
+	it('reset clears the run and tour without fabricating backend liveness', async () => {
 		const { tour, session } = makeSession();
 		await session.placeOrder();
 		expect(session.run).not.toBeNull();
-		// Stop the server so reset has stale topology to restore.
+		// Stop the server: the backend process is now genuinely down.
 		await session.stopServer();
 		expect(session.serverOnline).toBe(false);
 
@@ -238,8 +238,11 @@ describe('SessionState', () => {
 		expect(session.timelineEntries).toEqual([]);
 		expect(session.phase).toBe('idle');
 		expect(tour.currentStepIndex).toBe(0);
-		// Regression: reset must restore the server topology, not leave it stopped.
-		expect(session.serverOnline).toBe(true);
+		// Regression: reset is client-only, so it must NOT claim the stopped
+		// server came back — the topology keeps reflecting the real backend and
+		// start-order stays gated until the learner restarts it.
+		expect(session.serverOnline).toBe(false);
 		expect(session.serverPending).toBeNull();
+		expect(session.canDo('start-order')).toBe(false);
 	});
 });

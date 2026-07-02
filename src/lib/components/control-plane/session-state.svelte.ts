@@ -152,15 +152,21 @@ export class SessionState {
 		}
 	}
 
-	/** Reset the whole demo: run state, event feed, and tour progress. */
+	/**
+	 * Reset the demo run, event feed, and tour progress.
+	 *
+	 * Reset is a client-only action — it never restarts the sandbox — so it must
+	 * not fabricate process liveness. `workerOnline`/`serverOnline` keep
+	 * reflecting the real backend: a killed worker or stopped server stays shown
+	 * as down (and its control stays gated) until the learner actually restarts
+	 * it, rather than the topology lying that everything recovered.
+	 */
 	reset(): void {
 		this.run = null;
 		this.activeOrder = null;
 		this.timelineEntries = [];
 		this.workflowEvents = [];
-		this.workerOnline = true;
 		this.workerRestarting = false;
-		this.serverOnline = true;
 		this.serverPending = null;
 		this.pendingControl = null;
 		this.flows = [];

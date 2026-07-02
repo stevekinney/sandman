@@ -199,7 +199,9 @@ const EXECUTION_ANCHORS: Partial<Record<OrderStatus, { anchor: string; label: st
 		label: 'assigning and dispatching the courier — activities'
 	},
 	[ORDER_STATUS.InDelivery]: {
-		anchor: 'await startChild<typeof deliveryWorkflow>',
+		// Anchor on `await child.result()`, where the parent is actually parked
+		// for most of the phase — not the `startChild` call that returns at once.
+		anchor: 'await child.result();',
 		label: 'delivery running in a child workflow — the parent awaits its result'
 	},
 	[ORDER_STATUS.Delivered]: {

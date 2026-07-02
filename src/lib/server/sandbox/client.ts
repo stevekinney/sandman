@@ -493,17 +493,27 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		});
 		state.temporalPid = temporalHandle.pid;
 
-		await waitForTemporalReady(
+		const readiness = await waitForTemporalReady(
 			session,
 			handle,
 			publicUiFetch,
 			maxReadinessRetries,
 			readinessDelayMs
 		);
+		// Mirror bootstrap: a server that never becomes reachable is a failure,
+		// not a silent success — otherwise the UI marks the server recovered
+		// while gRPC/Web UI are still down and later controls fail.
+		if (!readiness.ready) {
+			throw new Error('Temporal server did not become ready after restart.');
+		}
 
 		// The worker's connection died with the old server process; restart it
-		// against the new one.
-		await restartWorker(handle);
+		// against the new one. Surface a failed restart (e.g. a compile error in
+		// saved code) instead of reporting the worker recovered when it is not.
+		const workerStatus = await restartWorker(handle);
+		if (!workerStatus.ok) {
+			throw new Error(workerStatus.stderr ?? 'Worker failed to restart after server recovery.');
+		}
 	}
 
 	// ------------------------------------------------------------------
