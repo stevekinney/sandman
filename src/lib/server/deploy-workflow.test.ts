@@ -11,6 +11,8 @@ describe('production deployment workflow', () => {
 		expect(packageManifest.devDependencies).toHaveProperty('@e2b/cli');
 		expect(deploymentWorkflow).toContain('bun e2b template list --format json');
 		expect(deploymentWorkflow).toContain('bun e2b template publish sandman --yes');
+		expect(deploymentWorkflow).toContain('Bun.file(process.argv[1]).json()');
 		expect(deploymentWorkflow).not.toContain('bunx e2b');
+		expect(deploymentWorkflow).not.toContain('Bun.file(process.argv[2])');
 	});
 });

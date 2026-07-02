@@ -117,7 +117,7 @@ jobs:
           fi
           "${e2b_command[@]}" > "$RUNNER_TEMP/e2b-templates.json"
           template_id="$(bun -e '
-            const templates = await Bun.file(process.argv[2]).json();
+            const templates = await Bun.file(process.argv[1]).json();
             const values = Array.isArray(templates) ? templates : Object.values(templates).flat();
             const matches = (template) =>
               template?.template_name === "sandman" ||
