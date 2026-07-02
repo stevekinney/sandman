@@ -75,6 +75,11 @@ export type WorkerSupervisorOptions = {
 	onCrash?: (crash: WorkerCrash) => void;
 };
 
+/** Single-quote a value for safe interpolation into a POSIX shell command. */
+function shellQuote(value: string): string {
+	return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
 const DEFAULT_MAX_RESTARTS = 3;
 const DEFAULT_RESTART_DELAY_MS = 2_000;
 /**
@@ -150,24 +155,20 @@ export class WorkerSupervisor {
 
 	/** Worker command with stdout+stderr appended to the log file. */
 	get #runCommand(): string {
-		return `${this.#command} >> ${this.#logPath} 2>&1`;
+		return `${this.#command} >> ${shellQuote(this.#logPath)} 2>&1`;
 	}
 
 	/**
-	 * Starts the worker process and begins watching it for crashes. Also used by
-	 * the auto-restart path. Throws if the process fails to spawn (e.g. a compile
-	 * error surfaced synchronously), leaving the supervisor stopped.
+	 * Starts the worker process and begins watching it for crashes. Propagates a
+	 * spawn failure (e.g. a compile error surfaced synchronously) so explicit
+	 * callers can surface a compile error; the auto-restart path handles spawn
+	 * failures itself.
 	 */
 	async start(): Promise<void> {
 		if (this.#disposed) return;
 		this.#clearPending();
 		const generation = ++this.#generation;
-		const handle = await this.#session.commands.start(this.#runCommand, {
-			timeoutMs: this.#commandTimeoutMs
-		});
-		this.#pid = handle.pid;
-		this.#online = true;
-		this.#watch(handle, generation);
+		await this.#spawn(generation, true);
 	}
 
 	/**
@@ -213,12 +214,54 @@ export class WorkerSupervisor {
 		this.#cancelPending = undefined;
 	}
 
-	#watch(handle: SandboxCommandHandle, generation: number): void {
-		handle
-			.wait()
-			.then((result) => this.#onExit(result.exitCode, generation))
-			// A rejected wait() (e.g. the process was killed) is a non-clean exit.
-			.catch(() => this.#onExit(1, generation));
+	/**
+	 * Spawns the worker process for the given generation and watches it. When
+	 * `propagate` is true a spawn failure is rethrown (explicit start/restart);
+	 * otherwise it is treated as a crash and retried within budget (auto-restart).
+	 */
+	async #spawn(generation: number, propagate: boolean): Promise<void> {
+		let handle: SandboxCommandHandle;
+		try {
+			handle = await this.#session.commands.start(this.#runCommand, {
+				timeoutMs: this.#commandTimeoutMs
+			});
+		} catch (err) {
+			if (propagate) throw err;
+			this.#handleCrash(generation, 1, err instanceof Error ? err.message : String(err));
+			return;
+		}
+
+		// A competing stop()/dispose()/newer start() moved on while the spawn was
+		// in flight — this handle is already stale. Kill it so we neither clobber
+		// the current worker nor leak a process.
+		if (this.#disposed || generation !== this.#generation) {
+			void this.#session.commands.kill(handle.pid).catch(() => {});
+			return;
+		}
+
+		this.#pid = handle.pid;
+		this.#online = true;
+		void this.#observeExit(handle, generation);
+	}
+
+	/**
+	 * Awaits the process exit and routes it to {@link #onExit}. Guaranteed not to
+	 * reject: a rejected wait() (transport error or a killed process) is treated
+	 * as a non-clean exit, and any error from the exit handling is swallowed so a
+	 * misbehaving crash reporter can never surface as an unhandled rejection.
+	 */
+	async #observeExit(handle: SandboxCommandHandle, generation: number): Promise<void> {
+		let exitCode: number;
+		try {
+			exitCode = (await handle.wait()).exitCode;
+		} catch {
+			exitCode = 1;
+		}
+		try {
+			await this.#onExit(exitCode, generation);
+		} catch {
+			// #onExit must not throw; this is a last-resort safety net.
+		}
 	}
 
 	async #onExit(exitCode: number, generation: number): Promise<void> {
@@ -233,26 +276,49 @@ export class WorkerSupervisor {
 		if (exitCode === 0) return;
 
 		const log = await this.#readLogTail();
+		// The tail read is async; a manual stop()/restart()/dispose() may have
+		// bumped the generation meanwhile. Re-check before reporting the crash or
+		// scheduling a restart so we neither consume budget nor clobber a newer
+		// worker with a stale handler.
+		if (this.#disposed || generation !== this.#generation) return;
+
+		this.#handleCrash(generation, exitCode, log);
+	}
+
+	/**
+	 * Records a crash, reports it, and schedules an auto-restart when budget
+	 * remains. Callers guarantee the generation is current.
+	 */
+	#handleCrash(generation: number, exitCode: number, log: string): void {
+		if (this.#disposed || generation !== this.#generation) return;
+		this.#online = false;
+		this.#pid = undefined;
+
 		const crash: WorkerCrash = { exitCode, at: Date.now(), log };
 		this.#lastCrash = crash;
-		this.#onCrash?.(crash);
+		try {
+			this.#onCrash?.(crash);
+		} catch {
+			// A misbehaving reporter must not break supervision.
+		}
 
 		// Runaway crash-loop backstop: give up loudly (the crash was reported).
 		if (this.#restarts >= this.#maxRestarts) return;
 		this.#restarts += 1;
 		this.#cancelPending = this.#schedule(() => {
-			void this.start().catch(() => {
-				// A failed auto-restart spawn is itself an exit we will observe on
-				// the next handle; nothing to do here but avoid an unhandled reject.
-			});
+			if (this.#disposed) return;
+			this.#clearPending();
+			const nextGeneration = ++this.#generation;
+			void this.#spawn(nextGeneration, false);
 		}, this.#restartDelayMs);
 	}
 
 	async #readLogTail(): Promise<string> {
 		try {
-			const result = await this.#session.commands.run(`tail -n 80 ${this.#logPath} 2>/dev/null`, {
-				timeoutMs: 10_000
-			});
+			const result = await this.#session.commands.run(
+				`tail -n 80 ${shellQuote(this.#logPath)} 2>/dev/null`,
+				{ timeoutMs: 10_000 }
+			);
 			return `${result.stdout}${result.stderr}`.trim();
 		} catch {
 			return '';

@@ -21,12 +21,20 @@ type FakeHandle = {
 	exit(code: number): void;
 };
 
-function createFakeSession(logTail = 'worker crash log') {
+function createFakeSession(logTail = 'worker crash log', options: { deferRun?: boolean } = {}) {
 	const startCommands: string[] = [];
 	const startTimeouts: Array<number | undefined> = [];
 	const runCommands: string[] = [];
 	const killedPids: number[] = [];
 	const handles: FakeHandle[] = [];
+	// When deferRun is set, each commands.run (the log tail) stays pending until
+	// the test calls resolveNextRun(), so a stop/restart can be interleaved.
+	const pendingRuns: Array<() => void> = [];
+	const resolveNextRun = (): void => pendingRuns.shift()?.();
+	let startShouldThrow: (() => boolean) | undefined;
+	const setStartThrows = (predicate: () => boolean): void => {
+		startShouldThrow = predicate;
+	};
 	let pidCounter = 1;
 
 	const session: E2bSandboxSession = {
@@ -36,9 +44,15 @@ function createFakeSession(logTail = 'worker crash log') {
 		commands: {
 			async run(cmd) {
 				runCommands.push(cmd);
+				if (options.deferRun) {
+					await new Promise<void>((resolve) => pendingRuns.push(resolve));
+				}
 				return { exitCode: 0, stdout: logTail, stderr: '' };
 			},
 			async start(cmd, opts) {
+				if (startShouldThrow?.()) {
+					throw new Error('worker.ts(3,1): spawn failure');
+				}
 				startCommands.push(cmd);
 				startTimeouts.push(opts?.timeoutMs);
 				const pid = pidCounter++;
@@ -72,7 +86,16 @@ function createFakeSession(logTail = 'worker crash log') {
 		}
 	};
 
-	return { session, startCommands, startTimeouts, runCommands, killedPids, handles };
+	return {
+		session,
+		startCommands,
+		startTimeouts,
+		runCommands,
+		killedPids,
+		handles,
+		resolveNextRun,
+		setStartThrows
+	};
 }
 
 /** A manual scheduler: captures the pending restart so a test can fire it. */
@@ -124,7 +147,7 @@ describe('WorkerSupervisor.start()', () => {
 		await supervisor.start();
 
 		expect(startCommands[0]).toBe(
-			'cd /app && node_modules/.bin/tsx worker.ts >> /app/worker.log 2>&1'
+			"cd /app && node_modules/.bin/tsx worker.ts >> '/app/worker.log' 2>&1"
 		);
 	});
 
@@ -187,6 +210,59 @@ describe('WorkerSupervisor crash recovery', () => {
 		await vi.waitFor(() => expect(supervisor.online).toBe(false));
 		expect(scheduler.hasPending()).toBe(false);
 		expect(onCrash).not.toHaveBeenCalled();
+		expect(startCommands).toHaveLength(1);
+	});
+
+	it('reports and retries when a scheduled auto-restart fails to spawn', async () => {
+		const { session, startCommands, handles, setStartThrows } = createFakeSession();
+		const scheduler = createManualScheduler();
+		const onCrash = vi.fn();
+		const supervisor = new WorkerSupervisor(
+			baseOptions(session, { schedule: scheduler.schedule, onCrash, maxRestarts: 3 })
+		);
+
+		await supervisor.start(); // handle 0
+		handles[0].exit(1); // crash → schedules restart
+		await vi.waitFor(() => expect(scheduler.hasPending()).toBe(true));
+		expect(onCrash).toHaveBeenCalledTimes(1);
+
+		// The scheduled restart's spawn throws: it must be reported as a crash and
+		// another restart scheduled (budget remains), not silently swallowed.
+		setStartThrows(() => true);
+		scheduler.fire();
+		await vi.waitFor(() => expect(onCrash).toHaveBeenCalledTimes(2));
+		expect(supervisor.online).toBe(false);
+		expect(scheduler.hasPending()).toBe(true);
+
+		// Recovery once spawning works again.
+		setStartThrows(() => false);
+		scheduler.fire();
+		await vi.waitFor(() => expect(supervisor.online).toBe(true));
+		expect(startCommands.length).toBeGreaterThanOrEqual(2);
+	});
+
+	it('does not restart or report a crash when stopped during the crash-log read', async () => {
+		const { session, startCommands, handles, resolveNextRun } = createFakeSession('log', {
+			deferRun: true
+		});
+		const scheduler = createManualScheduler();
+		const onCrash = vi.fn();
+		const supervisor = new WorkerSupervisor(
+			baseOptions(session, { schedule: scheduler.schedule, onCrash })
+		);
+
+		await supervisor.start(); // handle 0
+		handles[0].exit(1); // crash → onExit awaits the (deferred) log read
+		await vi.waitFor(() => expect(supervisor.online).toBe(false));
+
+		// While the log read is in flight, the operator restarts deliberately.
+		await supervisor.stop();
+		resolveNextRun(); // now let the stale log read resolve
+		await new Promise((resolve) => setTimeout(resolve, 0));
+
+		// The stale handler must not fire onCrash or schedule a restart.
+		expect(onCrash).not.toHaveBeenCalled();
+		expect(scheduler.hasPending()).toBe(false);
 		expect(startCommands).toHaveLength(1);
 	});
 

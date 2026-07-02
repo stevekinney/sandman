@@ -696,7 +696,7 @@ describe('worker supervision', () => {
 				!c.cmd.includes('temporal server')
 		) as Extract<CallRecord, { method: 'commands.start' }> | undefined;
 
-		expect(workerStart?.cmd).toContain('>> /app/worker.log 2>&1');
+		expect(workerStart?.cmd).toContain(">> '/app/worker.log' 2>&1");
 	});
 
 	it('fails loudly when no sandbox-template files are available (image missing them)', async () => {
