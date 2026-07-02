@@ -26,6 +26,7 @@
 		"docs:demo:check": "bun src/lib/content/docs-generator.ts --check"
 	},
 	"devDependencies": {
+		"@e2b/cli": "^2.13.0",
 		"@eslint/js": "^10.0.1",
 		"@playwright/test": "^1.60.0",
 		"@sveltejs/adapter-auto": "next",

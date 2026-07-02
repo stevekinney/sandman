@@ -92,21 +92,21 @@ for the account or team that owns Sandman.
 Create the template if it does not exist:
 
 ```sh
-bunx e2b template create sandman --path . --dockerfile e2b.Dockerfile
+bun e2b template create sandman --path . --dockerfile e2b.Dockerfile
 ```
 
 Publish updates after changing `e2b.Dockerfile` or sandbox dependencies:
 
 ```sh
-bunx e2b template publish sandman --yes
+bun e2b template publish sandman --yes
 ```
 
 If the template belongs to a team, pass the configured team ID when publishing
 or listing:
 
 ```sh
-bunx e2b template publish sandman --yes --team "<team-id>"
-bunx e2b template list --team "<team-id>" --format json
+bun e2b template publish sandman --yes --team "<team-id>"
+bun e2b template list --team "<team-id>" --format json
 ```
 
 Set the resulting template ID in Fly:

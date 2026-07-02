@@ -28,6 +28,7 @@ test-results
 # Codex local artifacts
 .codex/audits/
 .codex/environments/
+.claude/worktrees/
 
 # SQLite
 *.db

@@ -101,7 +101,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          e2b_command=(bunx e2b template publish sandman --yes)
+          e2b_command=(bun e2b template publish sandman --yes)
           if [ -n "${E2B_TEAM_ID:-}" ]; then
             e2b_command+=(--team "$E2B_TEAM_ID")
           fi
@@ -111,7 +111,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bunx e2b template list --format json > "$RUNNER_TEMP/e2b-templates.json"
+          e2b_command=(bun e2b template list --format json)
+          if [ -n "${E2B_TEAM_ID:-}" ]; then
+            e2b_command+=(--team "$E2B_TEAM_ID")
+          fi
+          "${e2b_command[@]}" > "$RUNNER_TEMP/e2b-templates.json"
           template_id="$(bun -e '
             const templates = await Bun.file(process.argv[2]).json();
             const values = Array.isArray(templates) ? templates : Object.values(templates).flat();

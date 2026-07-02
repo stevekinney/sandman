@@ -86,33 +86,33 @@ boot — a per-boot network dependency. Baking them into a prebuilt E2B template
 removes those installs, which makes bootstrap more reliable (and usually faster,
 though boot time is network-variable, so treat reliability as the main win).
 
-**Requirements:** `e2b` CLI and an authenticated E2B account with a valid
-`E2B_API_KEY`.
+**Requirements:** the `@e2b/cli` package installed by this repository and an
+authenticated E2B account with a valid `E2B_API_KEY`.
 
 Create the template definition from the repo root:
 
 ```sh
-bunx e2b template create sandman --path . --dockerfile e2b.Dockerfile
+bun e2b template create sandman --path . --dockerfile e2b.Dockerfile
 ```
 
 If the template already exists and you changed `e2b.Dockerfile`, publish the
 updated template:
 
 ```sh
-bunx e2b template publish sandman --yes
+bun e2b template publish sandman --yes
 ```
 
 If Sandman belongs to an E2B team, pass the team ID from `e2b.toml` when
 listing or publishing:
 
 ```sh
-bunx e2b template publish sandman --yes --team "<team-id>"
+bun e2b template publish sandman --yes --team "<team-id>"
 ```
 
 List templates and copy the `sandman` template ID:
 
 ```sh
-bunx e2b template list --format json
+bun e2b template list --format json
 ```
 
 Add the ID to `.env` locally and to Fly for production:

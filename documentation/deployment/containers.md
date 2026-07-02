@@ -100,20 +100,20 @@ on most shells.
 Create the template if it does not exist:
 
 ```sh
-bunx e2b template create sandman --path . --dockerfile e2b.Dockerfile
+bun e2b template create sandman --path . --dockerfile e2b.Dockerfile
 ```
 
 Publish updates:
 
 ```sh
-bunx e2b template publish sandman --yes
+bun e2b template publish sandman --yes
 ```
 
 For team-owned templates, include the team ID when publishing or listing:
 
 ```sh
-bunx e2b template publish sandman --yes --team "<team-id>"
-bunx e2b template list --team "<team-id>" --format json
+bun e2b template publish sandman --yes --team "<team-id>"
+bun e2b template list --team "<team-id>" --format json
 ```
 
 Set the resolved template ID in Fly:
