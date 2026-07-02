@@ -443,6 +443,19 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		const files =
 			opts.templateFiles !== undefined ? opts.templateFiles : await loadDefaultTemplateFiles();
 
+		// A production sandbox with no worker sources is dead on arrival —
+		// `tsx worker.ts` crash-loops with ERR_MODULE_NOT_FOUND. This happens when
+		// `sandbox-template/` is missing from the deployed image, which
+		// loadDefaultTemplateFiles otherwise swallows. Fail loudly at the boundary
+		// instead of provisioning a sandbox whose worker can never start. (Tests
+		// may pass an explicit empty `templateFiles` to skip file writing.)
+		if (opts.templateFiles === undefined && Object.keys(files).length === 0) {
+			throw new Error(
+				'No sandbox-template files found on the server. The deployed image is missing ' +
+					'the sandbox-template/ directory, so the worker cannot start.'
+			);
+		}
+
 		// 2. Write template files into the sandbox.
 		for (const [path, contents] of Object.entries(files)) {
 			await session.files.write(path, contents);

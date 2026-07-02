@@ -699,6 +699,28 @@ describe('worker supervision', () => {
 		expect(workerStart?.cmd).toContain('>> /app/worker.log 2>&1');
 	});
 
+	it('fails loudly when no sandbox-template files are available (image missing them)', async () => {
+		// Production path: templateFiles is NOT injected, and the loader finds no
+		// files. Provisioning a sandbox whose worker can never start must throw
+		// instead of silently producing a dead sandbox. Point cwd at a directory
+		// with no sandbox-template/ so loadDefaultTemplateFiles resolves to empty.
+		const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue('/nonexistent-sandman-cwd');
+		try {
+			const { adapter } = createMockAdapter('sbx-no-template');
+			const client = createSandboxClient({
+				adapter,
+				publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
+				maxReadinessRetries: 1,
+				readinessDelayMs: 0
+			});
+
+			const handle = await client.provision();
+			await expect(client.bootstrap(handle)).rejects.toThrow(/sandbox-template/);
+		} finally {
+			cwdSpy.mockRestore();
+		}
+	});
+
 	it('does NOT start the worker when Temporal never becomes ready', async () => {
 		const { adapter, calls } = createMockAdapter('sbx-worker-skip');
 		const client = createSandboxClient({
