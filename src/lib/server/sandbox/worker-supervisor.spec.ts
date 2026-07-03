@@ -402,6 +402,22 @@ describe('WorkerSupervisor.stop()', () => {
 		expect(supervisor.pid).toBe(pid);
 		expect(supervisor.online).toBe(true);
 	});
+
+	it('does not preserve stale liveness when kill fails after the worker exits', async () => {
+		const { session, handles } = createFakeSession();
+		session.commands.kill = async (pid) => {
+			handles.find((handle) => handle.pid === pid)?.exit(137);
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			throw new Error('kill failed after exit');
+		};
+		const supervisor = new WorkerSupervisor(baseOptions(session));
+
+		await supervisor.start();
+
+		await expect(supervisor.stop()).rejects.toThrow(/kill failed after exit/);
+		expect(supervisor.pid).toBeUndefined();
+		expect(supervisor.online).toBe(false);
+	});
 });
 
 describe('WorkerSupervisor.restart()', () => {

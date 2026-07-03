@@ -134,6 +134,7 @@ export class WorkerSupervisor {
 	#generation = 0;
 	#cancelPending: (() => void) | undefined;
 	#cancelStabilityReset: (() => void) | undefined;
+	#stopInFlight: { pid: number; generation: number } | undefined;
 	#lastCrash: WorkerCrash | undefined;
 
 	constructor(options: WorkerSupervisorOptions) {
@@ -198,21 +199,20 @@ export class WorkerSupervisor {
 			return;
 		}
 
-		// Bump the generation so the process we are about to kill is no longer the
-		// current one — its eventual exit is then ignored, not read as a crash.
-		const previousGeneration = this.#generation;
-		const stopGeneration = previousGeneration + 1;
-		this.#generation = stopGeneration;
+		const stopGeneration = this.#generation;
+		this.#stopInFlight = { pid, generation: stopGeneration };
 		this.#clearPending();
 		try {
 			await this.#session.commands.kill(pid);
 		} catch (err) {
-			if (this.#generation === stopGeneration) {
-				this.#generation = previousGeneration;
+			if (this.#isStopInFlight(pid, stopGeneration)) {
+				this.#stopInFlight = undefined;
 			}
 			throw err;
 		}
-		if (this.#generation === stopGeneration && this.#pid === pid) {
+		if (this.#isStopInFlight(pid, stopGeneration) && this.#pid === pid) {
+			this.#generation++;
+			this.#stopInFlight = undefined;
 			this.#clearStabilityReset();
 			this.#restarts = 0;
 			this.#online = false;
@@ -236,6 +236,7 @@ export class WorkerSupervisor {
 		this.#generation++;
 		this.#clearPending();
 		this.#clearStabilityReset();
+		this.#stopInFlight = undefined;
 		this.#online = false;
 		this.#pid = undefined;
 	}
@@ -248,6 +249,10 @@ export class WorkerSupervisor {
 	#clearStabilityReset(): void {
 		this.#cancelStabilityReset?.();
 		this.#cancelStabilityReset = undefined;
+	}
+
+	#isStopInFlight(pid: number, generation: number): boolean {
+		return this.#stopInFlight?.pid === pid && this.#stopInFlight.generation === generation;
 	}
 
 	/**
@@ -290,8 +295,8 @@ export class WorkerSupervisor {
 	#scheduleStabilityReset(generation: number): void {
 		this.#clearStabilityReset();
 		this.#cancelStabilityReset = this.#schedule(() => {
-			if (this.#disposed || generation !== this.#generation || !this.#online) return;
 			this.#cancelStabilityReset = undefined;
+			if (this.#disposed || generation !== this.#generation || !this.#online) return;
 			this.#restarts = 0;
 		}, this.#stabilityWindowMs);
 	}
@@ -320,6 +325,15 @@ export class WorkerSupervisor {
 		// A stale generation means this exit belongs to a process we already
 		// replaced or deliberately stopped — ignore it entirely.
 		if (this.#disposed || generation !== this.#generation) return;
+		if (this.#pid !== undefined && this.#isStopInFlight(this.#pid, generation)) {
+			this.#generation++;
+			this.#stopInFlight = undefined;
+			this.#clearStabilityReset();
+			this.#restarts = 0;
+			this.#online = false;
+			this.#pid = undefined;
+			return;
+		}
 		this.#clearStabilityReset();
 		this.#online = false;
 		this.#pid = undefined;
