@@ -1,9 +1,13 @@
 import { expect, test } from '@playwright/test';
 
-test('home page renders the Sandman heading', async ({ page }) => {
+test('home page renders the hero heading and Sandman brand', async ({ page }) => {
 	await page.goto('/');
-	await expect(page.locator('h1')).toHaveText('Sandman');
+	await expect(page.locator('h1')).toHaveText(
+		'A real Temporal server in your browser, in seconds.'
+	);
 	await expect(page.locator('h1')).toBeVisible();
+	// The Sandman brand still surfaces in the footer tagline.
+	await expect(page.getByText('Ephemeral Temporal sandboxes in the browser')).toBeVisible();
 });
 
 test('home page uses the Cinder button for session provisioning', async ({ page }) => {
