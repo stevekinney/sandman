@@ -81,6 +81,11 @@
 			behavior: prefersReducedMotion ? 'auto' : 'smooth',
 			block: 'start'
 		});
+		// Move keyboard focus into the form so the next Tab lands in the token
+		// field rather than the off-screen CTA. preventScroll keeps the smooth
+		// scroll above from being overridden by the focus jump.
+		const tokenField = document.querySelector('#get-started input');
+		if (tokenField instanceof HTMLElement) tokenField.focus({ preventScroll: true });
 	}
 
 	async function startSession(event?: SubmitEvent): Promise<void> {
@@ -613,6 +618,11 @@
 	   keep their default scrolling behavior. */
 	:global(html:has(.sandman-splash)) {
 		scroll-behavior: smooth;
+	}
+
+	/* Keep in-page anchor targets clear of the sticky nav when jumped to. */
+	:where(#top, #how, #concepts, #tour, #get-started, #faq) {
+		scroll-margin-top: 5rem;
 	}
 
 	.sandman-splash {
@@ -1485,6 +1495,15 @@
 		}
 		.sd-anim {
 			animation: none !important;
+		}
+		/* With animations disabled, pin the diagram to a readable "healthy,
+		   running" snapshot instead of the initial keyframe (which would leave the
+		   kill-X visible and the progress bar empty). */
+		.sd-worker__kill {
+			opacity: 0;
+		}
+		.sd-progress__fill {
+			width: 92%;
 		}
 	}
 </style>
