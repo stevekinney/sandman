@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+	getSandboxStartupProgress,
 	getSandboxStatusDisplayLabel,
 	getSandboxStatusFailureMessage,
 	getSandboxStatusResponseFailureMessage,
+	isSandboxStarting,
 	isSandboxUnusable
 } from './session-status';
 
@@ -43,5 +45,33 @@ describe('session status helpers', () => {
 			'Database unavailable'
 		);
 		expect(getSandboxStatusResponseFailureMessage(503, 'upstream failed')).toBe('upstream failed');
+	});
+
+	it('treats provisioning and bootstrapping as startup states', () => {
+		expect(isSandboxStarting('provisioning')).toBe(true);
+		expect(isSandboxStarting('bootstrapping')).toBe(true);
+		expect(isSandboxStarting('ready')).toBe(false);
+		expect(isSandboxStarting('error')).toBe(false);
+	});
+
+	it('reports coarse startup progress from the sandbox lifecycle status', () => {
+		expect(getSandboxStartupProgress('provisioning')).toMatchObject({
+			percent: 34,
+			currentStepNumber: 1,
+			totalStepCount: 3,
+			currentStepLabel: 'Provision sandbox'
+		});
+		expect(getSandboxStartupProgress('bootstrapping')).toMatchObject({
+			percent: 67,
+			currentStepNumber: 2,
+			totalStepCount: 3,
+			currentStepLabel: 'Start Temporal services'
+		});
+		expect(getSandboxStartupProgress('ready')).toMatchObject({
+			percent: 100,
+			currentStepNumber: 3,
+			totalStepCount: 3,
+			currentStepLabel: 'Ready'
+		});
 	});
 });
