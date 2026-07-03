@@ -418,6 +418,28 @@ describe('WorkerSupervisor.stop()', () => {
 		expect(supervisor.pid).toBeUndefined();
 		expect(supervisor.online).toBe(false);
 	});
+
+	it('keeps a rejected kill deliberate until the worker exit is observed', async () => {
+		const { session, handles } = createFakeSession();
+		const scheduler = createManualScheduler();
+		const onCrash = vi.fn();
+		session.commands.kill = async () => {
+			throw new Error('kill rejected before wait resolved');
+		};
+		const supervisor = new WorkerSupervisor(
+			baseOptions(session, { schedule: scheduler.schedule, onCrash })
+		);
+
+		await supervisor.start();
+		await expect(supervisor.stop()).rejects.toThrow(/kill rejected before wait resolved/);
+
+		handles[0].exit(137);
+		await vi.waitFor(() => expect(supervisor.online).toBe(false));
+
+		expect(supervisor.pid).toBeUndefined();
+		expect(onCrash).not.toHaveBeenCalled();
+		expect(scheduler.hasPending()).toBe(false);
+	});
 });
 
 describe('WorkerSupervisor.restart()', () => {

@@ -202,14 +202,7 @@ export class WorkerSupervisor {
 		const stopGeneration = this.#generation;
 		this.#stopInFlight = { pid, generation: stopGeneration };
 		this.#clearPending();
-		try {
-			await this.#session.commands.kill(pid);
-		} catch (err) {
-			if (this.#isStopInFlight(pid, stopGeneration)) {
-				this.#stopInFlight = undefined;
-			}
-			throw err;
-		}
+		await this.#session.commands.kill(pid);
 		if (this.#isStopInFlight(pid, stopGeneration) && this.#pid === pid) {
 			this.#generation++;
 			this.#stopInFlight = undefined;
