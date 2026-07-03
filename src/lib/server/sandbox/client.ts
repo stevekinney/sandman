@@ -602,6 +602,15 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 	}
 
 	// ------------------------------------------------------------------
+	// extendTimeout
+	// ------------------------------------------------------------------
+
+	async function extendTimeout(handle: SandboxHandle, timeoutMs: number): Promise<void> {
+		const { session } = getState(handle.id);
+		await session.setTimeout(timeoutMs);
+	}
+
+	// ------------------------------------------------------------------
 	// writeFile
 	// ------------------------------------------------------------------
 
@@ -665,6 +674,7 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		startServer,
 		processLiveness,
 		exec,
+		extendTimeout,
 		writeFile,
 		terminate
 	};

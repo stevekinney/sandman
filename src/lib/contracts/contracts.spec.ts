@@ -129,6 +129,7 @@ describe('SandboxClient interface', () => {
 			startServer: async () => {},
 			processLiveness: () => null,
 			exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
+			extendTimeout: async () => {},
 			writeFile: async () => {},
 			terminate: async () => {}
 		};
@@ -140,6 +141,7 @@ describe('SandboxClient interface', () => {
 		expect(typeof mockClient.startServer).toBe('function');
 		expect(typeof mockClient.processLiveness).toBe('function');
 		expect(typeof mockClient.exec).toBe('function');
+		expect(typeof mockClient.extendTimeout).toBe('function');
 		expect(typeof mockClient.writeFile).toBe('function');
 		expect(typeof mockClient.terminate).toBe('function');
 	});

@@ -66,7 +66,6 @@ export const POST: RequestHandler = async (event) => {
 	const { id } = params;
 	assertSameOrigin(event);
 	await requireOwnedSandbox(event, id);
-	await touchSessionActivity(event, id);
 
 	let body: unknown;
 	try {
@@ -86,6 +85,8 @@ export const POST: RequestHandler = async (event) => {
 	if (descriptor?.readOnly) {
 		throw error(403, `File "${path}" is read-only and cannot be modified`);
 	}
+
+	await touchSessionActivity(event, id);
 
 	let client: SandboxClient;
 	let handle: SandboxHandle;

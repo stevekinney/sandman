@@ -1,10 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { POST } from './+server';
 import { GET as VISIBILITY_GET } from './visibility/+server';
 import { GET as QUERY_GET } from './query/+server';
 import { POST as SIGNAL_POST } from './signal/+server';
 import { POST as UPDATE_POST } from './update/+server';
 import { resolveEntry } from '$lib/server/sandbox/registry';
+import { touchSessionActivity } from '$lib/server/security/guards';
 
 vi.mock('$lib/server/security/origin', () => ({
 	assertSameOrigin: vi.fn()
@@ -18,6 +19,10 @@ vi.mock('$lib/server/security/guards', () => ({
 vi.mock('$lib/server/sandbox/registry', () => ({
 	resolveEntry: vi.fn()
 }));
+
+beforeEach(() => {
+	vi.clearAllMocks();
+});
 
 function makeEvent(body: unknown): Parameters<typeof POST>[0] {
 	return {
@@ -71,6 +76,7 @@ function mockSandboxExec(stdout: string): ReturnType<typeof vi.fn> {
 			stopServer: vi.fn(),
 			startServer: vi.fn(),
 			exec,
+			extendTimeout: vi.fn(),
 			writeFile,
 			terminate: vi.fn()
 		},
@@ -108,6 +114,7 @@ describe('POST /api/sandbox/[id]/workflow', () => {
 				stopServer: vi.fn(),
 				startServer: vi.fn(),
 				exec,
+				extendTimeout: vi.fn(),
 				writeFile,
 				terminate: vi.fn()
 			},
@@ -150,6 +157,15 @@ describe('POST /api/sandbox/[id]/workflow', () => {
 			expect.anything()
 		);
 	});
+
+	it('does not slide session expiry for invalid workflow start bodies', async () => {
+		const response = await POST(
+			makeEvent({ orderId: '', restaurantId: 'restaurant-1', items: [] })
+		);
+
+		expect(response.status).toBe(400);
+		expect(touchSessionActivity).not.toHaveBeenCalled();
+	});
 });
 
 describe('workflow message route validation', () => {
@@ -176,6 +192,7 @@ describe('workflow message route validation', () => {
 
 		expect(response.status).toBe(400);
 		expect(exec).not.toHaveBeenCalled();
+		expect(touchSessionActivity).not.toHaveBeenCalled();
 	});
 
 	it('rejects unknown update names before invoking Temporal CLI', async () => {
@@ -189,6 +206,7 @@ describe('workflow message route validation', () => {
 
 		expect(response.status).toBe(400);
 		expect(exec).not.toHaveBeenCalled();
+		expect(touchSessionActivity).not.toHaveBeenCalled();
 	});
 });
 
@@ -267,6 +285,7 @@ describe('GET /api/sandbox/[id]/workflow/visibility', () => {
 				stopServer: vi.fn(),
 				startServer: vi.fn(),
 				exec,
+				extendTimeout: vi.fn(),
 				writeFile: vi.fn(),
 				terminate: vi.fn()
 			},
