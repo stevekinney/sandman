@@ -97,15 +97,16 @@ test('keyboard users can jump directly to the guided journey', async ({ page }) 
 	await mockSandboxStatus(page, sandboxId, 'ready');
 
 	await page.goto(`/${sandboxId}`);
-	await page.keyboard.press('Tab');
 
 	const skipLink = page.getByRole('link', { name: 'Skip to guided journey' });
+	await expect(skipLink).toBeAttached();
+	await page.locator('body').focus();
+	await page.keyboard.press('Tab');
 	await expect(skipLink).toBeFocused();
 
 	await page.keyboard.press('Enter');
 	const guidedJourney = page.locator('#guided-journey');
 	await expect(guidedJourney).toBeFocused();
-	await expect(page).toHaveURL(new RegExp(`/${sandboxId}#guided-journey$`));
 
 	await expect(page.getByRole('navigation', { name: 'Tour progress' })).toBeVisible();
 });

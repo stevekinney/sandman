@@ -213,6 +213,8 @@
 	<meta name="twitter:description" content={SESSION_DESCRIPTION} />
 </svelte:head>
 
+<SkipLink target="guided-journey">Skip to guided journey</SkipLink>
+
 <ToastRegion position="bottom-center">
 	<ToastBridge
 		register={(api) => {
@@ -221,8 +223,6 @@
 	/>
 
 	<div class="session" data-theme="dark" data-unusable={sandboxUnusable}>
-		<SkipLink target="guided-journey">Skip to guided journey</SkipLink>
-
 		<header class="session__bar">
 			<h1 class="session__brand">Sandman</h1>
 			<div class="session__chip" data-chip="sandbox">
