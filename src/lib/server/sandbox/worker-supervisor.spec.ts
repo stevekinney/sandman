@@ -81,6 +81,7 @@ function createFakeSession(logTail = 'worker crash log', options: { deferRun?: b
 		files: {
 			async write() {}
 		},
+		async setTimeout() {},
 		async kill() {
 			return true;
 		}

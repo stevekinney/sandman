@@ -47,6 +47,7 @@ vi.mock('$lib/server/sandbox/registry', () => ({
 			}),
 			bootstrap: vi.fn().mockResolvedValue({ ready: true }),
 			killWorker: vi.fn(),
+			extendTimeout: vi.fn(),
 			terminate: vi.fn().mockResolvedValue(undefined)
 		}
 	})),
@@ -111,6 +112,7 @@ describe('POST /api/sandbox', () => {
 				processLiveness: vi.fn(() => null),
 				stopServer: vi.fn(),
 				startServer: vi.fn(),
+				extendTimeout: vi.fn(),
 				terminate: vi.fn(),
 				writeFile: vi.fn()
 			},
@@ -156,6 +158,7 @@ describe('POST /api/sandbox', () => {
 				processLiveness: vi.fn(() => null),
 				stopServer: vi.fn(),
 				startServer: vi.fn(),
+				extendTimeout: vi.fn(),
 				terminate: vi.fn(),
 				writeFile: vi.fn()
 			},

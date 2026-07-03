@@ -60,6 +60,7 @@ function makeClient(overrides?: Partial<SandboxClient>): SandboxClient {
 		restartWorker: vi.fn(),
 		killWorker: vi.fn(),
 		exec: vi.fn(),
+		extendTimeout: vi.fn(),
 		writeFile: vi.fn().mockResolvedValue(undefined),
 		terminate: vi.fn(),
 		...overrides
@@ -82,6 +83,7 @@ function makeHandle(id = 'handle-1'): SandboxHandle {
 
 describe('POST /api/sandbox/[id]/files', () => {
 	beforeEach(() => {
+		vi.clearAllMocks();
 		// Reset to unconfigured state so tests that don't configure a resolver
 		// get the expected 503 behaviour.
 		configureSandboxResolver(async () => {
@@ -93,21 +95,25 @@ describe('POST /api/sandbox/[id]/files', () => {
 		it('returns 400 for a non-JSON body', async () => {
 			const event = makeRawEvent('sandbox-1', 'not valid json {{');
 			await expect(POST(event)).rejects.toMatchObject({ status: 400 });
+			expect(touchSessionActivity).not.toHaveBeenCalled();
 		});
 
 		it('returns 400 when body is missing the path field', async () => {
 			const event = makeEvent('sandbox-1', { contents: 'code' });
 			await expect(POST(event)).rejects.toMatchObject({ status: 400 });
+			expect(touchSessionActivity).not.toHaveBeenCalled();
 		});
 
 		it('returns 400 when body is missing the contents field', async () => {
 			const event = makeEvent('sandbox-1', { path: 'workflows.ts' });
 			await expect(POST(event)).rejects.toMatchObject({ status: 400 });
+			expect(touchSessionActivity).not.toHaveBeenCalled();
 		});
 
 		it('returns 400 when body is an empty object', async () => {
 			const event = makeEvent('sandbox-1', {});
 			await expect(POST(event)).rejects.toMatchObject({ status: 400 });
+			expect(touchSessionActivity).not.toHaveBeenCalled();
 		});
 	});
 
@@ -124,6 +130,7 @@ describe('POST /api/sandbox/[id]/files', () => {
 			await expect(POST(event)).rejects.toMatchObject({ status: 403 });
 			// Guard must fire before the resolver is reached
 			expect(writeFile).not.toHaveBeenCalled();
+			expect(touchSessionActivity).not.toHaveBeenCalled();
 		});
 	});
 

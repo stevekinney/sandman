@@ -132,6 +132,9 @@ export type SandboxClient = {
 	 */
 	exec(handle: SandboxHandle, command: string, opts?: { timeoutMs?: number }): Promise<ExecResult>;
 
+	/** Extends the provider-side sandbox lifetime. */
+	extendTimeout(handle: SandboxHandle, timeoutMs: number): Promise<void>;
+
 	/**
 	 * Writes a file at `path` inside the sandbox with the given `contents`.
 	 * Track C calls `writeFile` then `restartWorker` to hot-reload edited code.

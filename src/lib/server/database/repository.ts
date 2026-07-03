@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gt, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import type { Database } from './connection.ts';
 import {
 	DEMO_SESSION_STATUS,
@@ -32,6 +32,16 @@ export type DemoSessionRecord = {
 export type SandboxReservationResult =
 	| { status: 'reserved'; reservationId: string }
 	| { status: 'session-limit' | 'global-limit' };
+
+type TouchSandboxSessionDatabase = {
+	update(table: typeof sandboxSession): {
+		set(values: { expiresAt: Date; updatedAt: Date }): {
+			where(condition: unknown): {
+				returning(fields: { id: typeof sandboxSession.id }): Promise<Array<{ id: string }>>;
+			};
+		};
+	};
+};
 
 const ACTIVE_SANDBOX_STATUSES = [
 	SANDBOX_SESSION_STATUS.Provisioning,
@@ -246,7 +256,7 @@ export async function updateSandboxStatus(
  * terminated sandbox cannot be revived by a late-arriving mutation.
  */
 export async function touchSandboxSession(
-	database: Database,
+	database: TouchSandboxSessionDatabase,
 	input: { sandboxId: string; now: Date; ttlMs: number }
 ): Promise<boolean> {
 	const rows = await database
@@ -258,6 +268,7 @@ export async function touchSandboxSession(
 		.where(
 			and(
 				eq(sandboxSession.e2bSandboxId, input.sandboxId),
+				gt(sandboxSession.expiresAt, input.now),
 				inArray(sandboxSession.status, ACTIVE_SANDBOX_STATUSES)
 			)
 		)

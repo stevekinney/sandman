@@ -8,7 +8,7 @@ import {
 	touchSandboxSession,
 	type DemoSessionRecord
 } from '$lib/server/database/repository';
-import { touchHandle } from '$lib/server/sandbox/registry';
+import { extendHandleTimeout, touchHandle } from '$lib/server/sandbox/registry';
 import { logError } from '$lib/server/logging';
 import {
 	createSessionCookieOptions,
@@ -19,6 +19,15 @@ import {
 
 export type AuthenticatedDemoSession = DemoSessionRecord;
 
+type SessionCookieReader = {
+	cookies: Pick<RequestEvent['cookies'], 'get'>;
+};
+
+type SessionActivityEvent = {
+	url: RequestEvent['url'];
+	cookies: Pick<RequestEvent['cookies'], 'get' | 'set'>;
+};
+
 /**
  * Validates the signed session cookie and looks up the active demo session.
  *
@@ -28,7 +37,7 @@ export type AuthenticatedDemoSession = DemoSessionRecord;
  * `touchSessionActivity` (called from mutation routes) slides expiry.
  */
 export async function requireAuthenticatedDemoSession(
-	event: RequestEvent
+	event: SessionCookieReader
 ): Promise<AuthenticatedDemoSession> {
 	const configuration = getProductionConfiguration();
 	if (!configuration.sessionSecret) {
@@ -76,34 +85,49 @@ export async function requireOwnedSandbox(event: RequestEvent, sandboxId: string
  * kill/restart, server stop/start) count as activity. Passive GETs (status
  * polling, queries, visibility) must never call this.
  *
- * Failing to slide expiry must never fail the underlying request: any error
- * here is logged and swallowed.
+ * If either database row is no longer active, the mutation must be rejected:
+ * ownership alone is not enough to allow stale sandbox mutations after expiry.
+ * Provider timeout refresh remains best-effort after local expiry state has
+ * already been refreshed.
  */
-export async function touchSessionActivity(event: RequestEvent, sandboxId: string): Promise<void> {
+export async function touchSessionActivity(
+	event: SessionActivityEvent,
+	sandboxId: string
+): Promise<void> {
+	const configuration = getProductionConfiguration();
+	if (!configuration.sessionSecret) return;
+
+	const sessionId = readSignedSessionCookieValue(
+		event.cookies.get(SESSION_COOKIE_NAME),
+		configuration.sessionSecret
+	);
+	if (!sessionId) return;
+
+	const now = new Date();
+	const database = getDatabase();
+	const demoSessionTouched = await touchActiveDemoSession(database, { sessionId, now });
+	if (!demoSessionTouched) {
+		throw error(401, 'Demo session is no longer active');
+	}
+
+	const sandboxSessionTouched = await touchSandboxSession(database, {
+		sandboxId,
+		now,
+		ttlMs: configuration.sessionTtlMs
+	});
+	if (!sandboxSessionTouched) {
+		throw error(410, 'Sandbox session is no longer active');
+	}
+
+	event.cookies.set(
+		SESSION_COOKIE_NAME,
+		createSignedSessionCookieValue(sessionId, configuration.sessionSecret),
+		createSessionCookieOptions(event.url, configuration.sessionTtlMs)
+	);
+
+	touchHandle(sandboxId);
 	try {
-		const configuration = getProductionConfiguration();
-		if (!configuration.sessionSecret) return;
-
-		const sessionId = readSignedSessionCookieValue(
-			event.cookies.get(SESSION_COOKIE_NAME),
-			configuration.sessionSecret
-		);
-		if (!sessionId) return;
-
-		const now = new Date();
-		const database = getDatabase();
-		await Promise.all([
-			touchActiveDemoSession(database, { sessionId, now }),
-			touchSandboxSession(database, { sandboxId, now, ttlMs: configuration.sessionTtlMs })
-		]);
-
-		event.cookies.set(
-			SESSION_COOKIE_NAME,
-			createSignedSessionCookieValue(sessionId, configuration.sessionSecret),
-			createSessionCookieOptions(event.url, configuration.sessionTtlMs)
-		);
-
-		touchHandle(sandboxId);
+		await extendHandleTimeout(sandboxId, configuration.sessionTtlMs);
 	} catch (err) {
 		logError({ event: 'session.touch.failed', sandboxId, error: err });
 	}
