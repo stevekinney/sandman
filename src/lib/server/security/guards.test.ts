@@ -45,8 +45,6 @@ function makeEvent(cookieValue: string | undefined) {
 		url: new URL('http://localhost/api/sandbox/sandbox-1/status'),
 		request: new Request('http://localhost/api/sandbox/sandbox-1/status'),
 		cookies
-	} as unknown as Parameters<typeof requireAuthenticatedDemoSession>[0] & {
-		cookies: typeof cookies;
 	};
 }
 
@@ -134,12 +132,14 @@ describe('touchSessionActivity', () => {
 		expect(event.cookies.set).not.toHaveBeenCalled();
 	});
 
-	it('does not slide sandbox expiry when the demo session row is no longer active', async () => {
+	it('rejects the mutation and does not slide sandbox expiry when the demo session row is no longer active', async () => {
 		vi.mocked(touchActiveDemoSession).mockResolvedValueOnce(false);
 		const cookieValue = createSignedSessionCookieValue('session-1', 'session-secret');
 		const event = makeEvent(cookieValue);
 
-		await touchSessionActivity(event, 'sandbox-1');
+		await expect(touchSessionActivity(event, 'sandbox-1')).rejects.toMatchObject({
+			status: 401
+		});
 
 		expect(touchSandboxSession).not.toHaveBeenCalled();
 		expect(event.cookies.set).not.toHaveBeenCalled();
@@ -147,12 +147,14 @@ describe('touchSessionActivity', () => {
 		expect(touchHandle).not.toHaveBeenCalled();
 	});
 
-	it('does not refresh the cookie, reaper, or E2B timeout when the sandbox row is already expired', async () => {
+	it('rejects the mutation and does not refresh the cookie, reaper, or E2B timeout when the sandbox row is already expired', async () => {
 		vi.mocked(touchSandboxSession).mockResolvedValueOnce(false);
 		const cookieValue = createSignedSessionCookieValue('session-1', 'session-secret');
 		const event = makeEvent(cookieValue);
 
-		await touchSessionActivity(event, 'sandbox-1');
+		await expect(touchSessionActivity(event, 'sandbox-1')).rejects.toMatchObject({
+			status: 410
+		});
 
 		expect(event.cookies.set).not.toHaveBeenCalled();
 		expect(extendHandleTimeout).not.toHaveBeenCalled();
@@ -187,16 +189,14 @@ describe('touchSessionActivity', () => {
 		);
 	});
 
-	it('logs and swallows failures instead of throwing (a touch failure must not fail the request)', async () => {
+	it('lets database touch failures fail the mutation because expiry could not be verified', async () => {
 		vi.mocked(touchSandboxSession).mockRejectedValueOnce(new Error('database exploded'));
 		const cookieValue = createSignedSessionCookieValue('session-1', 'session-secret');
 		const event = makeEvent(cookieValue);
 
-		await expect(touchSessionActivity(event, 'sandbox-1')).resolves.toBeUndefined();
+		await expect(touchSessionActivity(event, 'sandbox-1')).rejects.toThrow('database exploded');
 
-		expect(logError).toHaveBeenCalledWith(
-			expect.objectContaining({ event: 'session.touch.failed', sandboxId: 'sandbox-1' })
-		);
+		expect(logError).not.toHaveBeenCalled();
 		expect(event.cookies.set).not.toHaveBeenCalled();
 	});
 });

@@ -33,6 +33,16 @@ export type SandboxReservationResult =
 	| { status: 'reserved'; reservationId: string }
 	| { status: 'session-limit' | 'global-limit' };
 
+type TouchSandboxSessionDatabase = {
+	update(table: typeof sandboxSession): {
+		set(values: { expiresAt: Date; updatedAt: Date }): {
+			where(condition: unknown): {
+				returning(fields: { id: typeof sandboxSession.id }): Promise<Array<{ id: string }>>;
+			};
+		};
+	};
+};
+
 const ACTIVE_SANDBOX_STATUSES = [
 	SANDBOX_SESSION_STATUS.Provisioning,
 	SANDBOX_SESSION_STATUS.Bootstrapping,
@@ -246,7 +256,7 @@ export async function updateSandboxStatus(
  * terminated sandbox cannot be revived by a late-arriving mutation.
  */
 export async function touchSandboxSession(
-	database: Database,
+	database: TouchSandboxSessionDatabase,
 	input: { sandboxId: string; now: Date; ttlMs: number }
 ): Promise<boolean> {
 	const rows = await database

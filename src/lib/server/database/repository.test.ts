@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { gt } from 'drizzle-orm';
 import { sandboxSession } from './schema.ts';
 import { touchSandboxSession } from './repository.ts';
-import type { Database } from './connection.ts';
+
+type TouchSandboxSessionDatabase = Parameters<typeof touchSandboxSession>[0];
 
 vi.mock('drizzle-orm', async (importOriginal) => {
 	const actual = await importOriginal<typeof import('drizzle-orm')>();
@@ -23,7 +24,7 @@ describe('touchSandboxSession', () => {
 		const where = vi.fn(() => ({ returning }));
 		const set = vi.fn(() => ({ where }));
 		const update = vi.fn(() => ({ set }));
-		const database = { update } as unknown as Database;
+		const database: TouchSandboxSessionDatabase = { update };
 
 		await touchSandboxSession(database, { sandboxId: 'sandbox-1', now, ttlMs: 300_000 });
 
