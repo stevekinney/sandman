@@ -83,7 +83,7 @@
 			session.phase,
 			session.workerOnline,
 			session.workerRestarting,
-			session.timelineEntries.at(-1)
+			session.timelineEntries
 		)
 	);
 

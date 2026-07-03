@@ -250,21 +250,23 @@ describe('executionPointerFor', () => {
 
 	it('distinguishes validation and payment inside the shared Validating status', () => {
 		expect(
-			executionPointerFor(
-				ORDER_STATUS.Validating,
-				true,
-				false,
+			executionPointerFor(ORDER_STATUS.Validating, true, false, [
 				describedEntry(ORDER_STATUS.Validating, 1, 'Validating order')
-			)?.anchor
+			])?.anchor
 		).toBe('await validateOrder(currentInput);');
 
 		expect(
-			executionPointerFor(
-				ORDER_STATUS.Validating,
-				true,
-				false,
+			executionPointerFor(ORDER_STATUS.Validating, true, false, [
 				describedEntry(ORDER_STATUS.Validating, 2, 'Charging payment')
-			)?.anchor
+			])?.anchor
+		).toBe('await chargePayment(');
+
+		expect(
+			executionPointerFor(ORDER_STATUS.Validating, true, false, [
+				describedEntry(ORDER_STATUS.Validating, 1, 'Validating order'),
+				describedEntry(ORDER_STATUS.Validating, 2, 'Charging payment'),
+				describedEntry(ORDER_STATUS.Validating, 3, 'Cancel requested: customer changed plans')
+			])?.anchor
 		).toBe('await chargePayment(');
 	});
 });

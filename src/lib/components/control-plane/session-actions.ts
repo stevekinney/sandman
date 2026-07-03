@@ -242,13 +242,10 @@ const VALIDATING_PAYMENT_DESCRIPTIONS = new Set(['Charging payment', 'Payment ch
 
 function executionAnchorFor(
 	phase: OrderStatus,
-	latestTimelineEntry?: TimelineEntry
+	timelineEntries: TimelineEntry[] = []
 ): { anchor: string; label: string } | undefined {
 	if (phase === ORDER_STATUS.Validating) {
-		if (
-			latestTimelineEntry &&
-			VALIDATING_PAYMENT_DESCRIPTIONS.has(latestTimelineEntry.description)
-		) {
+		if (timelineEntries.some((entry) => VALIDATING_PAYMENT_DESCRIPTIONS.has(entry.description))) {
 			return EXECUTION_ANCHORS[ORDER_STATUS.Validating];
 		}
 		return EXECUTION_ANCHORS[ORDER_STATUS.Created];
@@ -265,10 +262,10 @@ export function executionPointerFor(
 	phase: SessionPhase,
 	workerOnline: boolean,
 	workerRestarting: boolean,
-	latestTimelineEntry?: TimelineEntry
+	timelineEntries: TimelineEntry[] = []
 ): ExecutionPointer | null {
 	if (phase === 'idle') return null;
-	const entry = executionAnchorFor(phase, latestTimelineEntry);
+	const entry = executionAnchorFor(phase, timelineEntries);
 	if (entry === undefined) return null;
 	return {
 		file: 'order-workflow.ts',
