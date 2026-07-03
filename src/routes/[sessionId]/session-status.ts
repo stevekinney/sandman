@@ -18,6 +18,8 @@ const SANDBOX_STATUS_LABELS = new Map([
 const AUTHENTICATION_FAILURE_MESSAGE =
 	'This sandbox link needs an active invite session. Enter your invite code to start a new sandbox.';
 
+const READY_SANDBOX_STATUS = 'ready';
+
 const SANDBOX_STARTUP_STEPS = [
 	{
 		id: 'provisioning',
@@ -36,6 +38,10 @@ const SANDBOX_STARTUP_STEPS = [
 		description: 'The sandbox is ready and the workbench controls are enabled.'
 	}
 ] as const;
+
+const SANDBOX_STARTUP_STATUSES: ReadonlySet<string> = new Set(
+	SANDBOX_STARTUP_STEPS.filter((step) => step.id !== READY_SANDBOX_STATUS).map((step) => step.id)
+);
 
 export type SandboxStartupStepState = 'complete' | 'current' | 'upcoming';
 
@@ -60,7 +66,7 @@ export function isSandboxUnusable(status: string): boolean {
 }
 
 export function isSandboxStarting(status: string): boolean {
-	return status === 'provisioning' || status === 'bootstrapping';
+	return SANDBOX_STARTUP_STATUSES.has(status);
 }
 
 export function getSandboxStartupProgress(status: string): SandboxStartupProgress {
