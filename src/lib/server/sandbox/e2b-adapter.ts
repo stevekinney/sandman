@@ -6,7 +6,7 @@
  */
 
 import { Sandbox, CommandExitError } from 'e2b';
-import type { Sandbox as SandboxType } from 'e2b';
+import type { CommandHandle, CommandResult, Sandbox as SandboxType } from 'e2b';
 
 /** Result of running a command to completion inside the sandbox. */
 export type SandboxCommandResult = {
@@ -71,6 +71,23 @@ export type E2bAdapter = {
 	create(opts?: E2bCreateOpts): Promise<E2bSandboxSession>;
 };
 
+export type WrappableE2bSandbox = Pick<
+	SandboxType,
+	'sandboxId' | 'trafficAccessToken' | 'getHost' | 'setTimeout' | 'kill'
+> & {
+	commands: {
+		run(cmd: string, opts?: { timeoutMs?: number; background?: false }): Promise<CommandResult>;
+		run(
+			cmd: string,
+			opts: { timeoutMs?: number; background: true }
+		): Promise<Pick<CommandHandle, 'pid' | 'wait'>>;
+		kill(pid: number): Promise<boolean>;
+	};
+	files: {
+		write(path: string, data: string): Promise<unknown>;
+	};
+};
+
 /** Type guard that checks whether a thrown value is an E2B CommandExitError. */
 function isCommandExitError(
 	err: unknown
@@ -85,7 +102,7 @@ function isCommandExitError(
  *
  * Exported for unit testing; use `createRealE2bAdapter` in production code.
  */
-export function wrapSandbox(sandbox: SandboxType): E2bSandboxSession {
+export function wrapSandbox(sandbox: WrappableE2bSandbox): E2bSandboxSession {
 	return {
 		sandboxId: sandbox.sandboxId,
 		trafficAccessToken: sandbox.trafficAccessToken,
