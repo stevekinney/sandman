@@ -462,6 +462,38 @@ describe('bootstrap()', () => {
 		expect(result.ready).toBe(false);
 	});
 
+	it('retries a not-ready bootstrap after cleaning up the previous Temporal process', async () => {
+		const { adapter, calls } = createMockAdapter('sbx-bootstrap-retry');
+		let publicUiReady = false;
+		const client = createSandboxClient({
+			adapter,
+			publicUiFetch: async () =>
+				publicUiReady
+					? new Response('<!doctype html><title>Temporal</title>')
+					: new Response('Closed Port Error: Connection refused on port 8233', { status: 200 }),
+			templateFiles: { '/app/worker.ts': '// placeholder worker' },
+			maxReadinessRetries: 1,
+			readinessDelayMs: 0
+		});
+		const handle = await client.provision();
+
+		const firstResult = await client.bootstrap(handle);
+		expect(firstResult.ready).toBe(false);
+		expect(client.processLiveness(handle)).toEqual({ serverOnline: false, workerOnline: false });
+		expect(calls).toContainEqual({ method: 'commands.kill', pid: 100 });
+
+		publicUiReady = true;
+		calls.length = 0;
+		const retryResult = await client.bootstrap(handle);
+
+		expect(retryResult.ready).toBe(true);
+		const temporalStartIdx = calls.findIndex(
+			(c) => c.method === 'commands.start' && c.cmd.includes('temporal server start-dev')
+		);
+		expect(temporalStartIdx).toBeGreaterThanOrEqual(0);
+		expect(client.processLiveness(handle)).toEqual({ serverOnline: true, workerOnline: true });
+	});
+
 	it('returns a uiUrl on the same host as handle.host(8233)', async () => {
 		const { client: c2 } = makeClient('sbx-3');
 		const h2 = await c2.provision();
