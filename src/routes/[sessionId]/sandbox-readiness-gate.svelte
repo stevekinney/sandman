@@ -34,7 +34,7 @@
 
 {#if visible}
 	<div
-		class="sandbox-readiness-gate"
+		class="sandbox-readiness-gate session__gate"
 		data-variant={starting ? 'starting' : 'unavailable'}
 		role={gateRole}
 		aria-live={gateLive}

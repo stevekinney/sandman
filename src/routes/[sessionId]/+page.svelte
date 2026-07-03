@@ -210,7 +210,7 @@
 		}}
 	/>
 
-	<div class="session" data-theme="dark">
+	<div class="session" data-theme="dark" data-unusable={sandboxUnusable}>
 		<a class="skip-link" href="#guided-journey" onclick={focusGuidedJourney}>
 			Skip to guided journey
 		</a>
