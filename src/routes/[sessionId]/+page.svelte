@@ -79,7 +79,12 @@
 		session.recommendedControl !== undefined && session.canDo(session.recommendedControl)
 	);
 	const execution = $derived(
-		executionPointerFor(session.phase, session.workerOnline, session.workerRestarting)
+		executionPointerFor(
+			session.phase,
+			session.workerOnline,
+			session.workerRestarting,
+			session.timelineEntries
+		)
 	);
 
 	/** Jump the editor to an experiment's code and flash the anchor line. */
