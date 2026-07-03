@@ -106,6 +106,12 @@ describe('touchSessionActivity', () => {
 		);
 		expect(extendHandleTimeout).toHaveBeenCalledWith('sandbox-1', 300_000);
 		expect(touchHandle).toHaveBeenCalledWith('sandbox-1');
+		expect(vi.mocked(touchSandboxSession).mock.invocationCallOrder[0]).toBeGreaterThan(
+			vi.mocked(touchActiveDemoSession).mock.invocationCallOrder[0] ?? 0
+		);
+		expect(vi.mocked(extendHandleTimeout).mock.invocationCallOrder[0]).toBeGreaterThan(
+			vi.mocked(touchHandle).mock.invocationCallOrder[0] ?? 0
+		);
 
 		expect(event.cookies.set).toHaveBeenCalledWith(
 			SESSION_COOKIE_NAME,
@@ -124,7 +130,21 @@ describe('touchSessionActivity', () => {
 		expect(touchActiveDemoSession).not.toHaveBeenCalled();
 		expect(touchSandboxSession).not.toHaveBeenCalled();
 		expect(extendHandleTimeout).not.toHaveBeenCalled();
+		expect(touchHandle).not.toHaveBeenCalled();
 		expect(event.cookies.set).not.toHaveBeenCalled();
+	});
+
+	it('does not slide sandbox expiry when the demo session row is no longer active', async () => {
+		vi.mocked(touchActiveDemoSession).mockResolvedValueOnce(false);
+		const cookieValue = createSignedSessionCookieValue('session-1', 'session-secret');
+		const event = makeEvent(cookieValue);
+
+		await touchSessionActivity(event, 'sandbox-1');
+
+		expect(touchSandboxSession).not.toHaveBeenCalled();
+		expect(event.cookies.set).not.toHaveBeenCalled();
+		expect(extendHandleTimeout).not.toHaveBeenCalled();
+		expect(touchHandle).not.toHaveBeenCalled();
 	});
 
 	it('does not refresh the cookie, reaper, or E2B timeout when the sandbox row is already expired', async () => {
@@ -137,6 +157,34 @@ describe('touchSessionActivity', () => {
 		expect(event.cookies.set).not.toHaveBeenCalled();
 		expect(extendHandleTimeout).not.toHaveBeenCalled();
 		expect(touchHandle).not.toHaveBeenCalled();
+	});
+
+	it('refreshes the cookie and local reaper before attempting the E2B timeout extension', async () => {
+		const cookieValue = createSignedSessionCookieValue('session-1', 'session-secret');
+		const event = makeEvent(cookieValue);
+
+		await touchSessionActivity(event, 'sandbox-1');
+
+		expect(event.cookies.set).toHaveBeenCalledOnce();
+		expect(touchHandle).toHaveBeenCalledWith('sandbox-1');
+		expect(extendHandleTimeout).toHaveBeenCalledWith('sandbox-1', 300_000);
+		expect(vi.mocked(extendHandleTimeout).mock.invocationCallOrder[0]).toBeGreaterThan(
+			vi.mocked(touchHandle).mock.invocationCallOrder[0] ?? 0
+		);
+	});
+
+	it('keeps the refreshed cookie and local reaper touch when the E2B timeout extension fails', async () => {
+		vi.mocked(extendHandleTimeout).mockRejectedValueOnce(new Error('provider timeout failed'));
+		const cookieValue = createSignedSessionCookieValue('session-1', 'session-secret');
+		const event = makeEvent(cookieValue);
+
+		await touchSessionActivity(event, 'sandbox-1');
+
+		expect(event.cookies.set).toHaveBeenCalledOnce();
+		expect(touchHandle).toHaveBeenCalledWith('sandbox-1');
+		expect(logError).toHaveBeenCalledWith(
+			expect.objectContaining({ event: 'session.touch.failed', sandboxId: 'sandbox-1' })
+		);
 	});
 
 	it('logs and swallows failures instead of throwing (a touch failure must not fail the request)', async () => {

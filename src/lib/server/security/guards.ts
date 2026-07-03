@@ -92,13 +92,15 @@ export async function touchSessionActivity(event: RequestEvent, sandboxId: strin
 
 		const now = new Date();
 		const database = getDatabase();
-		const [demoSessionTouched, sandboxSessionTouched] = await Promise.all([
-			touchActiveDemoSession(database, { sessionId, now }),
-			touchSandboxSession(database, { sandboxId, now, ttlMs: configuration.sessionTtlMs })
-		]);
-		if (!demoSessionTouched || !sandboxSessionTouched) return;
+		const demoSessionTouched = await touchActiveDemoSession(database, { sessionId, now });
+		if (!demoSessionTouched) return;
 
-		await extendHandleTimeout(sandboxId, configuration.sessionTtlMs);
+		const sandboxSessionTouched = await touchSandboxSession(database, {
+			sandboxId,
+			now,
+			ttlMs: configuration.sessionTtlMs
+		});
+		if (!sandboxSessionTouched) return;
 
 		event.cookies.set(
 			SESSION_COOKIE_NAME,
@@ -107,6 +109,7 @@ export async function touchSessionActivity(event: RequestEvent, sandboxId: strin
 		);
 
 		touchHandle(sandboxId);
+		await extendHandleTimeout(sandboxId, configuration.sessionTtlMs);
 	} catch (err) {
 		logError({ event: 'session.touch.failed', sandboxId, error: err });
 	}
