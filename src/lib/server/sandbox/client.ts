@@ -436,6 +436,11 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 			return { ready: true, uiUrl: handle.host(TEMPORAL_UI_PORT) };
 		}
 
+		if (state.temporalPid !== undefined) {
+			await session.commands.kill(state.temporalPid);
+			state.temporalPid = undefined;
+		}
+
 		// 0. Verify Node.js and Temporal CLI are available in the sandbox image.
 		await ensureRuntimeDependencies(session);
 
@@ -480,17 +485,16 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 			readinessDelayMs
 		);
 
-		// 6. Start the worker under a supervisor that keeps it alive (auto-restart
-		//    on crash), reports honest liveness, and captures its log. Only start
-		//    it when Temporal is actually reachable — a worker launched against a
-		//    server that never came up would just crash-loop against the restart
-		//    budget. When not ready, the sandbox surfaces that to the caller and
-		//    the worker is started later by startServer once the server recovers.
-		state.worker = createWorkerSupervisor(session, handle.id);
-		if (ready) {
-			await state.worker.start();
+		if (!ready) {
+			await session.commands.kill(temporalHandle.pid);
+			state.temporalPid = undefined;
+			return { ready, uiUrl };
 		}
 
+		// 6. Start the worker under a supervisor that keeps it alive (auto-restart
+		//    on crash), reports honest liveness, and captures its log.
+		state.worker = createWorkerSupervisor(session, handle.id);
+		await state.worker.start();
 		state.bootstrapped = true;
 
 		return { ready, uiUrl };
