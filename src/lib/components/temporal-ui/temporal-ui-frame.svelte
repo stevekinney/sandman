@@ -21,6 +21,8 @@
 	import StatusDot from '@lostgradient/cinder/status-dot';
 	import type { StatusDotConnectionState } from '@lostgradient/cinder/status-dot';
 
+	type TemporalUiProbe = (url: string, signal: AbortSignal) => Promise<boolean>;
+
 	type Props = {
 		/** The E2B sandbox ID. Used to construct the proxy URL `/sbx/{sandboxId}/ui/`. */
 		sandboxId: string;
@@ -28,9 +30,28 @@
 		sandboxStatus?: string;
 		/** Extra CSS classes forwarded to the root wrapper element. */
 		class?: string;
+		/** Reachability probe; injectable so browser tests do not hit the proxy route. */
+		probe?: TemporalUiProbe;
+		/** Optional iframe source override for tests that should not load the proxy route. */
+		frameSource?: string;
 	};
 
-	let { sandboxId, sandboxStatus = 'provisioning', class: className }: Props = $props();
+	async function probeTemporalUi(url: string, signal: AbortSignal): Promise<boolean> {
+		const response = await fetch(url, {
+			cache: 'no-store',
+			method: 'GET',
+			signal
+		});
+		return response.ok;
+	}
+
+	let {
+		sandboxId,
+		sandboxStatus = 'provisioning',
+		class: className,
+		probe = probeTemporalUi,
+		frameSource
+	}: Props = $props();
 
 	let connectionState = $state<StatusDotConnectionState>('connecting');
 	let iframeRevision = $state(0);
@@ -50,6 +71,7 @@
 	});
 
 	const src = $derived(`/sbx/${sandboxId}/ui/`);
+	const iframeSource = $derived(frameSource ?? src);
 	const iframeReady = $derived(connectionState === 'connected');
 	const startupTitle = $derived(
 		sandboxStatus === 'ready' ? 'Connecting to Temporal UI' : 'Starting Temporal services'
@@ -62,18 +84,30 @@
 
 	$effect(() => {
 		let cancelled = false;
+		let activeController: AbortController | null = null;
+		let retryTimer: ReturnType<typeof setTimeout> | null = null;
+		let resolveRetry: (() => void) | null = null;
 		connectionState = 'connecting';
+
+		function waitForRetry(): Promise<void> {
+			return new Promise<void>((resolve) => {
+				resolveRetry = resolve;
+				retryTimer = setTimeout(() => {
+					retryTimer = null;
+					resolveRetry = null;
+					resolve();
+				}, 2000);
+			});
+		}
 
 		async function probeUntilConnected(): Promise<void> {
 			while (!cancelled) {
 				const controller = new AbortController();
+				activeController = controller;
 				try {
-					const response = await fetch(src, {
-						cache: 'no-store',
-						method: 'GET',
-						signal: controller.signal
-					});
-					if (response.ok) {
+					const reachable = await probe(src, controller.signal);
+					if (cancelled) return;
+					if (reachable) {
 						connectionState = 'connected';
 						iframeRevision += 1;
 						return;
@@ -84,7 +118,7 @@
 					connectionState = 'disconnected';
 				}
 
-				await new Promise<void>((resolve) => setTimeout(resolve, 2000));
+				await waitForRetry();
 			}
 		}
 
@@ -92,6 +126,9 @@
 
 		return () => {
 			cancelled = true;
+			activeController?.abort();
+			if (retryTimer !== null) clearTimeout(retryTimer);
+			resolveRetry?.();
 		};
 	});
 </script>
@@ -102,7 +139,12 @@
 	</div>
 	{#if iframeReady}
 		{#key iframeRevision}
-			<iframe {src} title="Temporal Web UI" class="temporal-ui-frame__iframe"></iframe>
+			<iframe
+				src={iframeSource}
+				data-proxied-src={src}
+				title="Temporal Web UI"
+				class="temporal-ui-frame__iframe"
+			></iframe>
 		{/key}
 	{:else}
 		<div class="temporal-ui-frame__startup" aria-live="polite">

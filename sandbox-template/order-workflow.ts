@@ -451,6 +451,7 @@ export async function orderFoodWorkflow(
 	// chargePayment retries automatically on transient failures (the policy
 	// lives in definitions.ts). Only a non-retryable failure — a genuinely
 	// declined card — lands in this catch block.
+	addTimeline('Charging payment', 'activities-retry');
 	try {
 		const chargeOperation = operation('charge-payment');
 		const charge = await chargePayment(chargeOperation, currentInput.paymentMethod, totalCents);

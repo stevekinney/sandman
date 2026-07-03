@@ -28,6 +28,14 @@ function entry(status: TimelineEntry['status'], index: number): TimelineEntry {
 	return { index, timestamp: new Date(index * 1000).toISOString(), description: 'entry', status };
 }
 
+function describedEntry(
+	status: TimelineEntry['status'],
+	index: number,
+	description: string
+): TimelineEntry {
+	return { index, timestamp: new Date(index * 1000).toISOString(), description, status };
+}
+
 function context(overrides: Partial<ControlContext> = {}): ControlContext {
 	return {
 		phase: 'idle',
@@ -238,6 +246,26 @@ describe('executionPointerFor', () => {
 		expect(executionPointerFor(ORDER_STATUS.Preparing, true, false)?.state).toBe('running');
 		expect(executionPointerFor(ORDER_STATUS.Preparing, false, false)?.state).toBe('paused');
 		expect(executionPointerFor(ORDER_STATUS.Preparing, false, true)?.state).toBe('replaying');
+	});
+
+	it('distinguishes validation and payment inside the shared Validating status', () => {
+		expect(
+			executionPointerFor(
+				ORDER_STATUS.Validating,
+				true,
+				false,
+				describedEntry(ORDER_STATUS.Validating, 1, 'Validating order')
+			)?.anchor
+		).toBe('await validateOrder(currentInput);');
+
+		expect(
+			executionPointerFor(
+				ORDER_STATUS.Validating,
+				true,
+				false,
+				describedEntry(ORDER_STATUS.Validating, 2, 'Charging payment')
+			)?.anchor
+		).toBe('await chargePayment(');
 	});
 });
 

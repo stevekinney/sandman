@@ -238,6 +238,24 @@ const EXECUTION_ANCHORS: Partial<Record<OrderStatus, { anchor: string; label: st
 	}
 };
 
+const VALIDATING_PAYMENT_DESCRIPTIONS = new Set(['Charging payment', 'Payment charged']);
+
+function executionAnchorFor(
+	phase: OrderStatus,
+	latestTimelineEntry?: TimelineEntry
+): { anchor: string; label: string } | undefined {
+	if (phase === ORDER_STATUS.Validating) {
+		if (
+			latestTimelineEntry &&
+			VALIDATING_PAYMENT_DESCRIPTIONS.has(latestTimelineEntry.description)
+		) {
+			return EXECUTION_ANCHORS[ORDER_STATUS.Validating];
+		}
+		return EXECUTION_ANCHORS[ORDER_STATUS.Created];
+	}
+	return EXECUTION_ANCHORS[phase];
+}
+
 /**
  * The execution pointer for the current phase, or null while idle.
  * Worker liveness turns the pointer amber: paused while the process is dead,
@@ -246,10 +264,11 @@ const EXECUTION_ANCHORS: Partial<Record<OrderStatus, { anchor: string; label: st
 export function executionPointerFor(
 	phase: SessionPhase,
 	workerOnline: boolean,
-	workerRestarting: boolean
+	workerRestarting: boolean,
+	latestTimelineEntry?: TimelineEntry
 ): ExecutionPointer | null {
 	if (phase === 'idle') return null;
-	const entry = EXECUTION_ANCHORS[phase];
+	const entry = executionAnchorFor(phase, latestTimelineEntry);
 	if (entry === undefined) return null;
 	return {
 		file: 'order-workflow.ts',
