@@ -57,6 +57,10 @@ test('demo token exchange provisions a sandbox and redirects to the session page
 	await mockSandboxCreation(page);
 	await mockSandboxStatus(page, SANDBOX_ID, 'ready');
 
+	// The landing page follows the OS color scheme by default (no stored
+	// preference), so pin a dark preference to assert the token input is
+	// legibly dark-themed rather than rendering with unstyled light defaults.
+	await page.emulateMedia({ colorScheme: 'dark' });
 	await page.goto('/');
 	const tokenInput = page.getByLabel('Demo token');
 	await tokenInput.fill(DEMO_TOKEN);
