@@ -56,12 +56,18 @@ export type WorkerSupervisorOptions = {
 	commandTimeoutMs?: number;
 	/**
 	 * Maximum consecutive auto-restarts after an unexpected crash before giving
-	 * up (a runaway crash-loop backstop). An explicit {@link stop}/{@link restart}
-	 * resets the counter. Defaults to 3.
+	 * up (a runaway crash-loop backstop). An explicit {@link stop}/{@link restart},
+	 * or an auto-restarted worker that survives {@link stabilityWindowMs}, resets
+	 * the counter. Defaults to 3.
 	 */
 	maxRestarts?: number;
 	/** Delay before an auto-restart, in milliseconds. Defaults to 2000. */
 	restartDelayMs?: number;
+	/**
+	 * How long an auto-restarted worker must stay online before its crash budget
+	 * is considered stable and reset. Defaults to 30000.
+	 */
+	stabilityWindowMs?: number;
 	/**
 	 * Timer used to schedule auto-restarts. Returns a canceller. Injectable so
 	 * tests can drive restarts synchronously. Defaults to `setTimeout`.
@@ -82,6 +88,7 @@ function shellQuote(value: string): string {
 
 const DEFAULT_MAX_RESTARTS = 3;
 const DEFAULT_RESTART_DELAY_MS = 2_000;
+const DEFAULT_STABILITY_WINDOW_MS = 30_000;
 /**
  * Default worker command lifetime. E2B kills a background command after its
  * `timeoutMs` (default 60s); the worker must outlive that, so we default to 5
@@ -108,6 +115,7 @@ export class WorkerSupervisor {
 	readonly #commandTimeoutMs: number;
 	readonly #maxRestarts: number;
 	readonly #restartDelayMs: number;
+	readonly #stabilityWindowMs: number;
 	readonly #schedule: (run: () => void, delayMs: number) => () => void;
 	readonly #onCrash: ((crash: WorkerCrash) => void) | undefined;
 
@@ -125,6 +133,7 @@ export class WorkerSupervisor {
 	 */
 	#generation = 0;
 	#cancelPending: (() => void) | undefined;
+	#cancelStabilityReset: (() => void) | undefined;
 	#lastCrash: WorkerCrash | undefined;
 
 	constructor(options: WorkerSupervisorOptions) {
@@ -134,6 +143,7 @@ export class WorkerSupervisor {
 		this.#commandTimeoutMs = options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
 		this.#maxRestarts = options.maxRestarts ?? DEFAULT_MAX_RESTARTS;
 		this.#restartDelayMs = options.restartDelayMs ?? DEFAULT_RESTART_DELAY_MS;
+		this.#stabilityWindowMs = options.stabilityWindowMs ?? DEFAULT_STABILITY_WINDOW_MS;
 		this.#schedule = options.schedule ?? defaultSchedule;
 		this.#onCrash = options.onCrash;
 	}
@@ -167,8 +177,9 @@ export class WorkerSupervisor {
 	async start(): Promise<void> {
 		if (this.#disposed) return;
 		this.#clearPending();
+		this.#clearStabilityReset();
 		const generation = ++this.#generation;
-		await this.#spawn(generation, true);
+		await this.#spawn(generation, true, false);
 	}
 
 	/**
@@ -177,16 +188,35 @@ export class WorkerSupervisor {
 	 * the worker is already stopped.
 	 */
 	async stop(): Promise<void> {
+		const pid = this.#pid;
+		if (pid === undefined) {
+			this.#generation++;
+			this.#clearPending();
+			this.#clearStabilityReset();
+			this.#online = false;
+			this.#restarts = 0;
+			return;
+		}
+
 		// Bump the generation so the process we are about to kill is no longer the
 		// current one — its eventual exit is then ignored, not read as a crash.
-		this.#generation++;
+		const previousGeneration = this.#generation;
+		const stopGeneration = previousGeneration + 1;
+		this.#generation = stopGeneration;
 		this.#clearPending();
-		this.#online = false;
-		this.#restarts = 0;
-		const pid = this.#pid;
-		this.#pid = undefined;
-		if (pid !== undefined) {
+		try {
 			await this.#session.commands.kill(pid);
+		} catch (err) {
+			if (this.#generation === stopGeneration) {
+				this.#generation = previousGeneration;
+			}
+			throw err;
+		}
+		if (this.#generation === stopGeneration && this.#pid === pid) {
+			this.#clearStabilityReset();
+			this.#restarts = 0;
+			this.#online = false;
+			this.#pid = undefined;
 		}
 	}
 
@@ -205,6 +235,7 @@ export class WorkerSupervisor {
 		this.#disposed = true;
 		this.#generation++;
 		this.#clearPending();
+		this.#clearStabilityReset();
 		this.#online = false;
 		this.#pid = undefined;
 	}
@@ -214,12 +245,21 @@ export class WorkerSupervisor {
 		this.#cancelPending = undefined;
 	}
 
+	#clearStabilityReset(): void {
+		this.#cancelStabilityReset?.();
+		this.#cancelStabilityReset = undefined;
+	}
+
 	/**
 	 * Spawns the worker process for the given generation and watches it. When
 	 * `propagate` is true a spawn failure is rethrown (explicit start/restart);
 	 * otherwise it is treated as a crash and retried within budget (auto-restart).
 	 */
-	async #spawn(generation: number, propagate: boolean): Promise<void> {
+	async #spawn(
+		generation: number,
+		propagate: boolean,
+		resetBudgetAfterStable: boolean
+	): Promise<void> {
 		let handle: SandboxCommandHandle;
 		try {
 			handle = await this.#session.commands.start(this.#runCommand, {
@@ -241,7 +281,19 @@ export class WorkerSupervisor {
 
 		this.#pid = handle.pid;
 		this.#online = true;
+		if (resetBudgetAfterStable) {
+			this.#scheduleStabilityReset(generation);
+		}
 		void this.#observeExit(handle, generation);
+	}
+
+	#scheduleStabilityReset(generation: number): void {
+		this.#clearStabilityReset();
+		this.#cancelStabilityReset = this.#schedule(() => {
+			if (this.#disposed || generation !== this.#generation || !this.#online) return;
+			this.#cancelStabilityReset = undefined;
+			this.#restarts = 0;
+		}, this.#stabilityWindowMs);
 	}
 
 	/**
@@ -268,6 +320,7 @@ export class WorkerSupervisor {
 		// A stale generation means this exit belongs to a process we already
 		// replaced or deliberately stopped — ignore it entirely.
 		if (this.#disposed || generation !== this.#generation) return;
+		this.#clearStabilityReset();
 		this.#online = false;
 		this.#pid = undefined;
 
@@ -291,6 +344,7 @@ export class WorkerSupervisor {
 	 */
 	#handleCrash(generation: number, exitCode: number, log: string): void {
 		if (this.#disposed || generation !== this.#generation) return;
+		this.#clearStabilityReset();
 		this.#online = false;
 		this.#pid = undefined;
 
@@ -309,7 +363,7 @@ export class WorkerSupervisor {
 			if (this.#disposed) return;
 			this.#clearPending();
 			const nextGeneration = ++this.#generation;
-			void this.#spawn(nextGeneration, false);
+			void this.#spawn(nextGeneration, false, true);
 		}, this.#restartDelayMs);
 	}
 

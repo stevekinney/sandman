@@ -280,6 +280,7 @@ describe('WorkerSupervisor crash recovery', () => {
 		scheduler.fire(); // restart 1 (handle 1)
 		await vi.waitFor(() => expect(startCommands).toHaveLength(2));
 		handles[1].exit(1);
+		await vi.waitFor(() => expect(supervisor.online).toBe(false));
 		await vi.waitFor(() => expect(scheduler.hasPending()).toBe(true));
 
 		scheduler.fire(); // restart 2 (handle 2)
@@ -289,6 +290,49 @@ describe('WorkerSupervisor crash recovery', () => {
 
 		expect(scheduler.hasPending()).toBe(false); // no further restart scheduled
 		expect(startCommands).toHaveLength(3);
+	});
+
+	it('resets the crash budget after an auto-restarted worker stays stable', async () => {
+		const { session, startCommands, handles } = createFakeSession();
+		const scheduler = createManualScheduler();
+		const supervisor = new WorkerSupervisor(
+			baseOptions(session, { schedule: scheduler.schedule, maxRestarts: 1 })
+		);
+
+		await supervisor.start(); // handle 0
+		handles[0].exit(1);
+		await vi.waitFor(() => expect(scheduler.hasPending()).toBe(true));
+		scheduler.fire(); // restart 1 (handle 1) and schedule the stability reset
+		await vi.waitFor(() => expect(startCommands).toHaveLength(2));
+
+		await vi.waitFor(() => expect(scheduler.hasPending()).toBe(true));
+		scheduler.fire(); // stability window elapsed
+		handles[1].exit(1);
+		await vi.waitFor(() => expect(scheduler.hasPending()).toBe(true));
+
+		scheduler.fire(); // budget was reset, so another restart is allowed
+		await vi.waitFor(() => expect(startCommands).toHaveLength(3));
+		expect(supervisor.online).toBe(true);
+	});
+
+	it('does not reset the crash budget when the restarted worker crashes before stability', async () => {
+		const { session, startCommands, handles } = createFakeSession();
+		const scheduler = createManualScheduler();
+		const supervisor = new WorkerSupervisor(
+			baseOptions(session, { schedule: scheduler.schedule, maxRestarts: 1 })
+		);
+
+		await supervisor.start(); // handle 0
+		handles[0].exit(1);
+		await vi.waitFor(() => expect(scheduler.hasPending()).toBe(true));
+		scheduler.fire(); // restart 1 (handle 1) and schedule the stability reset
+		await vi.waitFor(() => expect(startCommands).toHaveLength(2));
+
+		handles[1].exit(1); // crash before the stability reset fires
+		await vi.waitFor(() => expect(supervisor.online).toBe(false));
+
+		expect(scheduler.hasPending()).toBe(false);
+		expect(startCommands).toHaveLength(2);
 	});
 });
 
@@ -314,6 +358,49 @@ describe('WorkerSupervisor.stop()', () => {
 		const { session } = createFakeSession();
 		const supervisor = new WorkerSupervisor(baseOptions(session));
 		await expect(supervisor.stop()).resolves.toBeUndefined();
+	});
+
+	it('keeps the worker reported online until kill confirms it stopped', async () => {
+		const { session } = createFakeSession();
+		let resolveKill!: () => void;
+		const killStarted = vi.fn();
+		session.commands.kill = async () => {
+			killStarted();
+			await new Promise<void>((resolve) => {
+				resolveKill = resolve;
+			});
+			return true;
+		};
+		const supervisor = new WorkerSupervisor(baseOptions(session));
+
+		await supervisor.start();
+		const pid = supervisor.pid;
+		const stopPromise = supervisor.stop();
+
+		await vi.waitFor(() => expect(killStarted).toHaveBeenCalledTimes(1));
+		expect(supervisor.pid).toBe(pid);
+		expect(supervisor.online).toBe(true);
+
+		resolveKill();
+		await stopPromise;
+
+		expect(supervisor.pid).toBeUndefined();
+		expect(supervisor.online).toBe(false);
+	});
+
+	it('preserves worker state and surfaces the error when kill fails', async () => {
+		const { session } = createFakeSession();
+		session.commands.kill = async () => {
+			throw new Error('kill failed');
+		};
+		const supervisor = new WorkerSupervisor(baseOptions(session));
+
+		await supervisor.start();
+		const pid = supervisor.pid;
+
+		await expect(supervisor.stop()).rejects.toThrow(/kill failed/);
+		expect(supervisor.pid).toBe(pid);
+		expect(supervisor.online).toBe(true);
 	});
 });
 
