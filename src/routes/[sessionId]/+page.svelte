@@ -18,6 +18,7 @@
 	import type { ProcessLiveness } from '$lib/contracts/sandbox';
 	import Alert from '@lostgradient/cinder/alert';
 	import Button from '@lostgradient/cinder/button';
+	import SkipLink from '@lostgradient/cinder/skip-link';
 	import StatusDot from '@lostgradient/cinder/status-dot';
 	import ToastRegion from '@lostgradient/cinder/toast-region';
 	import '@lostgradient/cinder/alert/styles';
@@ -198,15 +199,6 @@
 			}
 		};
 	}
-
-	function focusGuidedJourney(event: MouseEvent): void {
-		event.preventDefault();
-		const target = document.getElementById('guided-journey');
-		if (target === null) return;
-		target.focus();
-		target.scrollIntoView({ block: 'start' });
-		history.replaceState(null, '', '#guided-journey');
-	}
 </script>
 
 <svelte:head>
@@ -229,9 +221,7 @@
 	/>
 
 	<div class="session" data-theme="dark" data-unusable={sandboxUnusable}>
-		<a class="skip-link" href="#guided-journey" onclick={focusGuidedJourney}>
-			Skip to guided journey
-		</a>
+		<SkipLink target="guided-journey">Skip to guided journey</SkipLink>
 
 		<header class="session__bar">
 			<h1 class="session__brand">Sandman</h1>
@@ -355,28 +345,6 @@
 		background: var(--cinder-bg, #0b0f17);
 		color: var(--cinder-text, #e5e7eb);
 		font-size: 0.875rem;
-	}
-
-	.skip-link {
-		position: fixed;
-		top: 0.75rem;
-		left: 0.75rem;
-		z-index: 1000;
-		transform: translateY(-150%);
-		border: 1px solid var(--cinder-accent);
-		border-radius: 0.375rem;
-		background: var(--cinder-surface-raised);
-		color: var(--cinder-text);
-		padding: 0.55rem 0.75rem;
-		font-size: 0.875rem;
-		font-weight: 700;
-		text-decoration: none;
-	}
-
-	.skip-link:focus {
-		transform: translateY(0);
-		outline: 2px solid var(--cinder-accent);
-		outline-offset: 2px;
 	}
 
 	.session__bar {
