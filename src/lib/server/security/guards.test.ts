@@ -4,7 +4,7 @@ import {
 	touchActiveDemoSession,
 	touchSandboxSession
 } from '$lib/server/database/repository';
-import { touchHandle } from '$lib/server/sandbox/registry';
+import { extendHandleTimeout, touchHandle } from '$lib/server/sandbox/registry';
 import { logError } from '$lib/server/logging';
 import {
 	createSignedSessionCookieValue,
@@ -28,6 +28,7 @@ vi.mock('$lib/server/database/repository', () => ({
 }));
 
 vi.mock('$lib/server/sandbox/registry', () => ({
+	extendHandleTimeout: vi.fn().mockResolvedValue(undefined),
 	touchHandle: vi.fn()
 }));
 
@@ -89,7 +90,7 @@ describe('touchSessionActivity', () => {
 		vi.clearAllMocks();
 	});
 
-	it('slides the demo session and sandbox session rows, refreshes the cookie, and resets the reaper timer', async () => {
+	it('slides the demo session and sandbox session rows, refreshes the cookie, extends E2B, and resets the reaper timer', async () => {
 		const cookieValue = createSignedSessionCookieValue('session-1', 'session-secret');
 		const event = makeEvent(cookieValue);
 
@@ -103,6 +104,7 @@ describe('touchSessionActivity', () => {
 			expect.anything(),
 			expect.objectContaining({ sandboxId: 'sandbox-1', ttlMs: 300_000 })
 		);
+		expect(extendHandleTimeout).toHaveBeenCalledWith('sandbox-1', 300_000);
 		expect(touchHandle).toHaveBeenCalledWith('sandbox-1');
 
 		expect(event.cookies.set).toHaveBeenCalledWith(
@@ -121,7 +123,20 @@ describe('touchSessionActivity', () => {
 
 		expect(touchActiveDemoSession).not.toHaveBeenCalled();
 		expect(touchSandboxSession).not.toHaveBeenCalled();
+		expect(extendHandleTimeout).not.toHaveBeenCalled();
 		expect(event.cookies.set).not.toHaveBeenCalled();
+	});
+
+	it('does not refresh the cookie, reaper, or E2B timeout when the sandbox row is already expired', async () => {
+		vi.mocked(touchSandboxSession).mockResolvedValueOnce(false);
+		const cookieValue = createSignedSessionCookieValue('session-1', 'session-secret');
+		const event = makeEvent(cookieValue);
+
+		await touchSessionActivity(event, 'sandbox-1');
+
+		expect(event.cookies.set).not.toHaveBeenCalled();
+		expect(extendHandleTimeout).not.toHaveBeenCalled();
+		expect(touchHandle).not.toHaveBeenCalled();
 	});
 
 	it('logs and swallows failures instead of throwing (a touch failure must not fail the request)', async () => {

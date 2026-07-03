@@ -11,7 +11,7 @@
  *   - Exposes sandboxId and trafficAccessToken from the underlying sandbox
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { CommandExitError } from 'e2b';
 import type { Sandbox } from 'e2b';
 import { wrapSandbox } from './e2b-adapter.ts';
@@ -31,6 +31,7 @@ type FakeSandbox = {
 	files: {
 		write(path: string, data: string): Promise<void>;
 	};
+	setTimeout(timeoutMs: number): Promise<void>;
 	kill(): Promise<boolean>;
 };
 
@@ -46,6 +47,7 @@ function makeFakeSandbox(overrides: Partial<FakeSandbox> = {}): FakeSandbox {
 		files: {
 			write: async () => undefined
 		},
+		setTimeout: async () => undefined,
 		kill: async () => true,
 		...overrides
 	};
@@ -140,5 +142,15 @@ describe('wrapSandbox', () => {
 		const session = wrapSandbox(fake as unknown as Sandbox);
 		expect(session.sandboxId).toBe('sbx-exposed');
 		expect(session.trafficAccessToken).toBe('tok-exposed');
+	});
+
+	it('delegates timeout extension to the underlying E2B sandbox', async () => {
+		const setTimeout = vi.fn().mockResolvedValue(undefined);
+		const fake = makeFakeSandbox({ setTimeout });
+		const session = wrapSandbox(fake as unknown as Sandbox);
+
+		await session.setTimeout(300_000);
+
+		expect(setTimeout).toHaveBeenCalledWith(300_000);
 	});
 });

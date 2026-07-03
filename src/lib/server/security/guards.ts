@@ -8,7 +8,7 @@ import {
 	touchSandboxSession,
 	type DemoSessionRecord
 } from '$lib/server/database/repository';
-import { touchHandle } from '$lib/server/sandbox/registry';
+import { extendHandleTimeout, touchHandle } from '$lib/server/sandbox/registry';
 import { logError } from '$lib/server/logging';
 import {
 	createSessionCookieOptions,
@@ -92,10 +92,13 @@ export async function touchSessionActivity(event: RequestEvent, sandboxId: strin
 
 		const now = new Date();
 		const database = getDatabase();
-		await Promise.all([
+		const [demoSessionTouched, sandboxSessionTouched] = await Promise.all([
 			touchActiveDemoSession(database, { sessionId, now }),
 			touchSandboxSession(database, { sandboxId, now, ttlMs: configuration.sessionTtlMs })
 		]);
+		if (!demoSessionTouched || !sandboxSessionTouched) return;
+
+		await extendHandleTimeout(sandboxId, configuration.sessionTtlMs);
 
 		event.cookies.set(
 			SESSION_COOKIE_NAME,

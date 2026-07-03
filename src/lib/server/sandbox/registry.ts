@@ -106,6 +106,16 @@ export function touchHandle(sandboxId: string): void {
 }
 
 /**
+ * Slide the provider-side sandbox timeout forward. A no-op if the sandbox is
+ * not registered in this server process.
+ */
+export async function extendHandleTimeout(sandboxId: string, timeoutMs: number): Promise<void> {
+	const entry = resolveEntry(sandboxId);
+	if (!entry) return;
+	await entry.client.extendTimeout(entry.handle, timeoutMs);
+}
+
+/**
  * Remove a sandbox from the registry.
  * Call this after `client.terminate()` succeeds.
  */

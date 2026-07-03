@@ -27,6 +27,7 @@ type CallRecord =
 	| { method: 'commands.run'; cmd: string }
 	| { method: 'commands.start'; cmd: string; pid: number }
 	| { method: 'commands.kill'; pid: number }
+	| { method: 'sandbox.setTimeout'; timeoutMs: number }
 	| { method: 'sandbox.kill' };
 
 function createMockAdapter(sandboxId = 'mock-sandbox-id'): {
@@ -90,6 +91,10 @@ function createMockAdapter(sandboxId = 'mock-sandbox-id'): {
 			async write(path, data) {
 				calls.push({ method: 'files.write', path, data });
 			}
+		},
+
+		async setTimeout(timeoutMs) {
+			calls.push({ method: 'sandbox.setTimeout', timeoutMs });
 		},
 
 		async kill() {
@@ -210,6 +215,15 @@ describe('provision()', () => {
 		});
 		await client.provision();
 		expect(capturedOpts?.network?.allowPublicTraffic).toBe(true);
+	});
+
+	it('extends the E2B sandbox timeout for an existing handle', async () => {
+		const { client, calls } = makeClient();
+		const handle = await client.provision();
+
+		await client.extendTimeout(handle, 300_000);
+
+		expect(calls).toContainEqual({ method: 'sandbox.setTimeout', timeoutMs: 300_000 });
 	});
 });
 
@@ -562,6 +576,7 @@ describe('bootstrap() — Temporal CLI install path', () => {
 			files: {
 				async write() {}
 			},
+			async setTimeout() {},
 			async kill() {
 				return true;
 			}

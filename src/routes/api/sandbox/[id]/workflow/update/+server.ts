@@ -27,7 +27,6 @@ export const POST: RequestHandler = async (event) => {
 	const { request, params } = event;
 	assertSameOrigin(event);
 	await requireOwnedSandbox(event, params.id);
-	await touchSessionActivity(event, params.id);
 
 	let body: unknown;
 	try {
@@ -49,6 +48,8 @@ export const POST: RequestHandler = async (event) => {
 	if (!isUpdateName(body.name)) {
 		return json({ error: `Unknown update name: ${body.name}` }, { status: 400 });
 	}
+
+	await touchSessionActivity(event, params.id);
 
 	const entry = getTemporalCliTarget(params.id);
 	const inputPath = await writeTemporalJsonInput(entry, 'update', body.input ?? {});

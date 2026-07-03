@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gt, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import type { Database } from './connection.ts';
 import {
 	DEMO_SESSION_STATUS,
@@ -258,6 +258,7 @@ export async function touchSandboxSession(
 		.where(
 			and(
 				eq(sandboxSession.e2bSandboxId, input.sandboxId),
+				gt(sandboxSession.expiresAt, input.now),
 				inArray(sandboxSession.status, ACTIVE_SANDBOX_STATUSES)
 			)
 		)

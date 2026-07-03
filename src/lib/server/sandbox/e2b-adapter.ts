@@ -44,6 +44,8 @@ export type E2bSandboxSession = {
 		/** Write a UTF-8 string to a file path inside the sandbox. */
 		write(path: string, data: string): Promise<void>;
 	};
+	/** Extend the provider-side sandbox timeout in milliseconds. */
+	setTimeout(timeoutMs: number): Promise<void>;
 	/** Kill the sandbox VM; resolves false if the sandbox was already gone. */
 	kill(): Promise<boolean>;
 };
@@ -142,6 +144,10 @@ export function wrapSandbox(sandbox: SandboxType): E2bSandboxSession {
 			async write(path, data) {
 				await sandbox.files.write(path, data);
 			}
+		},
+
+		async setTimeout(timeoutMs) {
+			await sandbox.setTimeout(timeoutMs);
 		},
 
 		async kill() {

@@ -25,7 +25,6 @@ export const POST: RequestHandler = async (event) => {
 	const { request, params } = event;
 	assertSameOrigin(event);
 	await requireOwnedSandbox(event, params.id);
-	await touchSessionActivity(event, params.id);
 
 	let body: unknown;
 	try {
@@ -48,6 +47,8 @@ export const POST: RequestHandler = async (event) => {
 	if (!Array.isArray(input.items) || input.items.length === 0) {
 		return json({ error: 'items must be a non-empty array' }, { status: 400 });
 	}
+
+	await touchSessionActivity(event, params.id);
 
 	const entry = getTemporalCliTarget(params.id);
 	const inputPath = await writeTemporalJsonInput(entry, 'start-order', input);
