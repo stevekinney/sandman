@@ -4,7 +4,6 @@
 declare module '@lostgradient/cinder/alert/styles';
 declare module '@lostgradient/cinder/badge/styles';
 declare module '@lostgradient/cinder/button/styles';
-declare module '@lostgradient/cinder/button-group/styles';
 declare module '@lostgradient/cinder/checkbox/styles';
 declare module '@lostgradient/cinder/empty-state/styles';
 declare module '@lostgradient/cinder/form-field/styles';
@@ -21,3 +20,4 @@ declare module '@lostgradient/cinder/tab-list/styles';
 declare module '@lostgradient/cinder/tabs/styles';
 declare module '@lostgradient/cinder/textarea/styles';
 declare module '@lostgradient/cinder/toast-region/styles';
+declare module '@lostgradient/cinder/toolbar/styles';
