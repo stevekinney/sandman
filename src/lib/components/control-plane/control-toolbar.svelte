@@ -88,6 +88,7 @@
 				label="Cancel & refund"
 				disabled={!session.canDo('cancel-order')}
 				loading={session.pendingControl === 'cancel-order'}
+				class={buttonClass('cancel-order')}
 				onclick={() => void session.cancelOrder()}
 			/>
 		</Toolbar.Group>
