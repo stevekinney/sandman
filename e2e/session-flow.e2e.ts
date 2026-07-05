@@ -278,7 +278,21 @@ test('guided tour can be completed through the visible workflow controls', async
 		['Waiting for restaurant', 'AWAITING_RESTAURANT', 'TimerStarted']
 	]);
 
-	await mockSandboxStatus(page, sandboxId, 'ready');
+	// Model real process liveness: the status endpoint reports whether the worker
+	// is polling, and a restart is only treated as recovered once it flips back
+	// online. Kept in sync by the kill/restart route handlers below.
+	let workerOnline = true;
+	await page.route(new RegExp(`/api/sandbox/${sandboxId}/status$`), async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({
+				status: 'ready',
+				errorMessage: null,
+				processes: { serverOnline: true, workerOnline }
+			})
+		});
+	});
 	await page.route(`**/api/sandbox/${sandboxId}/workflow`, async (route) => {
 		const payload = route.request().postDataJSON() as { orderId: string };
 		orderId = payload.orderId;
@@ -370,9 +384,13 @@ test('guided tour can be completed through the visible workflow controls', async
 		});
 	});
 	await page.route(`**/api/sandbox/${sandboxId}/worker/kill`, async (route) => {
+		workerOnline = false;
 		await route.fulfill({ status: 204, body: '' });
 	});
 	await page.route(`**/api/sandbox/${sandboxId}/worker/restart`, async (route) => {
+		// A real restart re-establishes the worker; the status poll then confirms
+		// it, which is what advances the durable-recovery tour step.
+		workerOnline = true;
 		await route.fulfill({ status: 204, body: '' });
 	});
 

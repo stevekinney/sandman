@@ -62,10 +62,10 @@
 			return 'The sandbox is still starting — this unlocks once it is ready.';
 		}
 		if (!session.serverOnline) {
-			return 'The Temporal server is stopped. Start it from the topology strip to continue.';
+			return 'Start the Temporal server from the topology strip to continue.';
 		}
 		if (!session.workerOnline) {
-			return 'The worker is offline. Restart it from the topology strip, then this step can complete.';
+			return 'Restart the worker from the topology strip, then this step can complete.';
 		}
 		return 'This step unlocks as the workflow reaches the right point.';
 	});
