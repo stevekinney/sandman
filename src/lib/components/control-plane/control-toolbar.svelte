@@ -60,7 +60,9 @@
 		if (session.pendingControl !== null || session.serverPending !== null) {
 			return 'Another action is in progress…';
 		}
-		if (!session.sandboxUsable) return 'The sandbox is still starting.';
+		// `sandboxUsable` is false both while provisioning and once the sandbox is
+		// unusable (expired/error), so keep this phrasing accurate for both.
+		if (!session.sandboxUsable) return 'The sandbox is not ready.';
 		if (!session.serverOnline) return 'Start the Temporal server (topology strip) to use this.';
 		if (!session.workerOnline) return 'Restart the worker (topology strip) to use this.';
 		return 'Not available at this point in the order yet.';

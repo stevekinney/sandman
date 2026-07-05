@@ -260,7 +260,9 @@
 					title="Time left before this ephemeral sandbox self-destructs"
 				>
 					<span class="session__chip-name">Session</span>
-					<span class="session__chip-value" aria-live="polite">{sessionCountdown} left</span>
+					<!-- No aria-live: the value re-renders every second, and announcing
+					     each tick would flood screen readers with noise. -->
+					<span class="session__chip-value">{sessionCountdown} left</span>
 				</div>
 			{/if}
 			<span class="session__id" title="Sandbox ID">{data.sandboxId}</span>
