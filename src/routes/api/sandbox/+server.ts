@@ -143,6 +143,11 @@ export const POST: RequestHandler = async (event) => {
 	// warms up. The worker status strip will reflect readiness.
 	void (async () => {
 		const bootstrapStartedAt = performance.now();
+		// Track readiness so the catch never tears down a sandbox that actually
+		// came up — only a post-success bookkeeping step (e.g. the `Ready` status
+		// write) failed in that case, and destroying a working VM would be worse
+		// than a stale DB row.
+		let sandboxReady = false;
 		try {
 			await updateSandboxStatus(database, {
 				sandboxId: handle.id,
@@ -150,6 +155,7 @@ export const POST: RequestHandler = async (event) => {
 				now: new Date()
 			});
 			const result = await registry.client.bootstrap(handle);
+			sandboxReady = result.ready;
 			const completedAt = new Date();
 			await updateSandboxStatus(database, {
 				sandboxId: handle.id,
@@ -175,10 +181,23 @@ export const POST: RequestHandler = async (event) => {
 				durationMs: Math.round(performance.now() - bootstrapStartedAt)
 			});
 		} catch (err) {
-			// Reclaim the VM FIRST — it's the billed resource, so free it before the
-			// fallible DB write below. If updateSandboxStatus then throws (e.g. a
-			// transient database outage right after the VM was provisioned), the
-			// sandbox is already terminated instead of leaking.
+			if (sandboxReady) {
+				// The sandbox is genuinely up; only a bookkeeping step after a ready
+				// bootstrap threw. Do NOT reclaim a working VM and do NOT mislabel it
+				// Error — just log and let the status poll / TTL reconcile the row.
+				logError({
+					event: 'sandbox.bootstrap.bookkeeping_failed',
+					sessionId: session.id,
+					sandboxId: handle.id,
+					status: 'error',
+					durationMs: Math.round(performance.now() - bootstrapStartedAt),
+					error: err
+				});
+				return;
+			}
+			// Bootstrap itself failed. Reclaim the VM FIRST — it's the billed
+			// resource — before the fallible DB write, so a database outage right
+			// after provisioning can't leak it.
 			await reclaimSandbox(() => registry.client.terminate(handle), handle.id, session.id);
 			await updateSandboxStatus(database, {
 				sandboxId: handle.id,

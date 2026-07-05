@@ -7,7 +7,8 @@ import {
 	reserveSandboxSlot,
 	updateSandboxStatus
 } from '$lib/server/database/repository';
-import { getSandboxRegistry } from '$lib/server/sandbox/registry';
+import { deregisterHandle, getSandboxRegistry } from '$lib/server/sandbox/registry';
+import { logError } from '$lib/server/logging';
 
 vi.mock('$lib/server/database/connection', () => ({
 	getDatabase: vi.fn(() => ({}))
@@ -204,5 +205,37 @@ describe('POST /api/sandbox', () => {
 		expect(readyInput?.expiresAt?.getTime()).toBe(
 			readyInput === undefined ? undefined : readyInput.now.getTime() + 300_000
 		);
+	});
+
+	it('keeps a ready sandbox alive when the post-bootstrap status write fails', async () => {
+		const terminate = vi.fn().mockResolvedValue(undefined);
+		vi.mocked(getSandboxRegistry).mockReturnValueOnce({
+			client: {
+				provision: vi
+					.fn()
+					.mockResolvedValue({ id: 'sandbox-1', status: 'Ready', host: () => 'localhost' }),
+				bootstrap: vi.fn().mockResolvedValue({ ready: true }),
+				killWorker: vi.fn(),
+				extendTimeout: vi.fn(),
+				terminate
+			}
+		} as unknown as ReturnType<typeof getSandboxRegistry>);
+		// The Bootstrapping write succeeds; the subsequent Ready write fails (e.g. a
+		// transient DB blip) even though the sandbox came up fine.
+		vi.mocked(updateSandboxStatus)
+			.mockResolvedValueOnce(undefined)
+			.mockRejectedValueOnce(new Error('database unavailable'));
+
+		const response = await POST(makeEvent());
+		expect(response.status).toBe(200);
+
+		await vi.waitFor(() => {
+			expect(vi.mocked(logError)).toHaveBeenCalledWith(
+				expect.objectContaining({ event: 'sandbox.bootstrap.bookkeeping_failed' })
+			);
+		});
+		// The working VM must NOT be torn down just because bookkeeping failed.
+		expect(terminate).not.toHaveBeenCalled();
+		expect(vi.mocked(deregisterHandle)).not.toHaveBeenCalled();
 	});
 });
