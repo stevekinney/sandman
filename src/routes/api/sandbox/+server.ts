@@ -175,14 +175,17 @@ export const POST: RequestHandler = async (event) => {
 				durationMs: Math.round(performance.now() - bootstrapStartedAt)
 			});
 		} catch (err) {
+			// Reclaim the VM FIRST — it's the billed resource, so free it before the
+			// fallible DB write below. If updateSandboxStatus then throws (e.g. a
+			// transient database outage right after the VM was provisioned), the
+			// sandbox is already terminated instead of leaking.
+			await reclaimSandbox(() => registry.client.terminate(handle), handle.id, session.id);
 			await updateSandboxStatus(database, {
 				sandboxId: handle.id,
 				status: SANDBOX_SESSION_STATUS.Error,
 				now: new Date(),
 				errorMessage: err instanceof Error ? err.message : String(err)
 			});
-			// Same reasoning as the not-ready branch: reclaim the leaked VM.
-			await reclaimSandbox(() => registry.client.terminate(handle), handle.id, session.id);
 			logError({
 				event: 'sandbox.bootstrap.failed',
 				sessionId: session.id,

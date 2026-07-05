@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { POST } from './+server';
-import { GET as VISIBILITY_GET } from './visibility/+server';
+import { GET as VISIBILITY_GET, _buildVisibilityQuery } from './visibility/+server';
 import { GET as QUERY_GET } from './query/+server';
 import { POST as SIGNAL_POST } from './signal/+server';
 import { POST as UPDATE_POST } from './update/+server';
@@ -309,22 +309,47 @@ describe('GET /api/sandbox/[id]/workflow/visibility', () => {
 		});
 	});
 
-	it('escapes a quote-containing restaurantId instead of rejecting it', async () => {
+	it('accepts a quote-containing restaurantId instead of rejecting it', async () => {
 		const exec = mockSandboxExec('{"executions":[]}');
 
 		const response = await VISIBILITY_GET(
 			makeRouteEvent('/api/sandbox/sandbox-1/workflow/visibility', {
-				// A bare single quote would escape the RestaurantId='...' clause.
 				search: { restaurantId: "rest' AND OrderStatus='Delivered" }
 			}) as Parameters<typeof VISIBILITY_GET>[0]
 		);
 
 		// The value is accepted (any restaurantId the order path allows stays
-		// searchable) and reaches the sandbox. buildVisibilityQuery doubles the
-		// embedded quotes so the injected fragment can't widen the query, and the
-		// whole command is additionally shell-escaped downstream.
+		// searchable) and reaches the sandbox rather than being rejected.
 		expect(response.status).toBe(200);
 		expect(exec).toHaveBeenCalledTimes(1);
-		expect(exec.mock.calls[0][1]).toContain('RestaurantId=');
+	});
+});
+
+describe('_buildVisibilityQuery — List Filter escaping', () => {
+	it('doubles embedded single quotes so a restaurantId cannot widen the query', () => {
+		const query = _buildVisibilityQuery({
+			status: null,
+			customerTier: null,
+			// A raw single quote would close the RestaurantId='...' literal and let
+			// the rest act as its own clause.
+			restaurantId: "rest' AND OrderStatus='Delivered"
+		});
+
+		// The whole value stays inside one quoted literal, with its quotes doubled.
+		expect(query).toBe("RestaurantId='rest'' AND OrderStatus=''Delivered'");
+		// It is NOT the injectable form where the quote breaks out into a new clause
+		// (which is exactly what raw interpolation would have produced).
+		expect(query).not.toBe("RestaurantId='rest' AND OrderStatus='Delivered'");
+	});
+
+	it('leaves a quote-free restaurantId untouched and ANDs multiple clauses', () => {
+		const query = _buildVisibilityQuery({
+			status: 'DELIVERED',
+			customerTier: 'premium',
+			restaurantId: 'kitchen-44'
+		});
+		expect(query).toBe(
+			"OrderStatus='DELIVERED' AND CustomerTier='premium' AND RestaurantId='kitchen-44'"
+		);
 	});
 });

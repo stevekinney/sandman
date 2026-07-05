@@ -35,7 +35,7 @@ export const GET: RequestHandler = async (event) => {
 	if (customerTier !== null && !isCustomerTier(customerTier)) {
 		return json({ error: `Unknown customer tier: ${customerTier}` }, { status: 400 });
 	}
-	const query = buildVisibilityQuery({ status, customerTier, restaurantId });
+	const query = _buildVisibilityQuery({ status, customerTier, restaurantId });
 	const entry = getTemporalCliTarget(params.id);
 	const result = await runTemporalCommand(
 		entry,
@@ -71,7 +71,14 @@ export const GET: RequestHandler = async (event) => {
 	}
 };
 
-function buildVisibilityQuery(filter: {
+/**
+ * Build the Temporal List Filter for the given search attributes.
+ *
+ * Exported (underscore-prefixed, per SvelteKit's `+server.ts` export rules) so
+ * the escaping can be unit-tested directly, without the downstream shell layer
+ * obscuring it.
+ */
+export function _buildVisibilityQuery(filter: {
 	status: string | null;
 	customerTier: string | null;
 	restaurantId: string | null;
