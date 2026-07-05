@@ -182,17 +182,38 @@ export const POST: RequestHandler = async (event) => {
 			});
 		} catch (err) {
 			if (sandboxReady) {
-				// The sandbox is genuinely up; only a bookkeeping step after a ready
-				// bootstrap threw. Do NOT reclaim a working VM and do NOT mislabel it
-				// Error — just log and let the status poll / TTL reconcile the row.
-				logError({
-					event: 'sandbox.bootstrap.bookkeeping_failed',
-					sessionId: session.id,
-					sandboxId: handle.id,
-					status: 'error',
-					durationMs: Math.round(performance.now() - bootstrapStartedAt),
-					error: err
-				});
+				// The sandbox is genuinely up; only the `Ready` status write threw. Do
+				// NOT reclaim a working VM. But the page gates controls on
+				// `status === 'ready'`, so a row stuck at `bootstrapping` would leave
+				// the sandbox unusable — retry the Ready write once (best-effort) to
+				// recover from a transient blip.
+				const recoveredAt = new Date();
+				try {
+					await updateSandboxStatus(database, {
+						sandboxId: handle.id,
+						status: SANDBOX_SESSION_STATUS.Ready,
+						now: recoveredAt,
+						expiresAt: new Date(recoveredAt.getTime() + configuration.sessionTtlMs)
+					});
+					logInfo({
+						event: 'sandbox.bootstrap.completed',
+						sessionId: session.id,
+						sandboxId: handle.id,
+						status: 'ready',
+						durationMs: Math.round(performance.now() - bootstrapStartedAt)
+					});
+				} catch (retryErr) {
+					// Still couldn't mark it ready. Leave the working VM running (never
+					// tear it down) and let the status poll / TTL reconcile the row.
+					logError({
+						event: 'sandbox.bootstrap.bookkeeping_failed',
+						sessionId: session.id,
+						sandboxId: handle.id,
+						status: 'error',
+						durationMs: Math.round(performance.now() - bootstrapStartedAt),
+						error: retryErr
+					});
+				}
 				return;
 			}
 			// Bootstrap itself failed. Reclaim the VM FIRST — it's the billed
