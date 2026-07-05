@@ -15,7 +15,10 @@ export type {
 	SandboxCommandResult,
 	SandboxCommandHandle,
 	CommandRunOpts,
-	E2bCreateOpts
+	E2bCreateOpts,
+	E2bKillOpts
 } from './e2b-adapter.ts';
 export { createReaper } from './reaper.ts';
 export type { Reaper } from './reaper.ts';
+export { createReconciler } from './reconciler.ts';
+export type { Reconciler, ReconcilerDeps } from './reconciler.ts';

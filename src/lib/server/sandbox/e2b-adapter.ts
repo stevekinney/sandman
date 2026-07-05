@@ -66,9 +66,20 @@ export type E2bCreateOpts = {
 	templateId?: string;
 };
 
+/** Options for killing a sandbox by ID without a live session. */
+export type E2bKillOpts = {
+	apiKey?: string;
+};
+
 /** Injectable abstraction over the E2B SDK for unit-testable sandbox operations. */
 export type E2bAdapter = {
 	create(opts?: E2bCreateOpts): Promise<E2bSandboxSession>;
+	/**
+	 * Kills a sandbox VM by ID without a live session object — used to reclaim
+	 * sandboxes provisioned by a previous server process (e.g. after a
+	 * redeploy). Resolves `false` when the sandbox is already gone.
+	 */
+	killById(sandboxId: string, opts?: E2bKillOpts): Promise<boolean>;
 };
 
 export type WrappableE2bSandbox = Pick<
@@ -190,6 +201,10 @@ export function createRealE2bAdapter(): E2bAdapter {
 					? await Sandbox.create(opts.templateId, sandboxOpts)
 					: await Sandbox.create(sandboxOpts);
 			return wrapSandbox(sandbox);
+		},
+
+		async killById(sandboxId, opts = {}) {
+			return Sandbox.kill(sandboxId, { apiKey: opts.apiKey });
 		}
 	};
 }

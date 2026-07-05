@@ -114,6 +114,7 @@ describe('POST /api/sandbox', () => {
 				startServer: vi.fn(),
 				extendTimeout: vi.fn(),
 				terminate: vi.fn(),
+				terminateById: vi.fn(),
 				writeFile: vi.fn()
 			},
 			handles: new Map(),
@@ -124,7 +125,12 @@ describe('POST /api/sandbox', () => {
 				tick: vi.fn(),
 				start: vi.fn()
 			},
-			stopReaper: vi.fn()
+			stopReaper: vi.fn(),
+			reconciler: {
+				tick: vi.fn(),
+				start: vi.fn()
+			},
+			stopReconciler: vi.fn()
 		};
 		vi.mocked(getSandboxRegistry).mockReturnValueOnce(registry);
 
@@ -160,6 +166,7 @@ describe('POST /api/sandbox', () => {
 				startServer: vi.fn(),
 				extendTimeout: vi.fn(),
 				terminate: vi.fn(),
+				terminateById: vi.fn(),
 				writeFile: vi.fn()
 			},
 			handles: new Map(),
@@ -170,7 +177,12 @@ describe('POST /api/sandbox', () => {
 				tick: vi.fn(),
 				start: vi.fn()
 			},
-			stopReaper: vi.fn()
+			stopReaper: vi.fn(),
+			reconciler: {
+				tick: vi.fn(),
+				start: vi.fn()
+			},
+			stopReconciler: vi.fn()
 		};
 		vi.mocked(getSandboxRegistry).mockReturnValueOnce(registry);
 

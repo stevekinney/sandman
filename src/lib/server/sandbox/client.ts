@@ -638,6 +638,26 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 	}
 
 	// ------------------------------------------------------------------
+	// terminateById
+	// ------------------------------------------------------------------
+
+	async function terminateById(sandboxId: string): Promise<void> {
+		const state = sandboxes.get(sandboxId);
+		if (state) {
+			if (state.terminated) return;
+			state.terminated = true;
+			state.worker?.dispose();
+			sandboxes.delete(sandboxId);
+			await state.session.kill();
+			return;
+		}
+		// No in-memory state — the sandbox was provisioned by a previous server
+		// process. Kill it at the provider by ID; E2B resolves false (not an
+		// error) when the sandbox is already gone.
+		await adapter.killById(sandboxId, { apiKey });
+	}
+
+	// ------------------------------------------------------------------
 	// Internal helpers
 	// ------------------------------------------------------------------
 
@@ -676,7 +696,8 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		exec,
 		extendTimeout,
 		writeFile,
-		terminate
+		terminate,
+		terminateById
 	};
 }
 

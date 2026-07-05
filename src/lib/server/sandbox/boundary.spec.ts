@@ -27,4 +27,8 @@ describe('server-only boundary', () => {
 	it('createReaper is exported as a function', () => {
 		expect(typeof indexExports.createReaper).toBe('function');
 	});
+
+	it('createReconciler is exported as a function', () => {
+		expect(typeof indexExports.createReconciler).toBe('function');
+	});
 });

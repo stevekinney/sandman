@@ -28,7 +28,8 @@ type CallRecord =
 	| { method: 'commands.start'; cmd: string; pid: number }
 	| { method: 'commands.kill'; pid: number }
 	| { method: 'sandbox.setTimeout'; timeoutMs: number }
-	| { method: 'sandbox.kill' };
+	| { method: 'sandbox.kill' }
+	| { method: 'adapter.killById'; sandboxId: string; apiKey: string | undefined };
 
 function createMockAdapter(sandboxId = 'mock-sandbox-id'): {
 	adapter: E2bAdapter;
@@ -107,6 +108,11 @@ function createMockAdapter(sandboxId = 'mock-sandbox-id'): {
 		async create(opts = {}) {
 			calls.push({ method: 'adapter.create', opts });
 			return session;
+		},
+
+		async killById(id, opts = {}) {
+			calls.push({ method: 'adapter.killById', sandboxId: id, apiKey: opts.apiKey });
+			return true;
 		}
 	};
 
@@ -201,6 +207,7 @@ describe('provision()', () => {
 		let capturedOpts: Parameters<E2bAdapter['create']>[0] | undefined;
 		const { adapter: baseAdapter } = createMockAdapter();
 		const adapter: E2bAdapter = {
+			...baseAdapter,
 			async create(opts) {
 				capturedOpts = opts;
 				return baseAdapter.create(opts);
@@ -240,6 +247,7 @@ describe('provision() — templateId wiring', () => {
 		let capturedOpts: Parameters<E2bAdapter['create']>[0] | undefined;
 		const { adapter: baseAdapter } = createMockAdapter();
 		const adapter: E2bAdapter = {
+			...baseAdapter,
 			async create(opts) {
 				capturedOpts = opts;
 				return baseAdapter.create(opts);
@@ -262,6 +270,7 @@ describe('provision() — templateId wiring', () => {
 		let capturedOpts: Parameters<E2bAdapter['create']>[0] | undefined;
 		const { adapter: baseAdapter } = createMockAdapter();
 		const adapter: E2bAdapter = {
+			...baseAdapter,
 			async create(opts) {
 				capturedOpts = opts;
 				return baseAdapter.create(opts);
@@ -284,6 +293,7 @@ describe('provision() — templateId wiring', () => {
 		let capturedOpts: Parameters<E2bAdapter['create']>[0] | undefined;
 		const { adapter: baseAdapter } = createMockAdapter();
 		const adapter: E2bAdapter = {
+			...baseAdapter,
 			async create(opts) {
 				capturedOpts = opts;
 				return baseAdapter.create(opts);
@@ -304,6 +314,7 @@ describe('provision() — templateId wiring', () => {
 		let capturedOpts: Parameters<E2bAdapter['create']>[0] | undefined;
 		const { adapter: baseAdapter } = createMockAdapter();
 		const adapter: E2bAdapter = {
+			...baseAdapter,
 			async create(opts) {
 				capturedOpts = opts;
 				return baseAdapter.create(opts);
@@ -434,6 +445,7 @@ describe('bootstrap()', () => {
 		const { adapter } = createMockAdapter('sbx-no-ui');
 		const client = createSandboxClient({
 			adapter: {
+				...adapter,
 				async create(opts) {
 					const session = await adapter.create(opts);
 					return {
@@ -586,6 +598,9 @@ describe('bootstrap() — Temporal CLI install path', () => {
 			adapter: {
 				async create() {
 					return session;
+				},
+				async killById() {
+					return true;
 				}
 			},
 			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
@@ -979,6 +994,7 @@ describe('startServer()', () => {
 		let failWorkerStart = false;
 		const client = createSandboxClient({
 			adapter: {
+				...adapter,
 				async create(opts) {
 					const session = await adapter.create(opts);
 					return {
@@ -1021,7 +1037,7 @@ describe('exec()', () => {
 		// Override run to return specific values.
 		session.commands.run = async () => ({ exitCode: 0, stdout: 'hello', stderr: '' });
 		const client = createSandboxClient({
-			adapter: { create: async () => session },
+			adapter: { create: async () => session, killById: async () => true },
 			templateFiles: {},
 			maxReadinessRetries: 1,
 			readinessDelayMs: 0
@@ -1073,6 +1089,51 @@ describe('terminate()', () => {
 
 		const killCount = calls.filter((c) => c.method === 'sandbox.kill').length;
 		expect(killCount).toBe(1); // sandbox killed exactly once
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: terminateById
+// ---------------------------------------------------------------------------
+
+describe('terminateById()', () => {
+	it('kills the session when this process holds in-memory state for the sandbox', async () => {
+		const { client, calls } = makeClient('sbx-live');
+		await client.provision();
+
+		await client.terminateById('sbx-live');
+
+		expect(calls.some((c) => c.method === 'sandbox.kill')).toBe(true);
+		expect(calls.some((c) => c.method === 'adapter.killById')).toBe(false);
+	});
+
+	it('falls back to a provider kill by ID when the sandbox is unknown to this process', async () => {
+		// Models the cross-restart case: the sandbox row exists in the database,
+		// but the process that provisioned the VM is gone, so no in-memory state.
+		const { adapter, calls } = createMockAdapter();
+		const client = createSandboxClient({ adapter, apiKey: 'e2b-local-key', templateFiles: {} });
+
+		await client.terminateById('sbx-orphaned-by-restart');
+
+		expect(calls).toContainEqual({
+			method: 'adapter.killById',
+			sandboxId: 'sbx-orphaned-by-restart',
+			apiKey: 'e2b-local-key'
+		});
+		expect(calls.some((c) => c.method === 'sandbox.kill')).toBe(false);
+	});
+
+	it('never double-kills a session already terminated via terminate()', async () => {
+		const { client, calls } = makeClient('sbx-live');
+		const handle = await client.provision();
+
+		await client.terminate(handle);
+		// State is gone, so this degrades to a provider-side kill by ID — which
+		// E2B treats as a harmless no-op for an already-dead sandbox.
+		await client.terminateById('sbx-live');
+
+		const sessionKills = calls.filter((c) => c.method === 'sandbox.kill').length;
+		expect(sessionKills).toBe(1);
 	});
 });
 
