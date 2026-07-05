@@ -184,6 +184,42 @@ describe('TourEngine', () => {
 		});
 	});
 
+	describe('advanceTo()', () => {
+		it('fast-forwards, marking every skipped step complete, and persists', () => {
+			engine.advanceTo(3);
+			expect(engine.currentStepIndex).toBe(3);
+			expect(engine.completedStepIds).toEqual(TOUR.slice(0, 3).map((step) => step.id));
+			expect(storage.load()).toEqual({
+				currentStepIndex: 3,
+				completedStepIds: TOUR.slice(0, 3).map((step) => step.id)
+			});
+		});
+
+		it('ignores backward and same-index targets', () => {
+			engine.feed(satisfyingEvent(0));
+			engine.feed(satisfyingEvent(1));
+			const completed = [...engine.completedStepIds];
+
+			engine.advanceTo(1);
+			engine.advanceTo(2);
+			expect(engine.currentStepIndex).toBe(2);
+			expect(engine.completedStepIds).toEqual(completed);
+		});
+
+		it('clamps to the end of the tour and reports completion', () => {
+			engine.advanceTo(TOUR.length + 5);
+			expect(engine.currentStepIndex).toBe(TOUR.length);
+			expect(engine.isComplete).toBe(true);
+			expect(engine.completedStepIds).toEqual(TOUR.map((step) => step.id));
+		});
+
+		it('resumes normal event-driven advancement from the new position', () => {
+			engine.advanceTo(3);
+			expect(engine.feed(satisfyingEvent(3))).toBe(true);
+			expect(engine.currentStepIndex).toBe(4);
+		});
+	});
+
 	describe('persistence', () => {
 		it('saves progress to the storage adapter after each advance', () => {
 			engine.feed(satisfyingEvent(0));

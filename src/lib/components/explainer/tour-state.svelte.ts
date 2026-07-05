@@ -65,6 +65,18 @@ export class TourState {
 		return advanced;
 	}
 
+	/**
+	 * Fast-forward to a later step, marking skipped steps complete — see
+	 * `TourEngine.advanceTo`. Backward or same-index targets are ignored.
+	 */
+	advanceTo(index: number): void {
+		this._engine.advanceTo(index);
+		this._progress = {
+			currentStepIndex: this._engine.currentStepIndex,
+			completedStepIds: [...this._engine.completedStepIds]
+		};
+	}
+
 	/** Reset tour progress and clear storage. Reactive state is updated. */
 	reset(): void {
 		this._engine.reset();

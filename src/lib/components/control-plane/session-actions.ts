@@ -149,10 +149,14 @@ export const DEMO_COURIER_LOCATION = {
 	speedKmh: 24
 } as const;
 
-/** Build a fresh demo order input (new orderId each call). */
-export function buildDemoOrder(): OrderInput {
+/**
+ * Build a demo order input. Pass an explicit `orderId` to reconstruct the
+ * order behind an already-running workflow (the workflow id IS the order id —
+ * the start route passes `--workflow-id ${orderId}`); omit it for a fresh one.
+ */
+export function buildDemoOrder(orderId: string = crypto.randomUUID()): OrderInput {
 	return {
-		orderId: crypto.randomUUID(),
+		orderId,
 		restaurantId: DEMO_ORDER_DEFAULTS.restaurantId,
 		customerId: DEMO_ORDER_DEFAULTS.customerId,
 		customerTier: CUSTOMER_TIER.Standard,

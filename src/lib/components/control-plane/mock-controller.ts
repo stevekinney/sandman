@@ -124,6 +124,9 @@ export class MockTemporalController implements TemporalController {
 	/** Result returned by `visibility()`. */
 	visibilityResult: VisibilityWorkflowSummary[] = [];
 
+	/** When set, `visibility()` throws this error instead of succeeding. */
+	visibilityError: Error | null = null;
+
 	/**
 	 * When set, `update()` throws this rejection error instead of succeeding.
 	 * Set to `null` (default) for the happy path.
@@ -185,6 +188,7 @@ export class MockTemporalController implements TemporalController {
 
 	async visibility(filter: VisibilityFilter): Promise<VisibilityWorkflowSummary[]> {
 		this.visibilityCalls.push({ filter });
+		if (this.visibilityError !== null) throw this.visibilityError;
 		return this.visibilityResult;
 	}
 }

@@ -164,6 +164,29 @@ export class TourEngine {
 	}
 
 	/**
+	 * Fast-forward the tour to the given step index, marking every skipped
+	 * step complete and persisting the result.
+	 *
+	 * Used to reconcile restored progress against the real workflow phase
+	 * (e.g. an order already in delivery makes the update-validator step
+	 * impossible to complete). Forward-only: backward or same-index targets
+	 * are ignored, so live events remain the only way progress can regress —
+	 * use `reset()` to start over.
+	 */
+	advanceTo(index: number): void {
+		const target = Math.min(Math.max(index, 0), this._steps.length);
+		if (target <= this._currentStepIndex) return;
+		for (const step of this._steps.slice(this._currentStepIndex, target)) {
+			this._completedStepIds.push(step.id);
+		}
+		this._currentStepIndex = target;
+		this._storage.save({
+			currentStepIndex: this._currentStepIndex,
+			completedStepIds: [...this._completedStepIds]
+		});
+	}
+
+	/**
 	 * Reset tour progress to the beginning and clear the storage adapter.
 	 */
 	reset(): void {

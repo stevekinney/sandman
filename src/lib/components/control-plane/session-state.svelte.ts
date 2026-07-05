@@ -26,6 +26,7 @@ import {
 	nowIso,
 	type SessionPhase
 } from './session-actions.ts';
+import { minimumTourStepIndexForPhase } from './session-restore.ts';
 
 /** Severity of a session notification — mirrors Cinder's toast variants. */
 export type NotifyVariant = 'info' | 'success' | 'warning' | 'danger';
@@ -155,6 +156,11 @@ export class SessionState {
 			});
 			this.#lastFedTimelineIndex = entry.index;
 		}
+		// The tour must never sit behind the real phase (e.g. restored progress
+		// parked on the update step once the order is in delivery, where the
+		// validator can never accept). Replayed events advance what they can
+		// above; this floors the rest. Forward-only — mirrors reconcileLiveness.
+		this.tour.advanceTo(minimumTourStepIndexForPhase(this.phase));
 	}
 
 	/**

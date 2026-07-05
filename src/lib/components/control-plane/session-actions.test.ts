@@ -210,6 +210,12 @@ describe('demo payloads', () => {
 		expect(first.visibilitySearchAttributesEnabled).toBe(true);
 	});
 
+	it('rebuilds the order behind a running workflow from its workflow id', () => {
+		const restored = buildDemoOrder('order-restored-1');
+		expect(restored.orderId).toBe('order-restored-1');
+		expect(restored.restaurantId).toBe('kitchen-44');
+	});
+
 	it('derives the child delivery workflow id from the order id', () => {
 		expect(deliveryWorkflowIdFor('abc-123')).toBe('delivery-abc-123');
 	});

@@ -14,6 +14,7 @@
 	 * All surfaces are driven by the real sandbox APIs and degrade gracefully
 	 * while the sandbox is provisioning or unusable.
 	 */
+	import { browser } from '$app/env';
 	import type { PageData } from './$types';
 	import type { ProcessLiveness } from '$lib/contracts/sandbox';
 	import Alert from '@lostgradient/cinder/alert';
@@ -26,6 +27,7 @@
 	import '@lostgradient/cinder/status-dot/styles';
 	import '@lostgradient/cinder/toast-region/styles';
 	import { FetchController } from '$lib/components/control-plane/fetch-controller';
+	import { restoreSessionFromSandbox } from '$lib/components/control-plane/session-restore';
 	import { SessionState } from '../../lib/components/control-plane/session-state.svelte.ts';
 	import {
 		orderStageDot,
@@ -38,6 +40,7 @@
 	import type { CodeReveal } from '$lib/components/editor/execution-pointer';
 	import { TourState } from '$lib/components/explainer';
 	import type { TourExperiment, TourLookAt } from '$lib/content/demo-script';
+	import { localStorageAdapter } from '$lib/content/tour-engine';
 	import type { StorageAdapter, TourProgress } from '$lib/content/tour-engine';
 	import ToastBridge from './toast-bridge.svelte';
 	import SandboxReadinessGate from './sandbox-readiness-gate.svelte';
@@ -53,8 +56,17 @@
 
 	let { data }: { data: PageData } = $props();
 
-	const tourState = new TourState(createVolatileTourStorage());
-	const session = $derived(new SessionState(new FetchController(data.sandboxId), tourState));
+	// Tour progress persists per sandbox, so a reload resumes this sandbox's
+	// journey and a new sandbox starts fresh. SSR renders with a throwaway
+	// in-memory adapter (no localStorage on the server); the client re-creates
+	// TourState against localStorage during hydration.
+	const tourState = $derived(
+		new TourState(
+			browser ? localStorageAdapter(`sandman:tour:${data.sandboxId}`) : createVolatileTourStorage()
+		)
+	);
+	const controller = $derived(new FetchController(data.sandboxId));
+	const session = $derived(new SessionState(controller, tourState));
 
 	let sandboxStatus = $state<string>('provisioning');
 	let sandboxStatusError = $state<string | null>(null);
@@ -166,6 +178,17 @@
 		};
 	});
 
+	// Re-attach a reloaded page to any workflow already running in the sandbox
+	// (the run is never persisted client-side) and reconcile the restored tour
+	// against the real workflow phase. Waits for the sandbox and Temporal
+	// server to be usable; the restore itself runs at most once per session.
+	$effect(() => {
+		const activeSession = session;
+		if (!activeSession.sandboxUsable || !activeSession.serverOnline) return;
+		void restoreSessionFromSandbox(controller, activeSession);
+	});
+
+	/** In-memory StorageAdapter used only for the SSR pass. */
 	function createVolatileTourStorage(): StorageAdapter {
 		let progress: TourProgress | null = null;
 		return {
