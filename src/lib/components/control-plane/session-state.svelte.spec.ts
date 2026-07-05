@@ -8,6 +8,8 @@
 import { describe, expect, it } from 'vitest';
 import type {
 	OrderSnapshot,
+	QueryName,
+	QueryReturnMap,
 	TimelineEntry,
 	VisibilityWorkflowSummary
 } from '$lib/contracts/workflow-api';
@@ -504,6 +506,27 @@ describe('SessionState', () => {
 
 			expect(session.run).toEqual(controller.startResult);
 			expect(session.activeOrder?.orderId).not.toBe('order-stale');
+		});
+
+		it('discards a stale timeline if the learner reset and placed a new order mid-query', async () => {
+			const { controller, session } = makeSession();
+			controller.visibilityResult = [runningOrderSummary('order-restored')];
+			const staleEntries = [timelineEntry(0, ORDER_STATUS.AwaitingRestaurant, 'TimerStarted')];
+			// The Visibility lookup resolves fine, but while the getTimeline query
+			// for the restored run is in flight, the learner resets and starts a
+			// brand-new order — a race Bugbot flagged (comment_id=3525759058).
+			controller.query = async <N extends QueryName>(): Promise<QueryReturnMap[N]> => {
+				session.reset();
+				await session.placeOrder();
+				return staleEntries as QueryReturnMap[N];
+			};
+
+			await restoreSessionFromSandbox(controller, session);
+
+			// The restored run's stale timeline must not be applied to the new run.
+			expect(session.run).toEqual(controller.startResult);
+			expect(session.timelineEntries).toEqual([]);
+			expect(session.phase).toBe(ORDER_STATUS.Created);
 		});
 
 		it('keeps the run when the timeline query fails (worker offline)', async () => {

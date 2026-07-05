@@ -139,7 +139,12 @@ export async function restoreSessionFromSandbox(
 	session.activeOrder = buildDemoOrder(active.workflowId);
 	try {
 		const entries = await controller.query(active.workflowId, 'getTimeline');
-		if (Array.isArray(entries)) session.ingestTimeline(entries);
+		// The learner may have Reset and placed a different order while this
+		// query was in flight — only apply the timeline if it still belongs to
+		// the run we're restoring, or it would corrupt the new run's state.
+		if (Array.isArray(entries) && session.run?.workflowId === active.workflowId) {
+			session.ingestTimeline(entries);
+		}
 	} catch {
 		// Worker offline — the timeline poll replays history after it restarts.
 	}
