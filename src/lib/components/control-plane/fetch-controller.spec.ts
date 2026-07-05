@@ -302,6 +302,25 @@ describe('FetchController.readProcessLiveness', () => {
 		expect(liveness).toEqual({ serverOnline: false, workerOnline: false });
 	});
 
+	it('treats a malformed processes field as fully offline rather than trusting it', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi
+				.fn()
+				.mockResolvedValue(
+					mockResponse(200, {
+						status: 'ready',
+						processes: { serverOnline: 'yes', workerOnline: 1 }
+					})
+				)
+		);
+
+		const controller = new FetchController('sandbox-abc');
+		const liveness = await controller.readProcessLiveness();
+
+		expect(liveness).toEqual({ serverOnline: false, workerOnline: false });
+	});
+
 	it('throws when the status response is not ok', async () => {
 		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('error', { status: 503 })));
 

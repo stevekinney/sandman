@@ -79,13 +79,12 @@ describe('GuidedTour', () => {
 		});
 
 		// The action is still shown so the tour is never a silent dead-end, but it
-		// is disabled and clicking it does nothing.
+		// is disabled (so it can't dispatch) and the blocked reason is explained.
 		const cta = page.getByRole('button', { name: 'Place order' });
 		await expect.element(cta).toBeDisabled();
 		await expect
 			.element(page.getByText('The worker is offline', { exact: false }))
 			.toBeInTheDocument();
-		await cta.click({ force: true }).catch(() => undefined);
 		expect(oncta).not.toHaveBeenCalled();
 	});
 

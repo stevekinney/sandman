@@ -225,8 +225,23 @@ export class SessionState {
 		if (this.pendingControl !== null || this.serverPending !== null || this.workerRestarting) {
 			return;
 		}
+		// A worker that comes back online while the server stayed up — with no
+		// explicit restart in flight — is a recovery the poll observed out of band:
+		// either a restart that only succeeded after `restartWorker` gave up
+		// waiting, or an editor save that hot-restarted the worker through the files
+		// route. Narrate it and emit the event so the durable-recovery tour step
+		// advances, exactly as an in-band restart would.
+		const workerRecovered =
+			this.serverOnline && liveness.serverOnline && !this.workerOnline && liveness.workerOnline;
 		this.serverOnline = liveness.serverOnline;
 		this.workerOnline = liveness.workerOnline;
+		if (workerRecovered) {
+			this.#emitSyntheticEvent('WorkerRestarted', this.run?.workflowId);
+			this.notify(
+				'Recovered. History replayed and the workflow resumed exactly where it left off — no state lost.',
+				'success'
+			);
+		}
 	}
 
 	// -- actions --------------------------------------------------------------

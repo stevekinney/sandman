@@ -382,6 +382,33 @@ describe('SessionState', () => {
 			expect(session.workerOnline).toBe(true);
 		});
 
+		it('emits a recovery event when the poll observes the worker come back late', async () => {
+			const { session, notifications } = makeSession();
+			await session.placeOrder();
+			// Worker was killed and the explicit restart already gave up waiting, so
+			// it is shown offline. The next authoritative poll then sees it online.
+			session.workerOnline = false;
+			const eventsBefore = session.workflowEvents.length;
+
+			session.reconcileLiveness({ serverOnline: true, workerOnline: true });
+
+			expect(session.workerOnline).toBe(true);
+			expect(session.workflowEvents.at(-1)?.type).toBe('WorkerRestarted');
+			expect(session.workflowEvents.length).toBe(eventsBefore + 1);
+			expect(notifications.at(-1)?.variant).toBe('success');
+		});
+
+		it('does not emit a recovery event when the server also just came back', () => {
+			const { session } = makeSession();
+			// Both server and worker were down (server stopped); the poll sees both
+			// return. That is a server recovery, not a worker restart, so no
+			// WorkerRestarted event should be synthesized here.
+			session.serverOnline = false;
+			session.workerOnline = false;
+			session.reconcileLiveness({ serverOnline: true, workerOnline: true });
+			expect(session.workflowEvents.some((event) => event.type === 'WorkerRestarted')).toBe(false);
+		});
+
 		it('skips reconciliation while an action is in flight so it cannot flicker', () => {
 			const { session } = makeSession();
 			session.workerOnline = false;

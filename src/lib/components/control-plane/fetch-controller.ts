@@ -129,11 +129,13 @@ export class FetchController implements TemporalController {
 			const message = await readErrorMessage(res);
 			throw new Error(`Read sandbox status failed: ${message}`);
 		}
-		const body = (await res.json()) as { processes?: ProcessLiveness | null };
-		// A `null`/absent `processes` means the backend can't observe the sandbox
-		// (handle gone) — treat that as "not online" so the caller keeps waiting
-		// or surfaces a failure rather than assuming recovery.
-		return body.processes ?? { serverOnline: false, workerOnline: false };
+		const body: unknown = await res.json();
+		const processes = isRecord(body) ? body.processes : undefined;
+		// A `null`/absent/malformed `processes` means the backend can't vouch for
+		// the sandbox (handle gone, or an unexpected shape) — treat that as "not
+		// online" so the caller keeps waiting or surfaces a failure rather than
+		// assuming recovery from data it can't trust.
+		return isProcessLiveness(processes) ? processes : { serverOnline: false, workerOnline: false };
 	}
 
 	async stopServer(): Promise<void> {
@@ -196,6 +198,15 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Validate that a value has the `ProcessLiveness` shape (two booleans). */
+function isProcessLiveness(value: unknown): value is ProcessLiveness {
+	return (
+		isRecord(value) &&
+		typeof value.serverOnline === 'boolean' &&
+		typeof value.workerOnline === 'boolean'
+	);
 }
 
 function getStringProperty(value: Record<string, unknown>, key: string): string | null {
