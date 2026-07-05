@@ -10,6 +10,7 @@
  */
 import type {
 	OrderInput,
+	OrderStatus,
 	TimelineEntry,
 	VisibilityWorkflowSummary
 } from '$lib/contracts/workflow-api';
@@ -29,6 +30,8 @@ export type RestorableSession = {
 	readonly phase: SessionPhase;
 	/** Bumped by `reset()` — lets an in-flight restore detect a mid-flight Reset. */
 	readonly resetEpoch: number;
+	/** Called synchronously right after `run` changes — see SessionState.onRunChanged. */
+	onRunChanged: (run: WorkflowRun | null) => void;
 	readonly tour: {
 		readonly currentStepIndex: number;
 		readonly isComplete: boolean;
@@ -69,6 +72,15 @@ function tourStepIndex(id: string): number {
 	const index = TOUR.findIndex((step) => step.id === id);
 	if (index === -1) throw new Error(`Unknown tour step id: ${id}`);
 	return index;
+}
+
+const KNOWN_ORDER_STATUSES: readonly string[] = Object.values(ORDER_STATUS);
+
+/** Narrow a Visibility summary's indexed OrderStatus search attribute, if present. */
+function knownOrderStatus(value: string | undefined): OrderStatus | undefined {
+	return value !== undefined && KNOWN_ORDER_STATUSES.includes(value)
+		? (value as OrderStatus)
+		: undefined;
 }
 
 /**
@@ -223,13 +235,18 @@ export async function restoreSessionFromSandbox(
 	notFoundStreak.delete(session);
 
 	session.run = { workflowId: active.workflowId, runId: active.runId };
+	session.onRunChanged(session.run);
 	session.activeOrder = buildDemoOrder(active.workflowId);
-	// Floor the tour to at least what this phase implies immediately, so a
-	// learner isn't stuck looking at a disabled "place order" CTA while a run
-	// already exists — even if the timeline replay below never succeeds
-	// (worker down). `session.phase` reads Created off a run with no entries
-	// yet, matching derivePhase's default.
-	session.tour.advanceTo(minimumTourStepIndexForPhase(session.phase));
+	// Floor the tour immediately using Visibility's indexed OrderStatus search
+	// attribute — real and available even with the worker down — rather than
+	// `session.phase`, which reads Created until getTimeline supplies real
+	// entries below. Using `session.phase` here would floor a further-along
+	// order (e.g. AwaitingRestaurant) as if it had only just started, leaving
+	// a persisted later step un-reconciled for as long as the worker stays
+	// offline. Falls back to `session.phase` if the attribute is unavailable
+	// (Search Attributes weren't registered for that run).
+	const knownPhase = knownOrderStatus(active.businessSnapshot.OrderStatus) ?? session.phase;
+	session.tour.advanceTo(minimumTourStepIndexForPhase(knownPhase));
 	try {
 		const entries = await controller.query(active.workflowId, 'getTimeline');
 		// The learner may have Reset and placed a different order while this

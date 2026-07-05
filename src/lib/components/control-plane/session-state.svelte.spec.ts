@@ -406,6 +406,18 @@ describe('SessionState', () => {
 		expect(session.canDo('start-order')).toBe(false);
 	});
 
+	it('calls onRunChanged synchronously whenever run changes', async () => {
+		const { session } = makeSession();
+		const seen: Array<{ workflowId: string } | null> = [];
+		session.onRunChanged = (run) => seen.push(run ? { workflowId: run.workflowId } : null);
+
+		await session.placeOrder();
+		expect(seen).toEqual([{ workflowId: session.run?.workflowId }]);
+
+		session.reset();
+		expect(seen).toEqual([{ workflowId: seen[0]?.workflowId }, null]);
+	});
+
 	describe('restoreSessionFromSandbox', () => {
 		function runningOrderSummary(
 			workflowId: string,
@@ -712,6 +724,31 @@ describe('SessionState', () => {
 			// that dead end right away.
 			expect(session.run?.workflowId).toBe('order-8');
 			expect(TOUR[tour.currentStepIndex]?.id).toBe('activities-run');
+		});
+
+		it('floors using the real Visibility OrderStatus, not the always-Created session.phase, when the worker is offline', async () => {
+			// A further-along order (already past signal-accept) reloads while
+			// the worker happens to be down. `session.phase` would read Created
+			// (no timeline entries yet) and floor only to activities-run — far
+			// short of reality — unless the immediate floor uses Visibility's
+			// indexed OrderStatus search attribute instead.
+			const storage = volatileStorage();
+			const tour = new TourState(storage);
+			const controller = new MockTemporalController();
+			controller.visibilityResult = [
+				runningOrderSummary('order-9', {
+					businessSnapshot: { OrderStatus: ORDER_STATUS.Preparing }
+				})
+			];
+			controller.query = async () => {
+				throw new Error('no worker available');
+			};
+			const session = new SessionState(controller, tour);
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run?.workflowId).toBe('order-9');
+			expect(TOUR[tour.currentStepIndex]?.id).toBe('update-with-validator');
 		});
 
 		it('prefers the summary matching a persisted workflow id over an arbitrary first match', async () => {

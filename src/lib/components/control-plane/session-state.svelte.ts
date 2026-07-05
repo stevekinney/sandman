@@ -71,6 +71,15 @@ export class SessionState {
 
 	/** Toast sink — assigned by the page once the toast region is mounted. */
 	notify: (message: string, variant: NotifyVariant) => void = () => {};
+	/**
+	 * Invoked synchronously every time `run` changes — assigned by the page to
+	 * persist the active workflow id for reload restoration's disambiguation
+	 * hint (see session-restore.ts). Deliberately not a `$effect` on `run`:
+	 * an effect flushes on the next microtask, which is fine for a live
+	 * session but leaves a window where a reload could race ahead of the
+	 * write; calling this inline at every mutation site closes that gap.
+	 */
+	onRunChanged: (run: WorkflowRun | null) => void = () => {};
 
 	run = $state<WorkflowRun | null>(null);
 	activeOrder = $state<OrderInput | null>(null);
@@ -228,6 +237,7 @@ export class SessionState {
 	 */
 	reset(): void {
 		this.run = null;
+		this.onRunChanged(null);
 		this.activeOrder = null;
 		this.timelineEntries = [];
 		this.workflowEvents = [];
@@ -291,6 +301,7 @@ export class SessionState {
 			const order = buildDemoOrder();
 			const run = await this.#controller.start(order);
 			this.run = run;
+			this.onRunChanged(run);
 			this.activeOrder = order;
 			this.timelineEntries = [];
 			this.workflowEvents = [];
