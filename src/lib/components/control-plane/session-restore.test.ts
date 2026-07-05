@@ -9,20 +9,39 @@ import type { VisibilityWorkflowSummary } from '$lib/contracts/workflow-api';
 import { ORDER_FOOD_WORKFLOW, ORDER_STATUS } from '$lib/contracts/workflow-api';
 import { TOUR } from '$lib/content/demo-script';
 import type { SessionPhase } from './session-actions.ts';
-import { isResumableOrderWorkflow, minimumTourStepIndexForPhase } from './session-restore.ts';
+import {
+	isOrderWorkflowSummary,
+	isResumableOrderWorkflow,
+	minimumTourStepIndexForPhase
+} from './session-restore.ts';
+
+function summary(overrides: Partial<VisibilityWorkflowSummary> = {}): VisibilityWorkflowSummary {
+	return {
+		workflowId: 'order-1',
+		runId: 'run-1',
+		status: 'RUNNING',
+		type: ORDER_FOOD_WORKFLOW,
+		businessSnapshot: {},
+		...overrides
+	};
+}
+
+describe('isOrderWorkflowSummary', () => {
+	it('accepts an order workflow regardless of status', () => {
+		expect(isOrderWorkflowSummary(summary())).toBe(true);
+		expect(isOrderWorkflowSummary(summary({ status: 'COMPLETED' }))).toBe(true);
+		expect(isOrderWorkflowSummary(summary({ status: 'CANCELED' }))).toBe(true);
+	});
+
+	it('rejects delivery children and untyped summaries', () => {
+		expect(
+			isOrderWorkflowSummary(summary({ workflowId: 'delivery-order-1', type: 'deliveryWorkflow' }))
+		).toBe(false);
+		expect(isOrderWorkflowSummary(summary({ type: undefined }))).toBe(false);
+	});
+});
 
 describe('isResumableOrderWorkflow', () => {
-	function summary(overrides: Partial<VisibilityWorkflowSummary> = {}): VisibilityWorkflowSummary {
-		return {
-			workflowId: 'order-1',
-			runId: 'run-1',
-			status: 'RUNNING',
-			type: ORDER_FOOD_WORKFLOW,
-			businessSnapshot: {},
-			...overrides
-		};
-	}
-
 	it('accepts a running order workflow regardless of status casing', () => {
 		expect(isResumableOrderWorkflow(summary())).toBe(true);
 		expect(isResumableOrderWorkflow(summary({ status: 'Running' }))).toBe(true);

@@ -512,7 +512,11 @@ describe('SessionState', () => {
 			const storage = volatileStorage();
 			const tour = restoredTour(storage, 3);
 			const controller = new MockTemporalController();
-			controller.visibilityResult = [runningOrderSummary('order-1', { status: 'COMPLETED' })];
+			// A delivery child alone doesn't count — no order workflow of any
+			// status exists, which is the only case that should reset progress.
+			controller.visibilityResult = [
+				runningOrderSummary('delivery-order-1', { type: 'deliveryWorkflow' })
+			];
 			const session = new SessionState(controller, tour);
 
 			// Visibility is eventually consistent, so a single empty result isn't
@@ -588,6 +592,27 @@ describe('SessionState', () => {
 
 			await restoreSessionFromSandbox(controller, session);
 			expect(session.run).toEqual(controller.startResult);
+			expect(controller.visibilityCalls).toHaveLength(0);
+		});
+
+		it('does not let a later poll undo a Reset when the learner ordered before restore ever ran', async () => {
+			const { controller, session } = makeSession();
+			// The learner places an order fast enough that restoreSessionFromSandbox
+			// has never actually run yet when it's first called — run is already
+			// non-null, so it short-circuits without ever calling Visibility.
+			await session.placeOrder();
+			const orderedWorkflowId = session.run?.workflowId;
+			await restoreSessionFromSandbox(controller, session);
+			expect(controller.visibilityCalls).toHaveLength(0);
+
+			// Reset is client-only — the workflow above keeps running server-side.
+			session.reset();
+			controller.visibilityResult = [runningOrderSummary(orderedWorkflowId ?? '')];
+
+			// A later poll tick (the same trigger that ran restore the first time)
+			// must not resurrect the just-reset run.
+			await restoreSessionFromSandbox(controller, session);
+			expect(session.run).toBeNull();
 			expect(controller.visibilityCalls).toHaveLength(0);
 		});
 
@@ -711,6 +736,41 @@ describe('SessionState', () => {
 			await restoreSessionFromSandbox(controller, session, 'order-does-not-exist');
 
 			expect(session.run?.workflowId).toBe('order-old');
+		});
+
+		it('prefers a still-running order over a finished one when both are present', async () => {
+			const { controller, session } = makeSession();
+			controller.visibilityResult = [
+				runningOrderSummary('order-finished', { status: 'COMPLETED' }),
+				runningOrderSummary('order-running')
+			];
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run?.workflowId).toBe('order-running');
+		});
+
+		it('preserves and reconciles progress against a finished order instead of wiping it', async () => {
+			// The learner completed delivery and reloaded before the final
+			// getTimeline poll ever recorded WorkflowExecutionCompleted — the
+			// workflow is no longer RUNNING, but its history is still real.
+			const storage = volatileStorage();
+			const tour = restoredTour(storage, 6); // mid-tour, well short of complete
+			const controller = new MockTemporalController();
+			controller.visibilityResult = [
+				runningOrderSummary('order-finished', { status: 'COMPLETED' })
+			];
+			controller.queryResults.set('getTimeline', [
+				timelineEntry(0, ORDER_STATUS.Delivered, 'WorkflowExecutionCompleted')
+			]);
+			const session = new SessionState(controller, tour);
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run?.workflowId).toBe('order-finished');
+			expect(session.phase).toBe(ORDER_STATUS.Delivered);
+			// Reconciled against the real (terminal) phase, not reset to step 0.
+			expect(tour.currentStepIndex).toBeGreaterThan(0);
 		});
 	});
 

@@ -39,15 +39,29 @@ export type RestorableSession = {
 };
 
 /**
- * Whether a Visibility summary is a live order workflow the session can
- * re-attach to after a reload. Delivery children and finished runs are
- * excluded — only a running `orderFoodWorkflow` is resumable.
+ * Whether a Visibility summary is the sandbox's order workflow — the parent
+ * `orderFoodWorkflow`, not a `delivery-…` child — regardless of whether it is
+ * still running. Used to find anything worth reconciling tour progress
+ * against, including a run that finished (Delivered/Cancelled/Refunded)
+ * moments before a reload raced the final `getTimeline` poll that would have
+ * recorded it — that history is still real and worth replaying, not a reason
+ * to wipe the learner's progress back to step 0.
+ */
+export function isOrderWorkflowSummary(summary: VisibilityWorkflowSummary): boolean {
+	return summary.type === ORDER_FOOD_WORKFLOW;
+}
+
+/**
+ * Whether a Visibility summary is a *live* order workflow — the same check as
+ * {@link isOrderWorkflowSummary}, plus still running. Used to prefer an
+ * active run over a stale finished one when both are present and no
+ * `preferredWorkflowId` disambiguates.
  * Status is compared case-insensitively because the Temporal CLI has emitted
  * both `WORKFLOW_EXECUTION_STATUS_RUNNING` (normalized to `RUNNING`) and
  * `Running` across versions.
  */
 export function isResumableOrderWorkflow(summary: VisibilityWorkflowSummary): boolean {
-	return summary.type === ORDER_FOOD_WORKFLOW && summary.status.toUpperCase() === 'RUNNING';
+	return isOrderWorkflowSummary(summary) && summary.status.toUpperCase() === 'RUNNING';
 }
 
 /** Resolve a tour step id to its index, failing loudly if the script drifts. */
@@ -141,19 +155,33 @@ const NOT_FOUND_CONFIRMATION_ROUNDS = 3;
  * like a Visibility error.
  *
  * Runs at most once per session (once it finds and adopts a run, or confirms
- * none exists); a Visibility failure or an unconfirmed empty result clears
- * the attempt so the caller's regular polling cadence can retry. A Reset
- * mid-flight abandons this attempt the same way — the next poll tick starts
- * fresh and, if the workflow is still running server-side, re-attaches to it
- * exactly as it would without the race (Reset is client-only and does not
- * cancel the run — see the module doc).
+ * none exists, or discovers the learner already has a live run of their own);
+ * a Visibility failure or an unconfirmed empty result clears the attempt so
+ * the caller's regular polling cadence can retry. A Reset mid-flight abandons
+ * this attempt the same way — the next poll tick starts fresh and, if the
+ * workflow is still running server-side, re-attaches to it exactly as it
+ * would without the race (Reset is client-only and does not cancel the run —
+ * see the module doc).
+ *
+ * Once a session has ever reached this point with a run already set — whether
+ * because it adopted one itself or because the learner placed an order before
+ * this ever got to run — restoration is permanently done for that session
+ * instance. Without this, a learner who orders fast enough that `run` is
+ * already non-null on entry would leave `restoreAttempted` unset; a later
+ * Reset (which does not cancel the still-running workflow server-side) would
+ * then let the next poll tick re-run restoration from scratch and silently
+ * re-adopt that old run, undoing the Reset the learner just performed.
  */
 export async function restoreSessionFromSandbox(
 	controller: TemporalController,
 	session: RestorableSession,
 	preferredWorkflowId?: string
 ): Promise<void> {
-	if (restoreAttempted.has(session) || session.run !== null) return;
+	if (restoreAttempted.has(session)) return;
+	if (session.run !== null) {
+		restoreAttempted.add(session);
+		return;
+	}
 	restoreAttempted.add(session);
 	const epochAtStart = session.resetEpoch;
 
@@ -172,9 +200,14 @@ export async function restoreSessionFromSandbox(
 		return;
 	}
 
-	const resumable = workflows.filter(isResumableOrderWorkflow);
+	// Any order workflow (running or finished) is worth reconciling against;
+	// prefer an exact match, then a live run, then whatever's left — a stale
+	// finished order is still better to replay than to silently discard.
+	const orderWorkflows = workflows.filter(isOrderWorkflowSummary);
 	const active =
-		resumable.find((summary) => summary.workflowId === preferredWorkflowId) ?? resumable[0];
+		orderWorkflows.find((summary) => summary.workflowId === preferredWorkflowId) ??
+		orderWorkflows.find(isResumableOrderWorkflow) ??
+		orderWorkflows[0];
 
 	if (active === undefined) {
 		const streak = (notFoundStreak.get(session) ?? 0) + 1;
