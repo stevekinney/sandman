@@ -327,6 +327,24 @@ describe('SessionState', () => {
 		expect(session.workflowEvents.some((event) => event.type === 'WorkerRestarted')).toBe(false);
 	});
 
+	it('invalidates a stale restart when reset runs during its poll', async () => {
+		const { controller, session } = makeSession();
+		await session.placeOrder();
+		await session.killWorker();
+		controller.processLiveness = { serverOnline: true, workerOnline: true };
+
+		// Kick off the restart but reset before awaiting it — reset() bumps the
+		// restart generation, so the in-flight poll's completion is stale.
+		const pending = session.restartWorker();
+		session.reset();
+		await pending;
+
+		// The stale restart neither narrates a recovery nor clobbers the
+		// post-reset session (its finally must not re-touch pendingControl either).
+		expect(session.workflowEvents.some((event) => event.type === 'WorkerRestarted')).toBe(false);
+		expect(session.run).toBeNull();
+	});
+
 	it('stop and start round-trip the Temporal server with persisted state', async () => {
 		const { controller, session, notifications } = makeSession();
 		await session.placeOrder();

@@ -93,6 +93,10 @@ export class SessionState {
 	#nextSyntheticSequence = SYNTHETIC_SEQUENCE_START;
 	#nextFlowId = 1;
 	#lastFedTimelineIndex = -1;
+	// Bumped by every restart and by reset(), so an in-flight restart's poll can
+	// tell it has been superseded (a reset, possibly followed by a new order)
+	// and must not touch state or narrate a recovery for a run it no longer owns.
+	#restartGeneration = 0;
 	readonly #workerRestartPollMs: number;
 	readonly #workerRestartMaxAttempts: number;
 
@@ -203,6 +207,9 @@ export class SessionState {
 		this.serverPending = null;
 		this.pendingControl = null;
 		this.flows = [];
+		// Invalidate any in-flight restart poll so its late completion can't act on
+		// this now-reset (or freshly-restarted) session.
+		this.#restartGeneration++;
 		this.#lastFedTimelineIndex = -1;
 		this.#nextSyntheticSequence = SYNTHETIC_SEQUENCE_START;
 		this.tour.reset();
@@ -461,19 +468,20 @@ export class SessionState {
 	 */
 	async restartWorker(): Promise<void> {
 		if (this.pendingControl !== null || this.serverPending !== null) return;
+		const generation = ++this.#restartGeneration;
 		this.pendingControl = 'kill-worker';
 		this.workerRestarting = true;
 		this.#pushFlow('sw');
 		try {
 			await this.#controller.restartWorker();
 			const recovered = await this.#waitForWorkerOnline();
+			// If the session was reset (and possibly a new order started) while the
+			// poll was running, this restart is stale: another operation now owns the
+			// state, so don't touch it or narrate a recovery for a run we lost.
+			if (generation !== this.#restartGeneration) return;
 			if (recovered) {
-				// The worker is genuinely back, so reflect that honestly even if the
-				// run was reset mid-wait.
 				this.workerOnline = true;
-				// But only narrate a workflow recovery when there is still a run to
-				// recover: a Reset during the poll window clears it, and firing a
-				// WorkerRestarted event on a freshly-idle session would be misleading.
+				// Only narrate a workflow recovery when there is still a run to recover.
 				if (this.run !== null) {
 					this.#emitSyntheticEvent('WorkerRestarted', this.run.workflowId);
 					this.notify(
@@ -491,11 +499,16 @@ export class SessionState {
 				);
 			}
 		} catch (error) {
+			if (generation !== this.#restartGeneration) return;
 			this.workerOnline = false;
 			this.notify(error instanceof Error ? error.message : String(error), 'danger');
 		} finally {
-			this.pendingControl = null;
-			this.workerRestarting = false;
+			// Only release the in-flight flags if they still belong to this restart —
+			// a reset (or superseding restart) may already have taken them over.
+			if (generation === this.#restartGeneration) {
+				this.pendingControl = null;
+				this.workerRestarting = false;
+			}
 		}
 	}
 
