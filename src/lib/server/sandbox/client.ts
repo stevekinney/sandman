@@ -19,6 +19,7 @@ import type { E2bAdapter, E2bSandboxSession } from './e2b-adapter.ts';
 import { createRealE2bAdapter } from './e2b-adapter.ts';
 import { WorkerSupervisor } from './worker-supervisor.ts';
 import type { WorkerCrash } from './worker-supervisor.ts';
+import { createKeyedMutex } from './keyed-mutex.ts';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -398,6 +399,20 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 	const sandboxes = new Map<string, InternalSandboxState>();
 
 	/**
+	 * Per-sandbox lock serializing the Temporal server/worker lifecycle
+	 * operations (bootstrap, start/stop server, kill/restart worker). Each of
+	 * them is a check-then-act sequence over `state.temporalPid` and
+	 * `state.worker`; two overlapping calls — e.g. a worker-restart POST
+	 * landing while startServer is mid-spawn — used to read stale state and
+	 * orphan a process, leaving the worker permanently offline. This is the
+	 * server-layer counterpart of the WorkerSupervisor's generation counter.
+	 * Only the exported methods take the lock; internal cross-calls
+	 * (stopServer → killWorker, startServer → restartWorker) run within the
+	 * caller's critical section.
+	 */
+	const lifecycleLock = createKeyedMutex();
+
+	/**
 	 * Builds a worker supervisor for a sandbox. The supervisor owns the worker
 	 * process lifecycle: real liveness, crash auto-restart, and log capture.
 	 * Test hooks (`workerMaxRestarts`, `workerRestartDelayMs`, `workerSchedule`)
@@ -699,11 +714,11 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 
 	return {
 		provision,
-		bootstrap,
-		restartWorker,
-		killWorker,
-		stopServer,
-		startServer,
+		bootstrap: (handle) => lifecycleLock.run(handle.id, () => bootstrap(handle)),
+		restartWorker: (handle) => lifecycleLock.run(handle.id, () => restartWorker(handle)),
+		killWorker: (handle) => lifecycleLock.run(handle.id, () => killWorker(handle)),
+		stopServer: (handle) => lifecycleLock.run(handle.id, () => stopServer(handle)),
+		startServer: (handle) => lifecycleLock.run(handle.id, () => startServer(handle)),
 		processLiveness,
 		exec,
 		extendTimeout,

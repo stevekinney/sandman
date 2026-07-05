@@ -457,6 +457,25 @@ describe('WorkerSupervisor.restart()', () => {
 		expect(supervisor.online).toBe(true);
 	});
 
+	it('cancels a pending auto-restart when an explicit restart races it', async () => {
+		const { session, startCommands, handles } = createFakeSession();
+		const scheduler = createManualScheduler();
+		const supervisor = new WorkerSupervisor(baseOptions(session, { schedule: scheduler.schedule }));
+
+		await supervisor.start(); // handle 0
+		handles[0].exit(1); // crash — schedules an auto-restart
+		await vi.waitFor(() => expect(scheduler.hasPending()).toBe(true));
+
+		// The explicit restart lands before the auto-restart fires. It must
+		// cancel the pending spawn — otherwise both would start a worker and one
+		// process is orphaned.
+		await supervisor.restart(); // handle 1
+
+		expect(scheduler.hasPending()).toBe(false);
+		expect(startCommands).toHaveLength(2); // initial start + explicit restart only
+		expect(supervisor.online).toBe(true);
+	});
+
 	it('resets the crash budget so a later crash can auto-restart again', async () => {
 		const { session, startCommands, handles } = createFakeSession();
 		const scheduler = createManualScheduler();
