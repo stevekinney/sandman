@@ -35,6 +35,14 @@ const HOP_BY_HOP = new Set([
  */
 const BLOCKED_RESPONSE_HEADERS = new Set(['x-frame-options', 'e2b-traffic-access-token']);
 
+/**
+ * Cap on a single upstream (sandbox Temporal UI) request. A wedged or
+ * slow-loris'd sandbox would otherwise hold this fetch — and the containing
+ * request handler — open indefinitely, and a UI page load fans out into many
+ * such sub-requests. 30s comfortably covers a healthy response.
+ */
+const UPSTREAM_TIMEOUT_MS = 30_000;
+
 /** Returns true for content-types that should be buffered and URL-rewritten. */
 function isRewritable(contentType: string): boolean {
 	return contentType.startsWith('text/html') || contentType.startsWith('application/json');
@@ -112,17 +120,23 @@ export async function proxyRequest({
 		upstream = await fetch(upstreamUrl, {
 			method: request.method,
 			headers: forwardHeaders,
-			body: reqBody
+			body: reqBody,
+			signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)
 		});
 	} catch (cause) {
+		const timedOut = cause instanceof Error && cause.name === 'TimeoutError';
 		const error: ProxyError = {
-			status: 502,
-			message: cause instanceof Error ? cause.message : 'upstream fetch failed',
+			status: timedOut ? 504 : 502,
+			message: timedOut
+				? `upstream did not respond within ${UPSTREAM_TIMEOUT_MS}ms`
+				: cause instanceof Error
+					? cause.message
+					: 'upstream fetch failed',
 			sandboxId,
 			timestamp: new Date().toISOString()
 		};
 		return new Response(JSON.stringify(error), {
-			status: 502,
+			status: error.status,
 			headers: { 'content-type': 'application/json' }
 		});
 	}

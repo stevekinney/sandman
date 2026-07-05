@@ -1050,6 +1050,30 @@ describe('writeFile()', () => {
 		expect(writeCall).toBeDefined();
 		expect(writeCall?.data).toBe('export const x = 1;');
 	});
+
+	it('rejects with a timeout when the sandbox write never settles', async () => {
+		vi.useFakeTimers();
+		try {
+			const { adapter, session } = createMockAdapter('sbx-hang');
+			// A wedged filesystem: the write promise never resolves.
+			session.files.write = () => new Promise<void>(() => {});
+			const client = createSandboxClient({
+				adapter,
+				publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
+				templateFiles: {},
+				maxReadinessRetries: 1,
+				readinessDelayMs: 0
+			});
+			const handle = await client.provision();
+
+			const write = client.writeFile(handle, '/app/order-workflow.ts', 'export const x = 1;');
+			const expectation = expect(write).rejects.toThrow(/timed out/);
+			await vi.advanceTimersByTimeAsync(30_000);
+			await expectation;
+		} finally {
+			vi.useRealTimers();
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------

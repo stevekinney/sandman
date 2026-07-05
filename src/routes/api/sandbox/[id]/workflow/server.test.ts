@@ -308,4 +308,22 @@ describe('GET /api/sandbox/[id]/workflow/visibility', () => {
 			error: expect.stringContaining('Search Attributes must be registered')
 		});
 	});
+
+	it('rejects a restaurantId that could break out of the List Filter clause', async () => {
+		const exec = mockSandboxExec('{"executions":[]}');
+
+		const response = await VISIBILITY_GET(
+			makeRouteEvent('/api/sandbox/sandbox-1/workflow/visibility', {
+				// A single quote would otherwise escape the RestaurantId='...' clause.
+				search: { restaurantId: "rest' AND OrderStatus='Delivered" }
+			}) as Parameters<typeof VISIBILITY_GET>[0]
+		);
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toEqual({
+			error: expect.stringContaining('Invalid restaurantId')
+		});
+		// The malformed filter never reaches the sandbox.
+		expect(exec).not.toHaveBeenCalled();
+	});
 });

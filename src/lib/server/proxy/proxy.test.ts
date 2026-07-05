@@ -251,4 +251,18 @@ describe('proxyRequest — upstream errors', () => {
 		const response = await proxyRequest(defaultParams());
 		expect(response.status).toBe(503);
 	});
+
+	it('returns 504 with a typed ProxyError when the upstream times out', async () => {
+		// AbortSignal.timeout aborts with a DOMException named "TimeoutError".
+		const timeoutError = new DOMException('The operation timed out', 'TimeoutError');
+		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(timeoutError));
+
+		const response = await proxyRequest(defaultParams());
+		expect(response.status).toBe(504);
+
+		const payload = (await response.json()) as ProxyError;
+		expect(payload.status).toBe(504);
+		expect(payload.sandboxId).toBe(SANDBOX_ID);
+		expect(payload.message).toContain('did not respond');
+	});
 });

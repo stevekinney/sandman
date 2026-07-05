@@ -35,6 +35,14 @@ export const GET: RequestHandler = async (event) => {
 	if (customerTier !== null && !isCustomerTier(customerTier)) {
 		return json({ error: `Unknown customer tier: ${customerTier}` }, { status: 400 });
 	}
+	// `status` and `customerTier` are enum-validated above, but `restaurantId` is
+	// free-form and gets interpolated into a single-quoted Temporal List Filter
+	// clause. Validate it at the boundary so a value containing a quote can't
+	// break out of the clause and widen/narrow the Visibility query (List Filter
+	// injection). Real restaurant IDs are simple slugs like "kitchen-44".
+	if (restaurantId !== null && !isSafeRestaurantId(restaurantId)) {
+		return json({ error: `Invalid restaurantId: ${restaurantId}` }, { status: 400 });
+	}
 
 	const query = buildVisibilityQuery({ status, customerTier, restaurantId });
 	const entry = getTemporalCliTarget(params.id);
@@ -170,6 +178,15 @@ function isOrderStatus(value: string): value is OrderStatus {
 		default:
 			return false;
 	}
+}
+
+/**
+ * A restaurant ID safe to interpolate into a Temporal List Filter clause:
+ * letters, digits, and the separators real IDs use. Deliberately excludes the
+ * single quote (and everything else) that could break out of the clause.
+ */
+function isSafeRestaurantId(value: string): boolean {
+	return value.length > 0 && value.length <= 128 && /^[A-Za-z0-9._-]+$/.test(value);
 }
 
 function isCustomerTier(value: string): value is CustomerTier {

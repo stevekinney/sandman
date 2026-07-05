@@ -160,6 +160,13 @@ export const POST: RequestHandler = async (event) => {
 					: undefined,
 				errorMessage: result.ready ? undefined : 'Temporal server did not become ready'
 			});
+			// A sandbox that never became ready is unusable, and its DB row just
+			// left the active-status set — so nothing else will ever reclaim the
+			// running E2B VM. Terminate it now, or it leaks (billed) until its own
+			// provider-side timeout, while the per-session slot frees immediately.
+			if (!result.ready) {
+				await reclaimSandbox(() => registry.client.terminate(handle), handle.id, session.id);
+			}
 			logInfo({
 				event: 'sandbox.bootstrap.completed',
 				sessionId: session.id,
@@ -174,6 +181,8 @@ export const POST: RequestHandler = async (event) => {
 				now: new Date(),
 				errorMessage: err instanceof Error ? err.message : String(err)
 			});
+			// Same reasoning as the not-ready branch: reclaim the leaked VM.
+			await reclaimSandbox(() => registry.client.terminate(handle), handle.id, session.id);
 			logError({
 				event: 'sandbox.bootstrap.failed',
 				sessionId: session.id,
@@ -187,6 +196,30 @@ export const POST: RequestHandler = async (event) => {
 
 	return json({ sandboxId: handle.id });
 };
+
+/**
+ * Terminate a sandbox VM and drop it from the in-process registry, logging (but
+ * not throwing) if termination fails. Used to reclaim a sandbox that failed to
+ * bootstrap so its E2B VM doesn't leak past the session's active-slot lifetime.
+ */
+async function reclaimSandbox(
+	terminate: () => Promise<void>,
+	sandboxId: string,
+	sessionId: string
+): Promise<void> {
+	try {
+		await terminate();
+		deregisterHandle(sandboxId);
+	} catch (terminationError) {
+		logError({
+			event: 'sandbox.bootstrap_cleanup.failed',
+			sessionId,
+			sandboxId,
+			status: 'error',
+			error: terminationError
+		});
+	}
+}
 
 function getHourWindowStart(now: Date): Date {
 	const windowStart = new Date(now);
