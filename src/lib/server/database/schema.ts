@@ -43,7 +43,18 @@ export const sandboxSession = pgTable(
 		updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 		expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 		bootstrappedAt: timestamp('bootstrapped_at', { withTimezone: true }),
-		terminatedAt: timestamp('terminated_at', { withTimezone: true })
+		terminatedAt: timestamp('terminated_at', { withTimezone: true }),
+		/**
+		 * Stamped once this row's E2B VM (if any) is confirmed terminated —
+		 * independent of `status`. `status` alone can't carry both "occupies a
+		 * capacity slot" and "VM still needs reclaiming": a row must leave the
+		 * active-status set immediately on expiry to avoid colliding with
+		 * `sandbox_session_active_session_unique`, but its VM may still be
+		 * running at that instant. NULL means "not yet reclaimed" (or reclaim
+		 * doesn't apply — no VM was ever attached); the reconciler queries on
+		 * this column, not on `status`.
+		 */
+		reclaimedAt: timestamp('reclaimed_at', { withTimezone: true })
 	},
 	(table) => [
 		uniqueIndex('sandbox_session_active_session_unique')

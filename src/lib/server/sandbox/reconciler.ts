@@ -5,19 +5,24 @@
  * process. After a redeploy or crash, sandboxes provisioned by the previous
  * process still have live E2B VMs and active database rows, but no in-memory
  * handle — so the reaper can never reach them, the VM leaks until its own
- * provider timeout, and the row keeps counting against capacity limits. The
- * reconciler closes that gap: it reads expired-but-active rows from the
- * database, terminates their VMs at the provider, and marks the rows Expired.
+ * provider timeout.
  *
- * All I/O is injected so unit tests can drive the pass without a real
- * database or E2B API.
+ * VM reclamation is tracked by `reclaimedAt`, deliberately independent of
+ * `status`: `status` must leave the active set the instant a row expires (to
+ * avoid colliding with the session's active-row unique index — see
+ * `reserveSandboxSlot`), but the VM behind it may still be running at that
+ * exact moment. The reconciler queries on `reclaimedAt`, not `status`, so a
+ * status flip elsewhere can never cause a VM to go unreclaimed.
+ *
+ * All I/O is injected so unit tests can drive a pass without a real database
+ * or E2B API.
  */
 
 /** Injected I/O for a reconcile pass. */
 export type ReconcilerDeps = {
 	/**
-	 * Returns expired-but-active sandbox IDs from the database, at most `limit`
-	 * (see `getExpiredRegisteredSandboxIds`).
+	 * Returns expired, VM-attached, not-yet-reclaimed sandbox IDs, at most
+	 * `limit` (see `getExpiredRegisteredSandboxIds`).
 	 */
 	getExpiredSandboxIds(input: { now: Date; limit: number }): Promise<string[]>;
 	/**
@@ -25,17 +30,22 @@ export type ReconcilerDeps = {
 	 * process holds no in-memory handle for the sandbox.
 	 */
 	terminateSandbox(sandboxId: string): Promise<void>;
-	/** Marks a single confirmed-terminated sandbox row Expired. */
-	markSandboxExpired(input: { sandboxId: string; now: Date }): Promise<void>;
 	/**
-	 * Bulk-marks every expired active row Expired — including reservations that
-	 * never received a VM (see `markExpiredSandboxes`).
+	 * Stamps `reclaimedAt` for a single sandbox whose VM was just confirmed
+	 * terminated (see `markSandboxReclaimed`).
+	 */
+	markSandboxReclaimed(input: { sandboxId: string; now: Date }): Promise<void>;
+	/**
+	 * Bulk-flips every expired active row's `status` to Expired — bookkeeping
+	 * only (see `markExpiredSandboxes`). Runs every pass regardless of whether
+	 * any termination above failed: it never touches `reclaimedAt`, so it
+	 * cannot cause a VM to be skipped.
 	 */
 	markExpiredSandboxes(input: { now: Date }): Promise<string[]>;
 	/**
 	 * Called for every failure: with a sandbox ID when one termination failed
-	 * (that row stays active so the next pass retries it), without one when the
-	 * pass itself failed (e.g. the database is unreachable).
+	 * (that sandbox stays unreclaimed so the next pass retries it), without one
+	 * when the pass itself failed (e.g. the database is unreachable).
 	 */
 	onError?(error: unknown, sandboxId?: string): void;
 };
@@ -75,34 +85,24 @@ export function createReconciler(
 				limit: options.limit
 			});
 
-			const terminated: string[] = [];
-			let anyFailed = false;
+			// Each sandbox's reclamation is independent: one failure must not
+			// block another's termination, or the mark, or the bookkeeping sweep
+			// below — reclaimedAt is per-row, so a failure here only leaves that
+			// one row unreclaimed for the next pass to retry.
 			await Promise.all(
 				sandboxIds.map(async (sandboxId) => {
 					try {
 						await deps.terminateSandbox(sandboxId);
-						terminated.push(sandboxId);
+						await deps.markSandboxReclaimed({ sandboxId, now: passStartedAt });
 					} catch (error) {
-						anyFailed = true;
 						deps.onError?.(error, sandboxId);
 					}
 				})
 			);
 
-			if (!anyFailed && sandboxIds.length < options.limit) {
-				// Every VM expired as of `passStartedAt` is confirmed gone, so one
-				// statement can sweep all expired active rows — including
-				// reservations that never received a VM, which the per-ID path
-				// below cannot reach.
-				await deps.markExpiredSandboxes({ now: passStartedAt });
-			} else {
-				// A failed (or beyond-the-batch-limit) VM's row must stay in an
-				// active status so the next pass retries its termination — mark
-				// only confirmed kills.
-				await Promise.all(
-					terminated.map((sandboxId) => deps.markSandboxExpired({ sandboxId, now: passStartedAt }))
-				);
-			}
+			// Bookkeeping only — flips status for monitoring/UI, never touches
+			// reclaimedAt, so it's always safe regardless of the outcome above.
+			await deps.markExpiredSandboxes({ now: passStartedAt });
 		} catch (error) {
 			deps.onError?.(error);
 		} finally {

@@ -5,7 +5,7 @@
  * All database and E2B I/O is injected, so these tests model the cross-restart
  * scenario directly: the database knows about expired sandboxes that this
  * process never provisioned (no in-memory handle), and a reconcile pass must
- * terminate their VMs and mark their rows Expired.
+ * terminate their VMs and stamp them reclaimed.
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -15,7 +15,7 @@ type DepsOverrides = Partial<ReconcilerDeps>;
 
 function createDeps(expiredIds: string[], overrides: DepsOverrides = {}) {
 	const terminated: string[] = [];
-	const markedIndividually: string[] = [];
+	const reclaimed: string[] = [];
 	const bulkMarks: Date[] = [];
 	const errors: Array<{ error: unknown; sandboxId: string | undefined }> = [];
 
@@ -26,8 +26,8 @@ function createDeps(expiredIds: string[], overrides: DepsOverrides = {}) {
 		async terminateSandbox(sandboxId) {
 			terminated.push(sandboxId);
 		},
-		async markSandboxExpired({ sandboxId }) {
-			markedIndividually.push(sandboxId);
+		async markSandboxReclaimed({ sandboxId }) {
+			reclaimed.push(sandboxId);
 		},
 		async markExpiredSandboxes({ now }) {
 			bulkMarks.push(now);
@@ -39,7 +39,7 @@ function createDeps(expiredIds: string[], overrides: DepsOverrides = {}) {
 		...overrides
 	};
 
-	return { deps, terminated, markedIndividually, bulkMarks, errors };
+	return { deps, terminated, reclaimed, bulkMarks, errors };
 }
 
 describe('createReconciler', () => {
@@ -59,17 +59,17 @@ describe('createReconciler', () => {
 		expect(terminated).toHaveLength(2);
 	});
 
-	it('bulk-marks expired rows once every termination in the pass succeeded', async () => {
-		const { deps, bulkMarks, markedIndividually } = createDeps(['sbx-old-1', 'sbx-old-2']);
+	it('marks each sandbox reclaimed independently after its own termination succeeds', async () => {
+		const { deps, reclaimed } = createDeps(['sbx-old-1', 'sbx-old-2']);
 		const reconciler = createReconciler(deps, { limit: 25 });
 
 		await reconciler.tick();
 
-		expect(bulkMarks).toHaveLength(1);
-		expect(markedIndividually).toHaveLength(0);
+		expect(reclaimed).toEqual(expect.arrayContaining(['sbx-old-1', 'sbx-old-2']));
+		expect(reclaimed).toHaveLength(2);
 	});
 
-	it('runs the bulk sweep even when no VM-attached rows are expired (reclaims stale reservations)', async () => {
+	it('runs the bookkeeping sweep every pass, even when no VM-attached rows are expired', async () => {
 		const { deps, terminated, bulkMarks } = createDeps([]);
 		const reconciler = createReconciler(deps, { limit: 25 });
 
@@ -79,8 +79,8 @@ describe('createReconciler', () => {
 		expect(bulkMarks).toHaveLength(1);
 	});
 
-	it('keeps a failed termination in an active status so the next pass retries it', async () => {
-		const { deps, markedIndividually, bulkMarks, errors } = createDeps(['sbx-fails', 'sbx-ok'], {
+	it('a failed termination is not marked reclaimed, and does not block the other sandbox in the batch', async () => {
+		const { deps, reclaimed, errors } = createDeps(['sbx-fails', 'sbx-ok'], {
 			async terminateSandbox(sandboxId) {
 				if (sandboxId === 'sbx-fails') throw new Error('E2B API unreachable');
 			}
@@ -89,17 +89,30 @@ describe('createReconciler', () => {
 
 		await reconciler.tick();
 
-		// Only the confirmed kill is marked; no bulk sweep may run, because it
-		// would flip the failed sandbox's row and orphan its still-live VM.
-		expect(markedIndividually).toEqual(['sbx-ok']);
-		expect(bulkMarks).toHaveLength(0);
+		expect(reclaimed).toEqual(['sbx-ok']);
 		expect(errors).toEqual([{ error: expect.any(Error), sandboxId: 'sbx-fails' }]);
+	});
+
+	it('the bookkeeping sweep still runs when a termination in the same pass fails', async () => {
+		// Bookkeeping only flips `status` for monitoring — it never touches
+		// reclaimedAt, so a failed termination elsewhere in the batch cannot make
+		// this unsafe to run.
+		const { deps, bulkMarks } = createDeps(['sbx-fails'], {
+			async terminateSandbox() {
+				throw new Error('E2B API unreachable');
+			}
+		});
+		const reconciler = createReconciler(deps, { limit: 25 });
+
+		await reconciler.tick();
+
+		expect(bulkMarks).toHaveLength(1);
 	});
 
 	it('retries a previously failed termination on the next tick', async () => {
 		let failOnce = true;
 		const attempts: string[] = [];
-		const { deps, bulkMarks } = createDeps(['sbx-flaky'], {
+		const { deps, reclaimed } = createDeps(['sbx-flaky'], {
 			async terminateSandbox(sandboxId) {
 				attempts.push(sandboxId);
 				if (failOnce) {
@@ -111,23 +124,11 @@ describe('createReconciler', () => {
 		const reconciler = createReconciler(deps, { limit: 25 });
 
 		await reconciler.tick();
-		expect(bulkMarks).toHaveLength(0); // failed pass — row stays active
+		expect(reclaimed).toHaveLength(0); // failed — not yet reclaimed
 		await reconciler.tick();
 
 		expect(attempts).toEqual(['sbx-flaky', 'sbx-flaky']);
-		expect(bulkMarks).toHaveLength(1); // clean retry — rows swept
-	});
-
-	it('skips the bulk sweep when the batch was truncated by the limit', async () => {
-		// Two expired rows, limit 2: rows beyond the batch would be flipped by a
-		// bulk sweep without their VMs being terminated — so mark per ID instead.
-		const { deps, markedIndividually, bulkMarks } = createDeps(['sbx-a', 'sbx-b']);
-		const reconciler = createReconciler(deps, { limit: 2 });
-
-		await reconciler.tick();
-
-		expect(bulkMarks).toHaveLength(0);
-		expect(markedIndividually).toEqual(expect.arrayContaining(['sbx-a', 'sbx-b']));
+		expect(reclaimed).toEqual(['sbx-flaky']);
 	});
 
 	it('reports a pass-level failure via onError instead of rejecting', async () => {
@@ -156,8 +157,6 @@ describe('createReconciler', () => {
 
 		await reconciler.tick();
 
-		// The sweep must use the same `now` as the query — a later reading could
-		// flip rows that expired mid-pass whose VMs were never terminated.
 		expect(queriedAt).toBe(frozen);
 		expect(bulkMarks).toEqual([frozen]);
 	});

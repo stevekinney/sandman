@@ -17,6 +17,7 @@ import { getDatabase } from '$lib/server/database/connection';
 import {
 	getExpiredRegisteredSandboxIds,
 	markExpiredSandboxes,
+	markSandboxReclaimed,
 	updateSandboxStatus
 } from '$lib/server/database/repository';
 import { SANDBOX_SESSION_STATUS } from '$lib/server/database/schema';
@@ -75,12 +76,7 @@ export function getSandboxRegistry(): Registry {
 					reaper.unregister(sandboxId);
 					logInfo({ event: 'sandbox.reconciler.terminated', sandboxId, status: 'expired' });
 				},
-				markSandboxExpired: (input) =>
-					updateSandboxStatus(getDatabase(), {
-						sandboxId: input.sandboxId,
-						status: SANDBOX_SESSION_STATUS.Expired,
-						now: input.now
-					}),
+				markSandboxReclaimed: (input) => markSandboxReclaimed(getDatabase(), input),
 				markExpiredSandboxes: (input) => markExpiredSandboxes(getDatabase(), input),
 				onError: (error, sandboxId) =>
 					logError({ event: 'sandbox.reconciler.failed', sandboxId, status: 'error', error })
@@ -120,7 +116,8 @@ export function registerHandle(sandboxId: string, handle: SandboxHandle): void {
 			await updateSandboxStatus(getDatabase(), {
 				sandboxId,
 				status: SANDBOX_SESSION_STATUS.Expired,
-				now: new Date()
+				now: new Date(),
+				reclaimed: true
 			});
 			logInfo({
 				event: 'sandbox.reaper.terminated',

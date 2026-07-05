@@ -1114,6 +1114,36 @@ describe('terminate()', () => {
 		const killCount = calls.filter((c) => c.method === 'sandbox.kill').length;
 		expect(killCount).toBe(1); // sandbox killed exactly once
 	});
+
+	it('keeps sandbox state after a failed kill, so a retry actually re-attempts termination', async () => {
+		// Regression: state used to be dropped BEFORE session.kill() resolved, so
+		// a failed kill still looked "already terminated" to the next caller —
+		// the retry silently no-op'd instead of re-attempting the kill, leaving
+		// the VM running with no path to reclaim it.
+		const { adapter: baseAdapter } = createMockAdapter('sbx-flaky');
+		let killAttempts = 0;
+		const adapter: E2bAdapter = {
+			...baseAdapter,
+			async create(opts) {
+				const session = await baseAdapter.create(opts);
+				return {
+					...session,
+					async kill() {
+						killAttempts++;
+						if (killAttempts === 1) throw new Error('transient E2B error');
+						return session.kill();
+					}
+				};
+			}
+		};
+		const client = createSandboxClient({ adapter, templateFiles: {} });
+		const handle = await client.provision();
+
+		await expect(client.terminate(handle)).rejects.toThrow('transient E2B error');
+		await client.terminate(handle); // retry — must actually re-invoke kill()
+
+		expect(killAttempts).toBe(2);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -1158,6 +1188,35 @@ describe('terminateById()', () => {
 
 		const sessionKills = calls.filter((c) => c.method === 'sandbox.kill').length;
 		expect(sessionKills).toBe(1);
+	});
+
+	it('keeps sandbox state after a failed kill, so the reconciler can retry by ID', async () => {
+		// Same regression as terminate(): a failed terminateById() must not drop
+		// state, or the next reconcile pass's retry would see !state and treat a
+		// still-running VM as already handled.
+		const { adapter: baseAdapter } = createMockAdapter('sbx-flaky');
+		let killAttempts = 0;
+		const adapter: E2bAdapter = {
+			...baseAdapter,
+			async create(opts) {
+				const session = await baseAdapter.create(opts);
+				return {
+					...session,
+					async kill() {
+						killAttempts++;
+						if (killAttempts === 1) throw new Error('transient E2B error');
+						return session.kill();
+					}
+				};
+			}
+		};
+		const client = createSandboxClient({ adapter, templateFiles: {} });
+		await client.provision();
+
+		await expect(client.terminateById('sbx-flaky')).rejects.toThrow('transient E2B error');
+		await client.terminateById('sbx-flaky'); // retry — must re-invoke kill(), not fall to killById
+
+		expect(killAttempts).toBe(2);
 	});
 });
 
