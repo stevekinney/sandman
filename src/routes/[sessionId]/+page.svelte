@@ -137,6 +137,14 @@
 					if (payload.processes) {
 						activeSession.reconcileLiveness(payload.processes);
 					}
+					// Piggyback the reload restore on this poll's cadence rather than a
+					// separate effect: restoreSessionFromSandbox is a cheap no-op once
+					// it has a run, so this naturally retries a transient Visibility
+					// failure (e.g. a blip that doesn't otherwise change these flags)
+					// without a dedicated timer.
+					if (activeSession.sandboxUsable && activeSession.serverOnline) {
+						void restoreSessionFromSandbox(controller, activeSession);
+					}
 				}
 			} catch (err) {
 				if (!cancelled) sandboxStatusError = err instanceof Error ? err.message : String(err);
@@ -176,16 +184,6 @@
 			cancelled = true;
 			clearInterval(handle);
 		};
-	});
-
-	// Re-attach a reloaded page to any workflow already running in the sandbox
-	// (the run is never persisted client-side) and reconcile the restored tour
-	// against the real workflow phase. Waits for the sandbox and Temporal
-	// server to be usable; the restore itself runs at most once per session.
-	$effect(() => {
-		const activeSession = session;
-		if (!activeSession.sandboxUsable || !activeSession.serverOnline) return;
-		void restoreSessionFromSandbox(controller, activeSession);
 	});
 
 	/** In-memory StorageAdapter used only for the SSR pass. */
