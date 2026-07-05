@@ -70,7 +70,12 @@ export class TourState {
 	 * `TourEngine.advanceTo`. Backward or same-index targets are ignored.
 	 */
 	advanceTo(index: number): void {
+		const before = this._engine.currentStepIndex;
 		this._engine.advanceTo(index);
+		// advanceTo is a no-op below/at the current step (see TourEngine.advanceTo);
+		// skip the reassignment then so callers that invoke this on every poll
+		// (ingestTimeline) don't trigger a reactive update for nothing.
+		if (this._engine.currentStepIndex === before) return;
 		this._progress = {
 			currentStepIndex: this._engine.currentStepIndex,
 			completedStepIds: [...this._engine.completedStepIds]

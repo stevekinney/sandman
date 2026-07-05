@@ -169,9 +169,9 @@ export class TourEngine {
 	 *
 	 * Used to reconcile restored progress against the real workflow phase
 	 * (e.g. an order already in delivery makes the update-validator step
-	 * impossible to complete). Forward-only: backward or same-index targets
-	 * are ignored, so live events remain the only way progress can regress —
-	 * use `reset()` to start over.
+	 * impossible to complete). Forward-only, like `feed()`: backward or
+	 * same-index targets are ignored, so progress can never regress this way
+	 * either — use `reset()` to start over.
 	 */
 	advanceTo(index: number): void {
 		const target = Math.min(Math.max(index, 0), this._steps.length);
