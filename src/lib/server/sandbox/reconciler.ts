@@ -60,9 +60,14 @@ export function createReconciler(
 	options: { limit: number; now?: () => Date }
 ): Reconciler {
 	const now = options.now ?? (() => new Date());
-	let intervalTickRunning = false;
+	let running = false;
 
 	async function tick(): Promise<void> {
+		// Serialize every invocation — the interval loop AND the startup call in
+		// getSandboxRegistry() share this guard, so a slow startup pass can never
+		// run concurrently with a scheduled one and double-reclaim the same rows.
+		if (running) return;
+		running = true;
 		try {
 			const passStartedAt = now();
 			const sandboxIds = await deps.getExpiredSandboxIds({
@@ -100,6 +105,8 @@ export function createReconciler(
 			}
 		} catch (error) {
 			deps.onError?.(error);
+		} finally {
+			running = false;
 		}
 	}
 
@@ -107,13 +114,8 @@ export function createReconciler(
 		tick,
 
 		start(intervalMs) {
-			const handle = setInterval(() => {
-				if (intervalTickRunning) return;
-				intervalTickRunning = true;
-				void tick().finally(() => {
-					intervalTickRunning = false;
-				});
-			}, intervalMs);
+			// `tick` self-guards against overlap, so the interval can fire blindly.
+			const handle = setInterval(() => void tick(), intervalMs);
 			handle.unref?.();
 			return () => clearInterval(handle);
 		}

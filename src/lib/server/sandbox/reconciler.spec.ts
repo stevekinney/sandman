@@ -204,4 +204,30 @@ describe('createReconciler', () => {
 
 		expect(maxInFlight).toBe(1);
 	});
+
+	it('a direct startup tick() does not overlap with the interval loop', async () => {
+		// Mirrors getSandboxRegistry(): start() the loop, then fire an immediate
+		// tick() for startup reclamation. A slow startup pass must not run
+		// concurrently with the first scheduled pass.
+		vi.useFakeTimers();
+		let inFlight = 0;
+		let maxInFlight = 0;
+		const { deps } = createDeps([], {
+			async getExpiredSandboxIds() {
+				inFlight++;
+				maxInFlight = Math.max(maxInFlight, inFlight);
+				await new Promise<void>((resolve) => setTimeout(resolve, 250_000));
+				inFlight--;
+				return [];
+			}
+		});
+		const reconciler = createReconciler(deps, { limit: 25 });
+
+		const stop = reconciler.start(60_000);
+		void reconciler.tick(); // startup pass, spanning several intervals
+		await vi.advanceTimersByTimeAsync(240_000);
+		stop();
+
+		expect(maxInFlight).toBe(1);
+	});
 });

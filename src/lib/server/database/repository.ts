@@ -29,9 +29,19 @@ export type DemoSessionRecord = {
 	tokenHash: string;
 };
 
-export type SandboxReservationResult =
+export type SandboxReservationResult = (
 	| { status: 'reserved'; reservationId: string }
-	| { status: 'session-limit' | 'global-limit' };
+	| { status: 'session-limit' | 'global-limit' }
+) & {
+	/**
+	 * E2B sandbox IDs whose rows this call's capacity sweep just flipped to
+	 * Expired. The sweep only changes the database row — it does NOT terminate
+	 * the VM — so the caller must terminate these at the provider or their VMs
+	 * leak until the provider timeout. Populated regardless of reservation
+	 * outcome, because the sweep runs even when the reservation is rejected.
+	 */
+	expiredSandboxIds: string[];
+};
 
 type TouchSandboxSessionDatabase = {
 	update(table: typeof sandboxSession): {
@@ -124,6 +134,7 @@ export async function reserveSandboxSlot(
 	const rows = await database.execute<{
 		status: 'reserved' | 'session-limit' | 'global-limit';
 		reservation_id: string | null;
+		expired_sandbox_ids: string[] | null;
 	}>(sql`
 		with locked as (
 			select pg_advisory_xact_lock(hashtext('sandman:sandbox-capacity'))
@@ -137,7 +148,7 @@ export async function reserveSandboxSlot(
 			where
 				expires_at < ${input.now}
 				and status in (${SANDBOX_SESSION_STATUS.Provisioning}, ${SANDBOX_SESSION_STATUS.Bootstrapping}, ${SANDBOX_SESSION_STATUS.Ready})
-			returning id
+			returning id, e2b_sandbox_id
 		),
 		session_active as (
 			select count(*)::int as value
@@ -184,15 +195,23 @@ export async function reserveSandboxSlot(
 				when (select value from session_active) >= ${input.perSessionLimit} then 'session-limit'
 				else 'global-limit'
 			end as status,
-			(select id from inserted) as reservation_id
+			(select id from inserted) as reservation_id,
+			(
+				select coalesce(
+					json_agg(e2b_sandbox_id) filter (where e2b_sandbox_id is not null),
+					'[]'::json
+				)
+				from expired
+			) as expired_sandbox_ids
 	`);
 	const row = rows.rows[0];
-	if (!row) return { status: 'global-limit' };
+	const expiredSandboxIds = row?.expired_sandbox_ids ?? [];
+	if (!row) return { status: 'global-limit', expiredSandboxIds };
 	if (row.status === 'reserved' && row.reservation_id) {
-		return { status: 'reserved', reservationId: row.reservation_id };
+		return { status: 'reserved', reservationId: row.reservation_id, expiredSandboxIds };
 	}
-	if (row.status === 'session-limit') return { status: 'session-limit' };
-	return { status: 'global-limit' };
+	if (row.status === 'session-limit') return { status: 'session-limit', expiredSandboxIds };
+	return { status: 'global-limit', expiredSandboxIds };
 }
 
 export async function attachSandboxToReservation(
