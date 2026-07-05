@@ -18,6 +18,7 @@ import type {
 	VisibilityFilter,
 	VisibilityWorkflowSummary
 } from '$lib/contracts/workflow-api';
+import type { ProcessLiveness } from '$lib/contracts/sandbox';
 
 // ---------------------------------------------------------------------------
 // Workflow run identifiers
@@ -133,6 +134,17 @@ export type TemporalController = {
 
 	/** Restart the worker process inside the E2B sandbox. */
 	restartWorker(): Promise<void>;
+
+	/**
+	 * Read current process liveness (Temporal server + worker) from the sandbox.
+	 *
+	 * A worker restart request is fire-and-forget: the route accepts it (204) long
+	 * before the worker re-bundles, replays history, and starts polling again — and
+	 * sometimes it never does. This lets the UI confirm the worker is *actually*
+	 * back before it claims recovery, instead of optimistically reporting a
+	 * restart that may not have happened.
+	 */
+	readProcessLiveness(): Promise<ProcessLiveness>;
 
 	/**
 	 * Stop the Temporal dev server inside the sandbox. Workflow state is

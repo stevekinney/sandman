@@ -67,10 +67,25 @@ describe('GuidedTour', () => {
 		expect(oncta).toHaveBeenCalledWith('start-order');
 	});
 
-	it('hides the CTA when the control cannot run yet', async () => {
-		render(GuidedTour, { props: { progress: initialProgress, ctaEnabled: false } });
-		const buttons = await page.getByRole('button').all();
-		expect(buttons.length).toBe(0);
+	it('shows a disabled CTA with a reason when the control cannot run yet', async () => {
+		const oncta = vi.fn();
+		render(GuidedTour, {
+			props: {
+				progress: initialProgress,
+				ctaEnabled: false,
+				ctaBlockedReason: 'The worker is offline. Restart it from the topology strip.',
+				oncta
+			}
+		});
+
+		// The action is still shown so the tour is never a silent dead-end, but it
+		// is disabled (so it can't dispatch) and the blocked reason is explained.
+		const cta = page.getByRole('button', { name: 'Place order' });
+		await expect.element(cta).toBeDisabled();
+		await expect
+			.element(page.getByText('The worker is offline', { exact: false }))
+			.toBeInTheDocument();
+		expect(oncta).not.toHaveBeenCalled();
 	});
 
 	it('shows a watching indicator on steps without a control', async () => {
