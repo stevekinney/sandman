@@ -57,16 +57,56 @@
 	let { data }: { data: PageData } = $props();
 
 	// Tour progress persists per sandbox, so a reload resumes this sandbox's
-	// journey and a new sandbox starts fresh. SSR renders with a throwaway
-	// in-memory adapter (no localStorage on the server); the client re-creates
-	// TourState against localStorage during hydration.
-	const tourState = $derived(
-		new TourState(
-			browser ? localStorageAdapter(`sandman:tour:${data.sandboxId}`) : createVolatileTourStorage()
-		)
-	);
+	// journey and a new sandbox starts fresh. Always CONSTRUCT against a
+	// throwaway in-memory adapter — on both SSR and the first client render —
+	// so hydration's first paint matches the server exactly (no localStorage
+	// read before mount to jump the tour ahead of what was server-rendered).
+	// The effect below swaps in the real adapter and fast-forwards to any
+	// persisted progress once mounted, client-side only.
+	const tourState = $derived(new TourState(createVolatileTourStorage()));
 	const controller = $derived(new FetchController(data.sandboxId));
 	const session = $derived(new SessionState(controller, tourState));
+
+	/** Where this sandbox's most recently known active workflow id lives. */
+	function activeWorkflowIdKey(sandboxId: string): string {
+		return `sandman:active-workflow:${sandboxId}`;
+	}
+
+	/** The workflow id this sandbox was last attached to, if any. */
+	function readPreferredWorkflowId(sandboxId: string): string | undefined {
+		try {
+			return localStorage.getItem(activeWorkflowIdKey(sandboxId)) ?? undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	// Client-only: attach real persistence after the first (SSR-matching)
+	// render, then fast-forward to whatever progress was already saved.
+	$effect(() => {
+		if (!browser) return;
+		const storage = localStorageAdapter(`sandman:tour:${data.sandboxId}`);
+		const saved = storage.load();
+		if (saved) tourState.advanceTo(saved.currentStepIndex);
+		tourState.replaceStorage(storage);
+	});
+
+	// Track the sandbox's most recently active workflow id so a reload can
+	// disambiguate which run to restore if more than one is running (Reset is
+	// client-only and does not cancel the workflow, so an old run can still be
+	// live when the learner starts a new one).
+	$effect(() => {
+		if (!browser) return;
+		const key = activeWorkflowIdKey(data.sandboxId);
+		const workflowId = session.run?.workflowId;
+		try {
+			if (workflowId) localStorage.setItem(key, workflowId);
+			else localStorage.removeItem(key);
+		} catch {
+			// Quota exceeded or private-browsing restriction — fail silently,
+			// matching localStorageAdapter's own tolerance for this.
+		}
+	});
 
 	let sandboxStatus = $state<string>('provisioning');
 	let sandboxStatusError = $state<string | null>(null);
@@ -143,7 +183,11 @@
 					// failure (e.g. a blip that doesn't otherwise change these flags)
 					// without a dedicated timer.
 					if (activeSession.sandboxUsable && activeSession.serverOnline) {
-						void restoreSessionFromSandbox(controller, activeSession);
+						void restoreSessionFromSandbox(
+							controller,
+							activeSession,
+							readPreferredWorkflowId(sandboxId)
+						);
 					}
 				}
 			} catch (err) {

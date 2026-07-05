@@ -440,18 +440,48 @@ describe('SessionState', () => {
 			expect(tour.completedStepIds).toContain('child-workflow');
 		});
 
-		it('resets stale in-progress tour state when no order workflow is running', async () => {
+		it('resets stale in-progress tour state once no order workflow is confirmed absent', async () => {
 			const storage = volatileStorage();
 			const tour = restoredTour(storage, 3);
 			const controller = new MockTemporalController();
 			controller.visibilityResult = [runningOrderSummary('order-1', { status: 'COMPLETED' })];
 			const session = new SessionState(controller, tour);
 
+			// Visibility is eventually consistent, so a single empty result isn't
+			// conclusive — it takes a few consecutive confirmations (simulating the
+			// caller's normal polling cadence) before stale progress is reset.
+			await restoreSessionFromSandbox(controller, session);
+			expect(session.run).toBeNull();
+			expect(tour.currentStepIndex).toBe(3);
+
+			await restoreSessionFromSandbox(controller, session);
+			expect(tour.currentStepIndex).toBe(3);
+
 			await restoreSessionFromSandbox(controller, session);
 
 			expect(session.run).toBeNull();
 			expect(tour.currentStepIndex).toBe(0);
 			expect(storage.load()).toBeNull();
+		});
+
+		it('does not confirm "not found" once a workflow appears mid-retry', async () => {
+			const storage = volatileStorage();
+			const tour = restoredTour(storage, 3);
+			const controller = new MockTemporalController();
+			const session = new SessionState(controller, tour);
+
+			// First two polls see nothing (Visibility indexing lag); the third
+			// sees the workflow the learner actually started.
+			controller.visibilityResult = [];
+			await restoreSessionFromSandbox(controller, session);
+			await restoreSessionFromSandbox(controller, session);
+			expect(tour.currentStepIndex).toBe(3);
+
+			controller.visibilityResult = [runningOrderSummary('order-late')];
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run?.workflowId).toBe('order-late');
+			expect(tour.currentStepIndex).toBe(3);
 		});
 
 		it('keeps a finished tour finished when the workflow has since completed', async () => {
@@ -541,10 +571,55 @@ describe('SessionState', () => {
 
 			await restoreSessionFromSandbox(controller, session);
 
-			// The run is restored; the tour keeps its stored position untouched
-			// (no phase evidence yet) and the regular poll reconciles later.
+			// The run is restored and floored to at least the Created phase (a
+			// no-op here since step 8 is already well past it); the regular poll
+			// reconciles further once the worker returns and the timeline replays.
 			expect(session.run?.workflowId).toBe('order-7');
 			expect(tour.currentStepIndex).toBe(8);
+		});
+
+		it('floors the tour to at least Created on adopting a run even if timeline replay fails', async () => {
+			const storage = volatileStorage();
+			const tour = new TourState(storage); // fresh — no persisted progress at all
+			const controller = new MockTemporalController();
+			controller.visibilityResult = [runningOrderSummary('order-8')];
+			controller.query = async () => {
+				throw new Error('no worker available');
+			};
+			const session = new SessionState(controller, tour);
+
+			await restoreSessionFromSandbox(controller, session);
+
+			// Without the immediate floor, a fresh tour would sit at step 0
+			// ("Place order") with start-order disabled because a run already
+			// exists — stuck until the worker returns. The floor moves it past
+			// that dead end right away.
+			expect(session.run?.workflowId).toBe('order-8');
+			expect(TOUR[tour.currentStepIndex]?.id).toBe('activities-run');
+		});
+
+		it('prefers the summary matching a persisted workflow id over an arbitrary first match', async () => {
+			const { controller, session } = makeSession();
+			controller.visibilityResult = [
+				runningOrderSummary('order-old'),
+				runningOrderSummary('order-new')
+			];
+
+			await restoreSessionFromSandbox(controller, session, 'order-new');
+
+			expect(session.run?.workflowId).toBe('order-new');
+		});
+
+		it('falls back to the first resumable match when no preferred id is given or found', async () => {
+			const { controller, session } = makeSession();
+			controller.visibilityResult = [
+				runningOrderSummary('order-old'),
+				runningOrderSummary('order-new')
+			];
+
+			await restoreSessionFromSandbox(controller, session, 'order-does-not-exist');
+
+			expect(session.run?.workflowId).toBe('order-old');
 		});
 	});
 

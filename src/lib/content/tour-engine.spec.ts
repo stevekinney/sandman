@@ -220,6 +220,21 @@ describe('TourEngine', () => {
 		});
 	});
 
+	describe('replaceStorage()', () => {
+		it('persists future writes to the new adapter without touching current progress', () => {
+			engine.advanceTo(2);
+			const otherStorage = makeMemoryStorage();
+
+			engine.replaceStorage(otherStorage);
+			expect(engine.currentStepIndex).toBe(2);
+			expect(otherStorage.load()).toBeNull(); // not re-read on swap
+
+			engine.advanceTo(3);
+			expect(storage.load()?.currentStepIndex).toBe(2); // old adapter untouched
+			expect(otherStorage.load()?.currentStepIndex).toBe(3); // new adapter gets writes
+		});
+	});
+
 	describe('persistence', () => {
 		it('saves progress to the storage adapter after each advance', () => {
 			engine.feed(satisfyingEvent(0));

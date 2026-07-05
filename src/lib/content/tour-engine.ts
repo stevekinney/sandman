@@ -187,6 +187,19 @@ export class TourEngine {
 	}
 
 	/**
+	 * Swap the adapter future `feed()`/`advanceTo()`/`reset()` calls persist to,
+	 * without touching current progress or re-reading the new adapter.
+	 *
+	 * Used to defer attaching real persistence until after the first render:
+	 * constructing against a throwaway adapter keeps the initial client render
+	 * identical to SSR (no localStorage read before hydration), then this
+	 * swaps in the real adapter once mounted, client-side only.
+	 */
+	replaceStorage(storage: StorageAdapter): void {
+		this._storage = storage;
+	}
+
+	/**
 	 * Reset tour progress to the beginning and clear the storage adapter.
 	 */
 	reset(): void {

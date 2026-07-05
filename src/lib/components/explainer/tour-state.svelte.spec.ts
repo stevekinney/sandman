@@ -46,3 +46,22 @@ describe('TourState.advanceTo', () => {
 		expect(tour.completedStepIds).toBe(completedBefore);
 	});
 });
+
+describe('TourState.replaceStorage', () => {
+	it('redirects future persistence without re-reading or touching current progress', () => {
+		const original = volatileStorage();
+		const tour = new TourState(original);
+		tour.advanceTo(2);
+
+		const next = volatileStorage();
+		tour.replaceStorage(next);
+
+		// Swapping doesn't re-read the new adapter or change in-memory progress.
+		expect(tour.currentStepIndex).toBe(2);
+		expect(next.load()).toBeNull();
+
+		tour.advanceTo(3);
+		expect(original.load()?.currentStepIndex).toBe(2);
+		expect(next.load()?.currentStepIndex).toBe(3);
+	});
+});

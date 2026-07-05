@@ -30,6 +30,7 @@ export type RestorableSession = {
 	readonly tour: {
 		readonly currentStepIndex: number;
 		readonly isComplete: boolean;
+		advanceTo(index: number): void;
 		reset(): void;
 	};
 	ingestTimeline(entries: TimelineEntry[]): void;
@@ -99,22 +100,47 @@ export function minimumTourStepIndexForPhase(phase: SessionPhase): number {
 const restoreAttempted = new WeakSet<RestorableSession>();
 
 /**
+ * Consecutive "no resumable workflow found" results per session. Temporal
+ * Visibility is eventually consistent, so a workflow started moments before a
+ * reload can briefly be absent from the list — this tolerates that lag before
+ * concluding there really is no workflow to restore.
+ */
+const notFoundStreak = new WeakMap<RestorableSession, number>();
+
+/** Consecutive empty results required before treating "not found" as final. */
+const NOT_FOUND_CONFIRMATION_ROUNDS = 3;
+
+/**
  * Restore a reloaded session from the sandbox's current workflow.
  *
  * Queries Temporal Visibility for a running order workflow, adopts its ids,
- * rebuilds the canned demo order (the workflow id is the order id), and
- * replays `getTimeline` so the tour reconciles against the real phase. If the
- * timeline query fails (worker down), the regular poll catches up once the
- * worker returns.
+ * rebuilds the canned demo order (the workflow id is the order id), floors
+ * the tour to at least the phase the adopted run implies, and replays
+ * `getTimeline` so the tour can reconcile further against the real phase. If
+ * the timeline query fails (worker down), the regular poll catches up once
+ * the worker returns — the initial floor still applies so the tour isn't
+ * stuck asking for an action a run already makes impossible.
+ *
+ * `preferredWorkflowId`, when supplied, disambiguates when Visibility returns
+ * more than one resumable order workflow (e.g. the learner used Reset — which
+ * is client-only and does not cancel the run — then placed another order):
+ * the summary matching it wins over an arbitrary first match.
  *
  * When no order workflow is running, stale in-progress tour state is reset so
  * the journey starts cleanly — a finished tour keeps its completed state.
- * Runs at most once per session; a Visibility failure clears the attempt so a
- * later server recovery can retry.
+ * Because Visibility is eventually consistent, "not found" is only treated as
+ * final after `NOT_FOUND_CONFIRMATION_ROUNDS` consecutive empty results;
+ * until then the attempt flag is cleared for the caller's next retry, exactly
+ * like a Visibility error.
+ *
+ * Runs at most once per session (once it finds and adopts a run, or confirms
+ * none exists); a Visibility failure or an unconfirmed empty result clears
+ * the attempt so the caller's regular polling cadence can retry.
  */
 export async function restoreSessionFromSandbox(
 	controller: TemporalController,
-	session: RestorableSession
+	session: RestorableSession,
+	preferredWorkflowId?: string
 ): Promise<void> {
 	if (restoreAttempted.has(session) || session.run !== null) return;
 	restoreAttempted.add(session);
@@ -129,14 +155,31 @@ export async function restoreSessionFromSandbox(
 	// The learner may have placed a new order while the lookup was in flight.
 	if (session.run !== null) return;
 
-	const active = workflows.find(isResumableOrderWorkflow);
+	const resumable = workflows.filter(isResumableOrderWorkflow);
+	const active =
+		resumable.find((summary) => summary.workflowId === preferredWorkflowId) ?? resumable[0];
+
 	if (active === undefined) {
+		const streak = (notFoundStreak.get(session) ?? 0) + 1;
+		if (streak < NOT_FOUND_CONFIRMATION_ROUNDS) {
+			notFoundStreak.set(session, streak);
+			restoreAttempted.delete(session);
+			return;
+		}
+		notFoundStreak.delete(session);
 		if (!session.tour.isComplete && session.tour.currentStepIndex > 0) session.tour.reset();
 		return;
 	}
+	notFoundStreak.delete(session);
 
 	session.run = { workflowId: active.workflowId, runId: active.runId };
 	session.activeOrder = buildDemoOrder(active.workflowId);
+	// Floor the tour to at least what this phase implies immediately, so a
+	// learner isn't stuck looking at a disabled "place order" CTA while a run
+	// already exists — even if the timeline replay below never succeeds
+	// (worker down). `session.phase` reads Created off a run with no entries
+	// yet, matching derivePhase's default.
+	session.tour.advanceTo(minimumTourStepIndexForPhase(session.phase));
 	try {
 		const entries = await controller.query(active.workflowId, 'getTimeline');
 		// The learner may have Reset and placed a different order while this

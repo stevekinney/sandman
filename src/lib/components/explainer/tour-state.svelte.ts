@@ -82,6 +82,14 @@ export class TourState {
 		};
 	}
 
+	/**
+	 * Swap the adapter future writes persist to — see `TourEngine.replaceStorage`.
+	 * Does not re-read or change current progress.
+	 */
+	replaceStorage(storage: StorageAdapter): void {
+		this._engine.replaceStorage(storage);
+	}
+
 	/** Reset tour progress and clear storage. Reactive state is updated. */
 	reset(): void {
 		this._engine.reset();
