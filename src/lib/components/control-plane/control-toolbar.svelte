@@ -49,6 +49,22 @@
 	function buttonClass(control: ControlId): string {
 		return session.recommendedControl === control ? 'toolbar-button--recommended' : '';
 	}
+
+	/**
+	 * Why a control is disabled right now, for the button's tooltip — so a greyed
+	 * button explains itself instead of leaving the user guessing. Returns
+	 * undefined when the control is usable.
+	 */
+	function controlTitle(control: ControlId): string | undefined {
+		if (session.canDo(control)) return undefined;
+		if (session.pendingControl !== null || session.serverPending !== null) {
+			return 'Another action is in progress…';
+		}
+		if (!session.sandboxUsable) return 'The sandbox is still starting.';
+		if (!session.serverOnline) return 'Start the Temporal server (topology strip) to use this.';
+		if (!session.workerOnline) return 'Restart the worker (topology strip) to use this.';
+		return 'Not available at this point in the order yet.';
+	}
 </script>
 
 <div class="toolbar-shell">
@@ -60,6 +76,7 @@
 					size="sm"
 					{label}
 					disabled={!session.canDo(control)}
+					title={controlTitle(control)}
 					loading={session.pendingControl === control}
 					class={buttonClass(control)}
 					onclick={() => void session.dispatch(control)}
@@ -74,6 +91,7 @@
 					size="sm"
 					{label}
 					disabled={!session.canDo(control)}
+					title={controlTitle(control)}
 					loading={session.pendingControl === control}
 					class={buttonClass(control)}
 					onclick={() => void session.dispatch(control)}
@@ -87,6 +105,7 @@
 				size="sm"
 				label="Cancel & refund"
 				disabled={!session.canDo('cancel-order')}
+				title={controlTitle('cancel-order')}
 				loading={session.pendingControl === 'cancel-order'}
 				class={buttonClass('cancel-order')}
 				onclick={() => void session.cancelOrder()}

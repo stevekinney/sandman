@@ -55,7 +55,7 @@ export const POST: RequestHandler = async (event) => {
 	});
 	if (rateLimitCount > configuration.sessionCreationsPerTokenPerHour) {
 		logWarning({ event: 'sandbox.provision.blocked', sessionId: session.id, status: 'rate-limit' });
-		throw error(429, 'This demo token has reached its hourly session creation limit');
+		throw error(429, 'This invite code has reached its hourly session creation limit');
 	}
 
 	const reservation = await reserveSandboxSlot(database, {

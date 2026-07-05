@@ -50,7 +50,7 @@ async function mockSandboxStatus(
 	});
 }
 
-test('demo token exchange provisions a sandbox and redirects to the session page', async ({
+test('invite code exchange provisions a sandbox and redirects to the session page', async ({
 	page
 }) => {
 	const { tokenRequests } = await mockSessionExchange(page);
@@ -62,7 +62,7 @@ test('demo token exchange provisions a sandbox and redirects to the session page
 	// legibly dark-themed rather than rendering with unstyled light defaults.
 	await page.emulateMedia({ colorScheme: 'dark' });
 	await page.goto('/');
-	const tokenInput = page.getByLabel('Demo token');
+	const tokenInput = page.getByLabel('Invite code');
 	await tokenInput.fill(DEMO_TOKEN);
 
 	await expect(tokenInput).toHaveValue(DEMO_TOKEN);
@@ -115,13 +115,13 @@ test('keyboard users can jump directly to the guided journey', async ({ page }) 
 	await expect(page.getByRole('navigation', { name: 'Tour progress' })).toBeVisible();
 });
 
-test('pressing Enter in the demo token field submits the session form', async ({ page }) => {
+test('pressing Enter in the invite code field submits the session form', async ({ page }) => {
 	const { tokenRequests } = await mockSessionExchange(page);
 	await mockSandboxCreation(page);
 	await mockSandboxStatus(page, SANDBOX_ID, 'ready');
 
 	await page.goto('/');
-	const tokenInput = page.getByLabel('Demo token');
+	const tokenInput = page.getByLabel('Invite code');
 	await tokenInput.fill(DEMO_TOKEN);
 	await tokenInput.press('Enter');
 
@@ -129,19 +129,19 @@ test('pressing Enter in the demo token field submits the session form', async ({
 	expect(tokenRequests).toEqual([DEMO_TOKEN]);
 });
 
-test('invalid demo token keeps the user on the landing page with a clear error', async ({
+test('invalid invite code keeps the user on the landing page with a clear error', async ({
 	page
 }) => {
 	await page.route('**/api/session', async (route) => {
 		await route.fulfill({
 			status: 401,
 			contentType: 'text/plain',
-			body: 'Invalid demo token'
+			body: 'Invalid invite code'
 		});
 	});
 
 	await page.goto('/');
-	await page.getByLabel('Demo token').fill('wrong-token');
+	await page.getByLabel('Invite code').fill('wrong-token');
 	await page.getByRole('button', { name: 'New Session' }).click();
 
 	await expect(page).toHaveURL('/');
@@ -162,7 +162,7 @@ test('configuration failures show a user-facing alert instead of raw server JSON
 	});
 
 	await page.goto('/');
-	await page.getByLabel('Demo token').fill(DEMO_TOKEN);
+	await page.getByLabel('Invite code').fill(DEMO_TOKEN);
 	await page.getByRole('button', { name: 'New Session' }).click();
 
 	const alert = page.getByRole('alert');
@@ -181,7 +181,7 @@ test('database configuration failures show actionable setup copy', async ({ page
 	});
 
 	await page.goto('/');
-	await page.getByLabel('Demo token').fill(DEMO_TOKEN);
+	await page.getByLabel('Invite code').fill(DEMO_TOKEN);
 	await page.getByRole('button', { name: 'New Session' }).click();
 
 	const alert = page.getByRole('alert');
@@ -196,16 +196,16 @@ test('sandbox creation failures keep the user on the landing page with the serve
 	await mockSandboxCreation(
 		page,
 		429,
-		'This demo token has reached its hourly session creation limit'
+		'This invite code has reached its hourly session creation limit'
 	);
 
 	await page.goto('/');
-	await page.getByLabel('Demo token').fill(DEMO_TOKEN);
+	await page.getByLabel('Invite code').fill(DEMO_TOKEN);
 	await page.getByRole('button', { name: 'New Session' }).click();
 
 	await expect(page).toHaveURL('/');
 	await expect(page.getByRole('alert')).toContainText(
-		'This demo token has reached its hourly session creation limit'
+		'This invite code has reached its hourly session creation limit'
 	);
 });
 
@@ -214,7 +214,7 @@ test('sandbox E2B configuration failures show actionable setup copy', async ({ p
 	await mockSandboxCreation(page, 503, { message: 'E2B_API_KEY is invalid or missing' });
 
 	await page.goto('/');
-	await page.getByLabel('Demo token').fill(DEMO_TOKEN);
+	await page.getByLabel('Invite code').fill(DEMO_TOKEN);
 	await page.getByRole('button', { name: 'New Session' }).click();
 
 	const alert = page.getByRole('alert');
