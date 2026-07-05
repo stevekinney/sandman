@@ -398,6 +398,20 @@ describe('SessionState', () => {
 			expect(notifications.at(-1)?.variant).toBe('success');
 		});
 
+		it('does not synthesize a recovery event when there is no active run', async () => {
+			const { session } = makeSession();
+			await session.placeOrder();
+			await session.killWorker();
+			// Reset clears the run but deliberately leaves the worker shown down.
+			session.reset();
+			expect(session.run).toBeNull();
+
+			// A later poll seeing the worker return must not fabricate a
+			// WorkerRestarted event when no workflow is being tracked.
+			session.reconcileLiveness({ serverOnline: true, workerOnline: true });
+			expect(session.workflowEvents.some((event) => event.type === 'WorkerRestarted')).toBe(false);
+		});
+
 		it('does not emit a recovery event when the server also just came back', () => {
 			const { session } = makeSession();
 			// Both server and worker were down (server stopped); the poll sees both

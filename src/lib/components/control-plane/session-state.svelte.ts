@@ -232,7 +232,11 @@ export class SessionState {
 		// route. Narrate it and emit the event so the durable-recovery tour step
 		// advances, exactly as an in-band restart would.
 		const workerRecovered =
-			this.serverOnline && liveness.serverOnline && !this.workerOnline && liveness.workerOnline;
+			this.run !== null &&
+			this.serverOnline &&
+			liveness.serverOnline &&
+			!this.workerOnline &&
+			liveness.workerOnline;
 		this.serverOnline = liveness.serverOnline;
 		this.workerOnline = liveness.workerOnline;
 		if (workerRecovered) {
