@@ -83,11 +83,16 @@ export function minimumTourStepIndexForPhase(phase: SessionPhase): number {
 			// The restaurant signal was received; the update lesson is still open.
 			return tourStepIndex('update-with-validator');
 		case ORDER_STATUS.InDelivery:
-			// The delivery child has started, and the update validator now rejects
-			// address changes — that step can never complete from here.
-			return tourStepIndex('queryable-business-snapshot');
 		case ORDER_STATUS.Delivered:
-			return TOUR.length;
+			// The delivery child has started, and the update validator now rejects
+			// address changes — that step can never complete from here. Nothing
+			// further (a Visibility query, a worker kill/restart, the completion
+			// observation) is implied merely by reaching either phase — including
+			// Delivered: the run can finish without the worker ever having been
+			// killed. Leave those later steps to real replayed events, or to
+			// `stepStuckAtTerminal`/`skip()` once the phase is terminal and no
+			// more events can arrive — don't silently mark them complete here.
+			return tourStepIndex('queryable-business-snapshot');
 		case ORDER_STATUS.Cancelled:
 		case ORDER_STATUS.Refunded:
 			// A cancelled order teaches nothing further — leave the tour alone;

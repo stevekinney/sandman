@@ -36,6 +36,9 @@ jobs:
       - name: Type check
         run: bun run check
 
+      - name: Type check sandbox template
+        run: bun run typecheck:sandbox
+
       - name: Build
         run: bun run build
 

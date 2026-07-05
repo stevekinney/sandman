@@ -83,6 +83,21 @@ export class TourState {
 	}
 
 	/**
+	 * Skip the current step without marking it complete — for steps whose
+	 * completing event can never arrive anymore. Reactive state is updated.
+	 */
+	skip(): boolean {
+		const skipped = this._engine.skip();
+		if (skipped) {
+			this._progress = {
+				currentStepIndex: this._engine.currentStepIndex,
+				completedStepIds: [...this._engine.completedStepIds]
+			};
+		}
+		return skipped;
+	}
+
+	/**
 	 * Swap the adapter future writes persist to — see `TourEngine.replaceStorage`.
 	 * Does not re-read or change current progress.
 	 */

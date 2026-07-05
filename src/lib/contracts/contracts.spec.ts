@@ -350,7 +350,7 @@ describe('ProxiedUiRouteParams type', () => {
 });
 
 describe('ProxyError type', () => {
-	it('status is always 502', () => {
+	it('is 502 when the upstream is unreachable', () => {
 		const err: ProxyError = {
 			status: 502,
 			message: 'upstream unreachable',
@@ -358,7 +358,17 @@ describe('ProxyError type', () => {
 			timestamp: new Date().toISOString()
 		};
 		expect(err.status).toBe(502);
-		expectTypeOf(err.status).toEqualTypeOf<502>();
+		expectTypeOf(err.status).toEqualTypeOf<502 | 504>();
+	});
+
+	it('is 504 when the upstream times out', () => {
+		const err: ProxyError = {
+			status: 504,
+			message: 'upstream did not respond within 30000ms',
+			sandboxId: 'sbx-abc',
+			timestamp: new Date().toISOString()
+		};
+		expect(err.status).toBe(504);
 	});
 });
 

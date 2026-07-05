@@ -40,7 +40,11 @@ function volatileStorage(): StorageAdapter {
 function makeSession() {
 	const controller = new MockTemporalController();
 	const tour = new TourState(volatileStorage());
-	const session = new SessionState(controller, tour);
+	// Poll with no delay and a small cap so the worker-restart wait never sleeps.
+	const session = new SessionState(controller, tour, {
+		workerRestartPollMs: 0,
+		workerRestartMaxAttempts: 3
+	});
 	// The page's status poll flips this once the sandbox reports ready.
 	session.sandboxUsable = true;
 	const notifications: Array<{ message: string; variant: NotifyVariant }> = [];
@@ -280,9 +284,73 @@ describe('SessionState', () => {
 		const restore = tour.currentStepIndex;
 		await session.restartWorker();
 		expect(controller.restartWorkerCount).toBe(1);
+		// The restart is only reported as recovered once the backend confirms the
+		// worker is actually polling again.
+		expect(controller.readProcessLivenessCount).toBeGreaterThanOrEqual(1);
 		expect(session.workerOnline).toBe(true);
 		expect(session.workflowEvents.at(-1)?.type).toBe('WorkerRestarted');
 		expect(tour.currentStepIndex).toBeGreaterThanOrEqual(restore);
+	});
+
+	it('does not claim recovery when a restarted worker never comes back online', async () => {
+		const { controller, session, notifications } = makeSession();
+		await session.placeOrder();
+		await session.killWorker();
+		expect(session.workerOnline).toBe(false);
+
+		// The restart request is accepted (204) but the worker stays down — the
+		// production failure that leaves the durability demo stuck. The UI must not
+		// fabricate a WorkerRestarted event or flip the worker back online.
+		controller.processLiveness = { serverOnline: true, workerOnline: false };
+		const eventsBefore = session.workflowEvents.length;
+
+		await session.restartWorker();
+
+		expect(controller.restartWorkerCount).toBe(1);
+		expect(session.workerOnline).toBe(false);
+		expect(session.workerRestarting).toBe(false);
+		expect(session.workflowEvents.some((event) => event.type === 'WorkerRestarted')).toBe(false);
+		expect(session.workflowEvents.length).toBe(eventsBefore);
+		expect(notifications.at(-1)?.variant).toBe('danger');
+		// The control stays usable so the user can retry the restart.
+		expect(session.canDo('kill-worker')).toBe(true);
+	});
+
+	it('does not narrate recovery if the run was reset while the restart was waiting', async () => {
+		const { controller, session } = makeSession();
+		await session.placeOrder();
+		await session.killWorker();
+		// The worker will report back online during the restart's poll…
+		controller.processLiveness = { serverOnline: true, workerOnline: true };
+		// …but the learner clicked Reset mid-wait, clearing the run.
+		session.run = null;
+		const eventsBefore = session.workflowEvents.length;
+
+		await session.restartWorker();
+
+		// The worker is honestly marked online, but no WorkerRestarted event or
+		// success toast is synthesized onto a now-idle session.
+		expect(session.workerOnline).toBe(true);
+		expect(session.workflowEvents.length).toBe(eventsBefore);
+		expect(session.workflowEvents.some((event) => event.type === 'WorkerRestarted')).toBe(false);
+	});
+
+	it('invalidates a stale restart when reset runs during its poll', async () => {
+		const { controller, session } = makeSession();
+		await session.placeOrder();
+		await session.killWorker();
+		controller.processLiveness = { serverOnline: true, workerOnline: true };
+
+		// Kick off the restart but reset before awaiting it — reset() bumps the
+		// restart generation, so the in-flight poll's completion is stale.
+		const pending = session.restartWorker();
+		session.reset();
+		await pending;
+
+		// The stale restart neither narrates a recovery nor clobbers the
+		// post-reset session (its finally must not re-touch pendingControl either).
+		expect(session.workflowEvents.some((event) => event.type === 'WorkerRestarted')).toBe(false);
+		expect(session.run).toBeNull();
 	});
 
 	it('stop and start round-trip the Temporal server with persisted state', async () => {
@@ -658,6 +726,100 @@ describe('SessionState', () => {
 		expect(TOUR[tour.currentStepIndex]?.id).toBe('signal-accept');
 	});
 
+	describe('terminal-state tour deviation', () => {
+		/** Walk the tour forward by feeding the events its next steps expect. */
+		function walkTour(tour: TourState, eventTypes: string[]): void {
+			eventTypes.forEach((type, i) => {
+				tour.feed({ sequence: 1000 + i, type, timestamp: new Date(i).toISOString() });
+			});
+		}
+
+		it('is not stuck while the workflow is still running', async () => {
+			const { session } = makeSession();
+			expect(session.tourStepStuck).toBe(false); // idle
+
+			await session.placeOrder();
+			session.ingestTimeline([timelineEntry(0, ORDER_STATUS.Preparing)]);
+			expect(session.tourStepStuck).toBe(false);
+		});
+
+		it('cancelling the order to watch saga compensation strands the current step', async () => {
+			const { tour, session } = makeSession();
+			await session.placeOrder();
+			// Walk to the signal-accept step, then deviate: cancel instead of accepting.
+			walkTour(tour, ['ActivityTaskCompleted', 'TimerStarted']);
+			expect(tour.currentStep?.id).toBe('signal-accept');
+
+			session.ingestTimeline([
+				timelineEntry(0, ORDER_STATUS.Cancelled),
+				timelineEntry(1, ORDER_STATUS.Refunded)
+			]);
+
+			// The workflow is terminal; a restaurant-accepted signal can never arrive.
+			expect(session.tourStepStuck).toBe(true);
+			// Skipping unsticks the tour one step at a time without faking completion.
+			tour.skip();
+			expect(tour.currentStep?.id).toBe('update-with-validator');
+			expect(tour.completedStepIds).not.toContain('signal-accept');
+			expect(session.tourStepStuck).toBe(true); // update step is also stranded
+		});
+
+		it('query-driven steps stay live after a terminal phase — queries read closed workflows', async () => {
+			const { tour, session } = makeSession();
+			await session.placeOrder();
+			walkTour(tour, [
+				'ActivityTaskCompleted',
+				'TimerStarted',
+				'WorkflowExecutionSignaled',
+				'WorkflowExecutionUpdateAccepted',
+				'ChildWorkflowExecutionStarted'
+			]);
+			expect(tour.currentStep?.id).toBe('queryable-business-snapshot');
+
+			session.ingestTimeline([timelineEntry(0, ORDER_STATUS.Delivered)]);
+			expect(session.tourStepStuck).toBe(false);
+		});
+
+		it('durable-recovery strands only while the worker is online once the run is over', async () => {
+			const { tour, session } = makeSession();
+			await session.placeOrder();
+			walkTour(tour, [
+				'ActivityTaskCompleted',
+				'TimerStarted',
+				'WorkflowExecutionSignaled',
+				'WorkflowExecutionUpdateAccepted',
+				'ChildWorkflowExecutionStarted',
+				'QueryCompleted',
+				'QueryCompleted'
+			]);
+			expect(tour.currentStep?.id).toBe('durable-recovery');
+
+			// Delivered before the worker was ever killed: kill-worker is gated off
+			// for a finished run, so WorkerRestarted can never fire.
+			session.ingestTimeline([timelineEntry(0, ORDER_STATUS.Delivered)]);
+			expect(session.tourStepStuck).toBe(true);
+
+			// But a worker that is already down can still be restarted, which
+			// completes the step even post-terminal — not stuck.
+			session.workerOnline = false;
+			expect(session.tourStepStuck).toBe(false);
+		});
+
+		it('reset() clears the deviation and returns the tour to a startable state', async () => {
+			const { tour, session } = makeSession();
+			await session.placeOrder();
+			walkTour(tour, ['ActivityTaskCompleted', 'TimerStarted']);
+			session.ingestTimeline([timelineEntry(0, ORDER_STATUS.Refunded)]);
+			expect(session.tourStepStuck).toBe(true);
+
+			session.reset();
+			expect(session.tourStepStuck).toBe(false);
+			expect(session.phase).toBe('idle');
+			expect(tour.currentStepIndex).toBe(0);
+			expect(session.canDo('start-order')).toBe(true);
+		});
+	});
+
 	describe('reconcileLiveness', () => {
 		it('adopts backend liveness while idle', () => {
 			const { session } = makeSession();
@@ -677,6 +839,47 @@ describe('SessionState', () => {
 			session.workerOnline = false;
 			session.reconcileLiveness({ serverOnline: true, workerOnline: true });
 			expect(session.workerOnline).toBe(true);
+		});
+
+		it('emits a recovery event when the poll observes the worker come back late', async () => {
+			const { session, notifications } = makeSession();
+			await session.placeOrder();
+			// Worker was killed and the explicit restart already gave up waiting, so
+			// it is shown offline. The next authoritative poll then sees it online.
+			session.workerOnline = false;
+			const eventsBefore = session.workflowEvents.length;
+
+			session.reconcileLiveness({ serverOnline: true, workerOnline: true });
+
+			expect(session.workerOnline).toBe(true);
+			expect(session.workflowEvents.at(-1)?.type).toBe('WorkerRestarted');
+			expect(session.workflowEvents.length).toBe(eventsBefore + 1);
+			expect(notifications.at(-1)?.variant).toBe('success');
+		});
+
+		it('does not synthesize a recovery event when there is no active run', async () => {
+			const { session } = makeSession();
+			await session.placeOrder();
+			await session.killWorker();
+			// Reset clears the run but deliberately leaves the worker shown down.
+			session.reset();
+			expect(session.run).toBeNull();
+
+			// A later poll seeing the worker return must not fabricate a
+			// WorkerRestarted event when no workflow is being tracked.
+			session.reconcileLiveness({ serverOnline: true, workerOnline: true });
+			expect(session.workflowEvents.some((event) => event.type === 'WorkerRestarted')).toBe(false);
+		});
+
+		it('does not emit a recovery event when the server also just came back', () => {
+			const { session } = makeSession();
+			// Both server and worker were down (server stopped); the poll sees both
+			// return. That is a server recovery, not a worker restart, so no
+			// WorkerRestarted event should be synthesized here.
+			session.serverOnline = false;
+			session.workerOnline = false;
+			session.reconcileLiveness({ serverOnline: true, workerOnline: true });
+			expect(session.workflowEvents.some((event) => event.type === 'WorkerRestarted')).toBe(false);
 		});
 
 		it('skips reconciliation while an action is in flight so it cannot flicker', () => {

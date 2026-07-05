@@ -27,6 +27,7 @@ import type {
 	VisibilityFilter,
 	VisibilityWorkflowSummary
 } from '$lib/contracts/workflow-api';
+import type { ProcessLiveness } from '$lib/contracts/sandbox';
 
 // ---------------------------------------------------------------------------
 // Call record shapes
@@ -87,6 +88,9 @@ export class MockTemporalController implements TemporalController {
 	/** Number of `restartWorker()` invocations. */
 	restartWorkerCount = 0;
 
+	/** Number of `readProcessLiveness()` invocations. */
+	readProcessLivenessCount = 0;
+
 	/** Number of `stopServer()` invocations. */
 	stopServerCount = 0;
 
@@ -126,6 +130,13 @@ export class MockTemporalController implements TemporalController {
 
 	/** When set, `visibility()` throws this error instead of succeeding. */
 	visibilityError: Error | null = null;
+
+	/**
+	 * Liveness returned by `readProcessLiveness()`. Defaults to fully online so
+	 * the happy-path restart confirms recovery immediately. Set `workerOnline`
+	 * to `false` to simulate a restart that never brings the worker back.
+	 */
+	processLiveness: ProcessLiveness = { serverOnline: true, workerOnline: true };
 
 	/**
 	 * When set, `update()` throws this rejection error instead of succeeding.
@@ -176,6 +187,11 @@ export class MockTemporalController implements TemporalController {
 
 	async restartWorker(): Promise<void> {
 		this.restartWorkerCount++;
+	}
+
+	async readProcessLiveness(): Promise<ProcessLiveness> {
+		this.readProcessLivenessCount++;
+		return this.processLiveness;
 	}
 
 	async stopServer(): Promise<void> {

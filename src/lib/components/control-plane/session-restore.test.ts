@@ -58,8 +58,12 @@ describe('minimumTourStepIndexForPhase', () => {
 		expect(stepIdAtFloor(ORDER_STATUS.InDelivery)).toBe('queryable-business-snapshot');
 	});
 
-	it('marks the tour complete once the order is delivered', () => {
-		expect(minimumTourStepIndexForPhase(ORDER_STATUS.Delivered)).toBe(TOUR.length);
+	it('does not force-complete durable-recovery or complete-delivery just because the order is delivered', () => {
+		// The run can finish without the worker ever having been killed, so
+		// Delivered must not silently mark durable-recovery/complete-delivery
+		// done — stepStuckAtTerminal + skip() (session-state.svelte.ts) is the
+		// path for that, offering an explicit skip instead of a silent one.
+		expect(stepIdAtFloor(ORDER_STATUS.Delivered)).toBe('queryable-business-snapshot');
 	});
 
 	it('does not force progress for cancelled or refunded orders', () => {

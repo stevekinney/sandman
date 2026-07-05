@@ -1011,6 +1011,142 @@ describe('startServer()', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Tests: concurrent lifecycle operations (per-sandbox mutex)
+// ---------------------------------------------------------------------------
+
+describe('concurrent lifecycle operations', () => {
+	/**
+	 * PIDs of processes started via a matching command that were never killed.
+	 * The mock records every `commands.start` and `commands.kill`; any started
+	 * process without a matching kill is an orphan (or the one live process).
+	 */
+	function liveStartedPids(calls: CallRecord[], match: (cmd: string) => boolean): number[] {
+		const started = calls
+			.filter(
+				(c): c is Extract<CallRecord, { method: 'commands.start' }> =>
+					c.method === 'commands.start' && match(c.cmd)
+			)
+			.map((c) => c.pid);
+		const killed = new Set(
+			calls
+				.filter(
+					(c): c is Extract<CallRecord, { method: 'commands.kill' }> => c.method === 'commands.kill'
+				)
+				.map((c) => c.pid)
+		);
+		return started.filter((pid) => !killed.has(pid));
+	}
+
+	const isTemporalServer = (cmd: string): boolean => cmd.includes('temporal server start-dev');
+	const isWorker = (cmd: string): boolean =>
+		cmd.includes('worker.ts') && !cmd.includes('temporal server');
+
+	it('concurrent bootstrap calls run the bootstrap sequence exactly once', async () => {
+		const { client, calls } = makeClient('sbx-race-bootstrap');
+		const handle = await client.provision();
+
+		const [first, second] = await Promise.all([client.bootstrap(handle), client.bootstrap(handle)]);
+
+		expect(first.ready).toBe(true);
+		expect(second.ready).toBe(true);
+		expect(liveStartedPids(calls, isTemporalServer)).toHaveLength(1);
+		expect(liveStartedPids(calls, isWorker)).toHaveLength(1);
+	});
+
+	it('concurrent startServer calls do not orphan a Temporal server process', async () => {
+		const { client, calls } = makeClient('sbx-race-start');
+		const handle = await provisionAndBootstrap(client);
+
+		await Promise.all([client.startServer(handle), client.startServer(handle)]);
+
+		expect(liveStartedPids(calls, isTemporalServer)).toHaveLength(1);
+		expect(liveStartedPids(calls, isWorker)).toHaveLength(1);
+		expect(client.processLiveness(handle)).toEqual({ serverOnline: true, workerOnline: true });
+	});
+
+	it('a stopServer racing startServer serializes — nothing is orphaned and liveness is consistent', async () => {
+		const { client, calls } = makeClient('sbx-race-stop-start');
+		const handle = await provisionAndBootstrap(client);
+
+		// startServer wins the lock (issued first); stopServer runs after it
+		// completes, so the sandbox ends fully stopped with no stray process.
+		await Promise.all([client.startServer(handle), client.stopServer(handle)]);
+
+		expect(liveStartedPids(calls, isTemporalServer)).toHaveLength(0);
+		expect(liveStartedPids(calls, isWorker)).toHaveLength(0);
+		expect(client.processLiveness(handle)).toEqual({ serverOnline: false, workerOnline: false });
+	});
+
+	it('kill → restart → restart interleaving leaves exactly one live worker, online', async () => {
+		const { client, calls } = makeClient('sbx-race-kill-restart');
+		const handle = await provisionAndBootstrap(client);
+
+		const [, first, second] = await Promise.all([
+			client.killWorker(handle),
+			client.restartWorker(handle),
+			client.restartWorker(handle)
+		]);
+
+		expect(first.ok).toBe(true);
+		expect(second.ok).toBe(true);
+		expect(liveStartedPids(calls, isWorker)).toHaveLength(1);
+		expect(client.processLiveness(handle)?.workerOnline).toBe(true);
+	});
+
+	it('a restart landing while a slow startServer is mid-flight waits for it', async () => {
+		// Gate the Temporal server spawn so startServer parks mid-operation with
+		// state.temporalPid unset — exactly the window the production restart hit.
+		const { adapter: baseAdapter } = createMockAdapter('sbx-race-midflight');
+		let releaseServerSpawn: (() => void) | undefined;
+		let gateNextServerSpawn = false;
+		const gate = new Promise<void>((resolve) => {
+			releaseServerSpawn = resolve;
+		});
+		const client = createSandboxClient({
+			adapter: {
+				async create(opts) {
+					const session = await baseAdapter.create(opts);
+					return {
+						...session,
+						commands: {
+							...session.commands,
+							async start(cmd, startOpts) {
+								if (gateNextServerSpawn && cmd.includes('temporal server start-dev')) {
+									gateNextServerSpawn = false;
+									await gate;
+								}
+								return session.commands.start(cmd, startOpts);
+							}
+						}
+					};
+				}
+			},
+			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
+			templateFiles: { '/app/worker.ts': '// placeholder worker' },
+			maxReadinessRetries: 1,
+			readinessDelayMs: 0
+		});
+		const handle = await client.provision();
+		await client.bootstrap(handle);
+
+		gateNextServerSpawn = true;
+		const slowStart = client.startServer(handle);
+		// Give startServer a chance to reach the gated spawn.
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		const restart = client.restartWorker(handle);
+		// The restart must not have run yet — release the server spawn and let
+		// both complete in order.
+		releaseServerSpawn?.();
+
+		await slowStart;
+		const status = await restart;
+
+		expect(status.ok).toBe(true);
+		expect(client.processLiveness(handle)).toEqual({ serverOnline: true, workerOnline: true });
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Tests: exec
 // ---------------------------------------------------------------------------
 
@@ -1049,6 +1185,30 @@ describe('writeFile()', () => {
 
 		expect(writeCall).toBeDefined();
 		expect(writeCall?.data).toBe('export const x = 1;');
+	});
+
+	it('rejects with a timeout when the sandbox write never settles', async () => {
+		vi.useFakeTimers();
+		try {
+			const { adapter, session } = createMockAdapter('sbx-hang');
+			// A wedged filesystem: the write promise never resolves.
+			session.files.write = () => new Promise<void>(() => {});
+			const client = createSandboxClient({
+				adapter,
+				publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
+				templateFiles: {},
+				maxReadinessRetries: 1,
+				readinessDelayMs: 0
+			});
+			const handle = await client.provision();
+
+			const write = client.writeFile(handle, '/app/order-workflow.ts', 'export const x = 1;');
+			const expectation = expect(write).rejects.toThrow(/timed out/);
+			await vi.advanceTimersByTimeAsync(30_000);
+			await expectation;
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });
 

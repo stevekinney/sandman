@@ -125,9 +125,38 @@
 
 	let sandboxStatus = $state<string>('provisioning');
 	let sandboxStatusError = $state<string | null>(null);
+	let sandboxExpiresAt = $state<string | null>(null);
+	let clockMs = $state(Date.now());
 	let centerView = $state<CenterView>('code');
 	let historyLens = $state<'events' | 'steps'>('events');
 	let codeReveal = $state<CodeReveal | null>(null);
+
+	// The session self-destructs after its TTL (default ~5 min), and that window
+	// slides forward on activity. Surface it as a live countdown so a presenter
+	// can pace a demo instead of being cut off mid-sentence.
+	const sessionRemainingMs = $derived(
+		sandboxExpiresAt !== null ? Math.max(0, Date.parse(sandboxExpiresAt) - clockMs) : null
+	);
+	const sessionCountdown = $derived(formatCountdown(sessionRemainingMs));
+	const sessionEndingSoon = $derived(sessionRemainingMs !== null && sessionRemainingMs < 60_000);
+
+	/** Format a remaining-milliseconds value as `m:ss`, or null when unknown. */
+	function formatCountdown(remainingMs: number | null): string | null {
+		if (remainingMs === null) return null;
+		const totalSeconds = Math.floor(remainingMs / 1000);
+		const minutes = Math.floor(totalSeconds / 60);
+		const seconds = totalSeconds % 60;
+		return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+	}
+
+	// Tick a wall-clock every second so the countdown updates. This is an external
+	// time source, not derived state, so an interval-in-effect is the right tool.
+	$effect(() => {
+		const handle = setInterval(() => {
+			clockMs = Date.now();
+		}, 1000);
+		return () => clearInterval(handle);
+	});
 
 	const sandboxFailureMessage = $derived(
 		getSandboxStatusFailureMessage(sandboxStatus, sandboxStatusError)
@@ -180,11 +209,13 @@
 				const payload = (await response.json()) as {
 					status: string;
 					errorMessage: string | null;
+					expiresAt?: string | null;
 					processes?: ProcessLiveness | null;
 				};
 				if (!cancelled) {
 					sandboxStatus = payload.status;
 					sandboxStatusError = payload.errorMessage;
+					sandboxExpiresAt = payload.expiresAt ?? null;
 					activeSession.sandboxUsable = payload.status === 'ready';
 					// Backend process liveness is authoritative; reconcile so the
 					// topology survives reloads and editor save-restarts. Absent or
@@ -302,6 +333,18 @@
 				<span class="session__chip-name">Workflow</span>
 				<span class="session__chip-value">{workflowTag(session.phase)}</span>
 			</div>
+			{#if sessionCountdown !== null && !sandboxBlocked}
+				<div
+					class="session__chip session__chip--countdown"
+					data-ending-soon={sessionEndingSoon}
+					title="Time left before this ephemeral sandbox self-destructs"
+				>
+					<span class="session__chip-name">Session</span>
+					<!-- No aria-live: the value re-renders every second, and announcing
+					     each tick would flood screen readers with noise. -->
+					<span class="session__chip-value">{sessionCountdown} left</span>
+				</div>
+			{/if}
 			<span class="session__id" title="Sandbox ID">{data.sandboxId}</span>
 			<Button
 				variant="soft-danger"
@@ -396,6 +439,20 @@
 	.session__chip-value {
 		font-size: 0.6875rem;
 		color: var(--cinder-text-muted);
+	}
+
+	.session__chip--countdown .session__chip-value {
+		font-variant-numeric: tabular-nums;
+		font-weight: 650;
+	}
+
+	.session__chip--countdown[data-ending-soon='true'] {
+		border-color: var(--cinder-color-danger-border, var(--cinder-danger));
+		background: color-mix(in oklch, var(--cinder-danger), transparent 88%);
+	}
+
+	.session__chip--countdown[data-ending-soon='true'] .session__chip-value {
+		color: var(--cinder-danger);
 	}
 
 	.session__id {

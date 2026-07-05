@@ -57,6 +57,24 @@ describe('GuidedTour', () => {
 			.toHaveAttribute('aria-current', 'step');
 	});
 
+	it('marks a skipped step distinctly from a completed one', async () => {
+		// The learner completed step 0, then skipped step 1 (its event could never
+		// fire): index advanced to 2 but step 1 is NOT in completedStepIds. The
+		// "All steps" list must not falsely show step 1 as done.
+		const progress: TourProgress = { currentStepIndex: 2, completedStepIds: [TOUR[0].id] };
+		render(GuidedTour, { props: { progress } });
+
+		const nav = page.getByRole('navigation', { name: 'Tour progress' });
+		const skippedItem = nav.getByText(TOUR[1].title).element().closest('li');
+		expect(skippedItem?.className).toContain('journey__step--skipped');
+		expect(skippedItem?.className).not.toContain('journey__step--done');
+
+		// The completed step still reads as done.
+		const doneItem = nav.getByText(TOUR[0].title).element().closest('li');
+		expect(doneItem?.className).toContain('journey__step--done');
+		await expect.element(nav.getByText('(skipped)', { exact: false })).toBeInTheDocument();
+	});
+
 	it('shows the CTA when enabled and dispatches the step control', async () => {
 		const oncta = vi.fn();
 		render(GuidedTour, { props: { progress: initialProgress, ctaEnabled: true, oncta } });
@@ -67,10 +85,82 @@ describe('GuidedTour', () => {
 		expect(oncta).toHaveBeenCalledWith('start-order');
 	});
 
-	it('hides the CTA when the control cannot run yet', async () => {
-		render(GuidedTour, { props: { progress: initialProgress, ctaEnabled: false } });
-		const buttons = await page.getByRole('button').all();
-		expect(buttons.length).toBe(0);
+	it('shows a disabled CTA with a reason when the control cannot run yet', async () => {
+		const oncta = vi.fn();
+		render(GuidedTour, {
+			props: {
+				progress: initialProgress,
+				ctaEnabled: false,
+				ctaBlockedReason: 'The worker is offline. Restart it from the topology strip.',
+				oncta
+			}
+		});
+
+		// The action is still shown so the tour is never a silent dead-end, but it
+		// is disabled (so it can't dispatch) and the blocked reason is explained.
+		const cta = page.getByRole('button', { name: 'Place order' });
+		await expect.element(cta).toBeDisabled();
+		await expect
+			.element(page.getByText('The worker is offline', { exact: false }))
+			.toBeInTheDocument();
+		expect(oncta).not.toHaveBeenCalled();
+	});
+
+	it('offers skip and restart when the step can no longer complete', async () => {
+		// Deviation: the learner cancelled the order at the signal-accept step, so
+		// its completing event can never arrive. The card must offer a way out.
+		const signalStepIndex = TOUR.findIndex((step) => step.id === 'signal-accept');
+		const progress: TourProgress = {
+			currentStepIndex: signalStepIndex,
+			completedStepIds: TOUR.slice(0, signalStepIndex).map((step) => step.id)
+		};
+		const onskip = vi.fn();
+		const onrestart = vi.fn();
+		render(GuidedTour, {
+			props: { progress, ctaEnabled: false, stepStuck: true, onskip, onrestart }
+		});
+
+		await expect
+			.element(page.getByText("This step can't complete anymore", { exact: false }))
+			.toBeInTheDocument();
+
+		await page.getByRole('button', { name: 'Skip this step' }).click();
+		expect(onskip).toHaveBeenCalledOnce();
+
+		await page.getByRole('button', { name: 'Restart tour' }).click();
+		expect(onrestart).toHaveBeenCalledOnce();
+	});
+
+	it('replaces the CTA with the stuck notice — no dead disabled button', async () => {
+		const signalStepIndex = TOUR.findIndex((step) => step.id === 'signal-accept');
+		const progress: TourProgress = {
+			currentStepIndex: signalStepIndex,
+			completedStepIds: TOUR.slice(0, signalStepIndex).map((step) => step.id)
+		};
+		render(GuidedTour, {
+			props: {
+				progress,
+				ctaEnabled: false,
+				ctaBlockedReason: 'This step unlocks as the workflow reaches the right point.',
+				stepStuck: true
+			}
+		});
+
+		// The step's own action (and its blocked reason) must not render: the
+		// workflow is terminal, so "waiting" copy would be a lie.
+		await expect
+			.element(page.getByText("This step can't complete anymore", { exact: false }))
+			.toBeInTheDocument();
+		expect(
+			page.getByRole('button', { name: 'Send restaurant-accepted signal' }).query()
+		).toBeNull();
+		expect(page.getByText('unlocks as the workflow', { exact: false }).query()).toBeNull();
+	});
+
+	it('does not show the stuck notice when the step can still complete', async () => {
+		render(GuidedTour, { props: { progress: initialProgress, ctaEnabled: true } });
+		await expect.element(page.getByRole('button', { name: 'Place order' })).toBeInTheDocument();
+		expect(page.getByText("This step can't complete anymore", { exact: false }).query()).toBeNull();
 	});
 
 	it('shows a watching indicator on steps without a control', async () => {

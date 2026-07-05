@@ -126,7 +126,7 @@
 		if (isServerConfigurationError(rawMessage)) {
 			return 'Sandman is not ready to start new sessions right now.';
 		}
-		if (rawMessage === 'Invalid demo token') {
+		if (rawMessage === 'Invalid invite code') {
 			return 'That invite code did not work. Check the code and try again.';
 		}
 		return rawMessage || fallback;
@@ -523,9 +523,9 @@
 				<div class="sd-start__grid">
 					<div>
 						<div class="sd-kicker">Get started</div>
-						<h2 class="sd-h2 sd-h2--tight">Enter your demo token to boot a sandbox.</h2>
+						<h2 class="sd-h2 sd-h2--tight">Enter your invite code to boot a sandbox.</h2>
 						<ol class="sd-steps-list">
-							<li><span>1.</span> Paste the shared invite code — the demo token.</li>
+							<li><span>1.</span> Paste the shared invite code.</li>
 							<li><span>2.</span> A Firecracker MicroVM boots with Temporal and a worker.</li>
 							<li>
 								<span>3.</span> Start ordering, then break things — the session self-destructs after ~5
@@ -539,13 +539,13 @@
 								<Alert variant="danger">{provisionError}</Alert>
 							{/if}
 							<Input
-								id="demo-token"
-								label="Demo token"
+								id="invite-code"
+								label="Invite code"
 								type="password"
 								autocomplete="off"
 								bind:value={demoToken}
 								disabled={provisioning}
-								placeholder="Enter demo token"
+								placeholder="Enter invite code"
 							/>
 							<Button
 								type="submit"

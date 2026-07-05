@@ -49,7 +49,7 @@ export const POST: RequestHandler = async (event) => {
 
 	if (!validateDemoToken(body.token, configuration.demoTokenHash)) {
 		logWarning({ event: 'demo_session.rejected', status: 'invalid-token' });
-		throw error(401, 'Invalid demo token');
+		throw error(401, 'Invalid invite code');
 	}
 
 	const now = new Date();

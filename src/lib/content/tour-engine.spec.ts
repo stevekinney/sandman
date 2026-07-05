@@ -13,8 +13,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkflowEvent } from '$lib/contracts/events';
 import type { StorageAdapter, TourProgress } from './tour-engine';
-import { TourEngine, localStorageAdapter } from './tour-engine';
+import { TourEngine, localStorageAdapter, stepStuckAtTerminal } from './tour-engine';
 import { TOUR } from './demo-script';
+import type { TourStep } from './demo-script';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -235,6 +236,41 @@ describe('TourEngine', () => {
 		});
 	});
 
+	describe('skip()', () => {
+		it('advances the index without marking the step complete', () => {
+			const skipped = engine.skip();
+			expect(skipped).toBe(true);
+			expect(engine.currentStepIndex).toBe(1);
+			expect(engine.completedStepIds).toEqual([]);
+		});
+
+		it('persists the skipped-past index so a reload does not resurrect the stuck step', () => {
+			engine.feed(satisfyingEvent(0));
+			engine.skip();
+
+			const reloaded = new TourEngine(TOUR, storage);
+			expect(reloaded.currentStepIndex).toBe(2);
+			expect(reloaded.completedStepIds).toEqual([TOUR[0].id]);
+		});
+
+		it('skipping every step completes the tour and further skips are no-ops', () => {
+			for (let i = 0; i < TOUR.length; i++) {
+				expect(engine.skip()).toBe(true);
+			}
+			expect(engine.isComplete).toBe(true);
+			expect(engine.skip()).toBe(false);
+			expect(engine.currentStepIndex).toBe(TOUR.length);
+		});
+
+		it('after a skip, the next step still completes on its own event', () => {
+			engine.skip(); // Skip start-workflow.
+			const advanced = engine.feed(satisfyingEvent(1));
+			expect(advanced).toBe(true);
+			expect(engine.currentStepIndex).toBe(2);
+			expect(engine.completedStepIds).toEqual([TOUR[1].id]);
+		});
+	});
+
 	describe('persistence', () => {
 		it('saves progress to the storage adapter after each advance', () => {
 			engine.feed(satisfyingEvent(0));
@@ -279,6 +315,44 @@ describe('TourEngine', () => {
 			const secondSession = new TourEngine(TOUR, localStorageAdapter('sandman:tour-progress:two'));
 			expect(secondSession.currentStepIndex).toBe(0);
 		});
+	});
+});
+
+describe('stepStuckAtTerminal', () => {
+	function step(id: string): TourStep {
+		const found = TOUR.find((candidate) => candidate.id === id);
+		if (!found) throw new Error(`No TOUR step with id "${id}"`);
+		return found;
+	}
+
+	it('event-driven steps are stuck once the workflow is terminal', () => {
+		// Cancelling to watch saga compensation strands these: no new workflow
+		// start, activities, timers, or signals can ever arrive again.
+		for (const id of ['start-workflow', 'activities-run', 'durable-timer', 'signal-accept']) {
+			expect(stepStuckAtTerminal(step(id), { workerOnline: true })).toBe(true);
+			expect(stepStuckAtTerminal(step(id), { workerOnline: false })).toBe(true);
+		}
+	});
+
+	it('update and child-workflow steps are stuck once the workflow is terminal', () => {
+		for (const id of ['update-with-validator', 'child-workflow', 'complete-delivery']) {
+			expect(stepStuckAtTerminal(step(id), { workerOnline: true })).toBe(true);
+		}
+	});
+
+	it('query-driven steps are NOT stuck — queries read closed workflows', () => {
+		expect(stepStuckAtTerminal(step('queryable-business-snapshot'), { workerOnline: true })).toBe(
+			false
+		);
+		expect(stepStuckAtTerminal(step('search-attributes'), { workerOnline: true })).toBe(false);
+	});
+
+	it('durable-recovery is stuck with a live worker (kill is gated off), but not with a dead one', () => {
+		// With the run over, an online worker can never be killed again, so
+		// WorkerRestarted can never fire. A worker that is ALREADY down can still
+		// be restarted, which completes the step even post-terminal.
+		expect(stepStuckAtTerminal(step('durable-recovery'), { workerOnline: true })).toBe(true);
+		expect(stepStuckAtTerminal(step('durable-recovery'), { workerOnline: false })).toBe(false);
 	});
 });
 

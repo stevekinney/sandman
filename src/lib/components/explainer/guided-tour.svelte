@@ -25,10 +25,25 @@
 		progress: TourProgress;
 		/** Whether the current step's control can run right now. */
 		ctaEnabled?: boolean;
+		/**
+		 * Why the current step's control is disabled right now, if it is. Shown
+		 * beneath a disabled CTA so a gated step never becomes a silent dead-end.
+		 */
+		ctaBlockedReason?: string;
+		/**
+		 * True when the workflow has reached a terminal phase that can never
+		 * fire the current step's completing event. Replaces the CTA with an
+		 * inline "skip / restart" affordance so the step is never stuck forever.
+		 */
+		stepStuck?: boolean;
 		/** Worker liveness — flips the kill-worker CTA label to "Restart". */
 		workerOnline?: boolean;
 		/** Called when the user clicks the step's call-to-action button. */
 		oncta?: (control: ControlId) => void;
+		/** Called when the user skips a step that can no longer complete. */
+		onskip?: () => void;
+		/** Called when the user restarts the tour from a stuck step. */
+		onrestart?: () => void;
 		/** Called when the user asks to see an experiment's code in the editor. */
 		onshowcode?: (experiment: TourExperiment) => void;
 		/** Called when the user asks to be taken to a "where to look" surface. */
@@ -38,8 +53,12 @@
 	let {
 		progress,
 		ctaEnabled = false,
+		ctaBlockedReason,
+		stepStuck = false,
 		workerOnline = true,
 		oncta,
+		onskip,
+		onrestart,
 		onshowcode,
 		onlookat
 	}: Props = $props();
@@ -130,17 +149,46 @@
 						<span class="journey__watch-label">Watch</span>
 						<span>{currentStep.watch}</span>
 					</p>
-					{#if ctaControl !== undefined && ctaEnabled}
+					{#if stepStuck}
+						<!-- The workflow reached a terminal state first — this step's
+						     completing event can never arrive. Offer a way out inline. -->
+						<div class="journey__stuck">
+							<p class="journey__stuck-copy">
+								This step can't complete anymore — the workflow has already reached a final state.
+							</p>
+							<div class="journey__stuck-actions">
+								<Button
+									variant="soft"
+									size="sm"
+									label="Skip this step"
+									onclick={() => onskip?.()}
+								/>
+								<Button
+									variant="soft"
+									size="sm"
+									label="Restart tour"
+									onclick={() => onrestart?.()}
+								/>
+							</div>
+						</div>
+					{:else if ctaControl === undefined}
+						<p class="journey__watching">
+							<Spinner size="sm" label="Watching the system respond" />
+							Watching the system respond…
+						</p>
+					{:else if ctaEnabled}
 						<Button
 							variant="primary"
 							fullWidth
 							label={getActionLabel(ctaControl)}
 							onclick={() => oncta?.(ctaControl)}
 						/>
-					{:else if ctaControl === undefined}
-						<p class="journey__watching">
-							<Spinner size="sm" label="Watching the system respond" />
-							Watching the system respond…
+					{:else}
+						<!-- The step has an action but it is gated right now. Show it
+						     disabled with the reason so the tour is never a dead-end. -->
+						<Button variant="primary" fullWidth disabled label={getActionLabel(ctaControl)} />
+						<p class="journey__cta-blocked">
+							{ctaBlockedReason ?? 'Waiting for the sandbox to be ready…'}
 						</p>
 					{/if}
 					{#if currentStep.lookAt !== undefined}
@@ -182,20 +230,26 @@
 			<p class="journey__nav-label">All steps</p>
 			<ol class="journey__steps">
 				{#each TOUR as step, i (step.id)}
-					{@const isDone = i < activeStep}
+					{@const isDone = progress.completedStepIds.includes(step.id)}
 					{@const isActive = i === activeStep && !isComplete}
+					<!-- A step the tour advanced past without completing it (skipped
+					     because its event could never fire) is neither done nor active. -->
+					{@const isSkipped = i < activeStep && !isDone}
 					<li
 						class={[
 							'journey__step',
 							isDone && 'journey__step--done',
+							isSkipped && 'journey__step--skipped',
 							isActive && 'journey__step--active'
 						]}
 						aria-current={isActive ? 'step' : undefined}
 					>
 						<span class="journey__step-marker" aria-hidden="true">
-							{#if isDone}✓{:else}{i + 1}{/if}
+							{#if isDone}✓{:else if isSkipped}–{:else}{i + 1}{/if}
 						</span>
-						<span class="journey__step-label">{step.title}</span>
+						<span class="journey__step-label">
+							{step.title}{#if isSkipped}<span class="journey__step-note"> (skipped)</span>{/if}
+						</span>
 					</li>
 				{/each}
 			</ol>
@@ -311,6 +365,32 @@
 		color: var(--cinder-text-muted);
 	}
 
+	.journey__cta-blocked {
+		margin: 0.5rem 0 0;
+		font-size: 0.72rem;
+		line-height: 1.45;
+		color: var(--cinder-text-subtle);
+	}
+
+	.journey__stuck {
+		padding: 0.5625rem 0.75rem;
+		border-radius: 0.5625rem;
+		border: 1px solid var(--cinder-color-warning-border, var(--cinder-border));
+		background: var(--cinder-color-warning-bg, var(--cinder-surface-inset));
+	}
+
+	.journey__stuck-copy {
+		margin: 0 0 0.5625rem;
+		font-size: 0.75rem;
+		line-height: 1.5;
+		color: var(--cinder-color-warning-fg, var(--cinder-text-muted));
+	}
+
+	.journey__stuck-actions {
+		display: flex;
+		gap: 0.5rem;
+	}
+
 	.journey__watching {
 		display: flex;
 		align-items: center;
@@ -393,6 +473,15 @@
 		color: var(--cinder-text-muted);
 	}
 
+	.journey__step--skipped {
+		color: var(--cinder-text-subtle);
+	}
+
+	.journey__step-note {
+		font-style: italic;
+		color: var(--cinder-text-subtle);
+	}
+
 	.journey__step--active {
 		background: color-mix(in oklch, var(--cinder-accent), transparent 90%);
 		color: var(--cinder-text);
@@ -416,6 +505,11 @@
 	.journey__step--done .journey__step-marker {
 		background: var(--cinder-success);
 		color: #fff;
+	}
+
+	.journey__step--skipped .journey__step-marker {
+		background: var(--cinder-surface-inset);
+		color: var(--cinder-text-subtle);
 	}
 
 	.journey__step--active .journey__step-marker {

@@ -80,9 +80,15 @@ export const POST: RequestHandler = async (event) => {
 
 	const { path, contents } = body;
 
-	// Guard: reject writes to read-only files
+	// Allowlist, not denylist: the write target must be one of the known editor
+	// files. Otherwise an unknown `path` (e.g. "../worker.ts" or an absolute path)
+	// would fall straight through to `session.files.write` inside the sandbox. The
+	// Monaco UI only ever sends these names, so enforce that contract server-side.
 	const descriptor = FILE_DESCRIPTORS.find((f) => f.name === path);
-	if (descriptor?.readOnly) {
+	if (descriptor === undefined) {
+		throw error(400, `File "${path}" is not an editable sandbox file`);
+	}
+	if (descriptor.readOnly) {
 		throw error(403, `File "${path}" is read-only and cannot be modified`);
 	}
 

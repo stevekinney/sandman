@@ -265,3 +265,64 @@ describe('FetchController.restartWorker', () => {
 		await expect(controller.restartWorker()).rejects.toThrow('Restart worker failed');
 	});
 });
+
+// ---------------------------------------------------------------------------
+// readProcessLiveness()
+// ---------------------------------------------------------------------------
+
+describe('FetchController.readProcessLiveness', () => {
+	it('GETs /api/sandbox/[id]/status and returns the processes liveness', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				mockResponse(200, {
+					status: 'ready',
+					processes: { serverOnline: true, workerOnline: false }
+				})
+			)
+		);
+
+		const controller = new FetchController('sandbox-abc');
+		const liveness = await controller.readProcessLiveness();
+
+		expect(liveness).toEqual({ serverOnline: true, workerOnline: false });
+		const fetchMock = vi.mocked(global.fetch as ReturnType<typeof vi.fn>);
+		expect(fetchMock).toHaveBeenCalledWith('/api/sandbox/sandbox-abc/status');
+	});
+
+	it('treats a null/absent processes field as fully offline', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(mockResponse(200, { status: 'ready', processes: null }))
+		);
+
+		const controller = new FetchController('sandbox-abc');
+		const liveness = await controller.readProcessLiveness();
+
+		expect(liveness).toEqual({ serverOnline: false, workerOnline: false });
+	});
+
+	it('treats a malformed processes field as fully offline rather than trusting it', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue(
+				mockResponse(200, {
+					status: 'ready',
+					processes: { serverOnline: 'yes', workerOnline: 1 }
+				})
+			)
+		);
+
+		const controller = new FetchController('sandbox-abc');
+		const liveness = await controller.readProcessLiveness();
+
+		expect(liveness).toEqual({ serverOnline: false, workerOnline: false });
+	});
+
+	it('throws when the status response is not ok', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('error', { status: 503 })));
+
+		const controller = new FetchController('sandbox-abc');
+		await expect(controller.readProcessLiveness()).rejects.toThrow('Read sandbox status failed');
+	});
+});
