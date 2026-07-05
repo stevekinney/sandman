@@ -65,17 +65,6 @@ export const POST: RequestHandler = async (event) => {
 		globalLimit: configuration.maxActiveSandboxes,
 		perSessionLimit: configuration.maxActiveSandboxesPerSession
 	});
-
-	// The capacity sweep inside reserveSandboxSlot only flips expired rows to
-	// Expired — it does not terminate their VMs. After a redeploy those rows
-	// belong to sandboxes this process never registered, so nothing else will
-	// reclaim them (the reconciler's query only sees active-status rows, which
-	// the sweep just cleared). Terminate them here, at the boundary that owns
-	// expiry, regardless of whether this request's own reservation succeeded.
-	if (reservation.expiredSandboxIds.length > 0) {
-		void terminateSweptSandboxes(reservation.expiredSandboxIds, session.id);
-	}
-
 	if (reservation.status !== 'reserved') {
 		await decrementRateLimitBucket(database, {
 			key: rateLimitKey,
@@ -277,35 +266,6 @@ async function reclaimSandbox(
 		// still self-expire on its provider-side timeout.
 		deregisterHandle(sandboxId);
 	}
-}
-
-/**
- * Terminate sandboxes whose rows a capacity sweep just expired, and drop them
- * from the in-process registry. `terminateById` handles both the sandbox this
- * process still tracks and — the case this exists for — a sandbox orphaned by a
- * previous process (killed at the provider by ID). Failures are logged, never
- * thrown: this runs fire-and-forget off the request path.
- */
-async function terminateSweptSandboxes(sandboxIds: string[], sessionId: string): Promise<void> {
-	const registry = getSandboxRegistry();
-	await Promise.all(
-		sandboxIds.map(async (sandboxId) => {
-			try {
-				await registry.client.terminateById(sandboxId);
-				logInfo({ event: 'sandbox.sweep.terminated', sessionId, sandboxId, status: 'expired' });
-			} catch (terminationError) {
-				logError({
-					event: 'sandbox.sweep_cleanup.failed',
-					sessionId,
-					sandboxId,
-					status: 'error',
-					error: terminationError
-				});
-			} finally {
-				deregisterHandle(sandboxId);
-			}
-		})
-	);
 }
 
 function getHourWindowStart(now: Date): Date {

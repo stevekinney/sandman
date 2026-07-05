@@ -32,8 +32,7 @@ vi.mock('$lib/server/database/repository', () => ({
 	markSandboxReservationError: vi.fn().mockResolvedValue(undefined),
 	reserveSandboxSlot: vi.fn().mockResolvedValue({
 		status: 'reserved',
-		reservationId: 'reservation-1',
-		expiredSandboxIds: []
+		reservationId: 'reservation-1'
 	}),
 	updateSandboxStatus: vi.fn().mockResolvedValue(undefined)
 }));
@@ -90,10 +89,7 @@ describe('POST /api/sandbox', () => {
 	});
 
 	it('does not provision E2B when capacity reservation fails', async () => {
-		vi.mocked(reserveSandboxSlot).mockResolvedValueOnce({
-			status: 'session-limit',
-			expiredSandboxIds: []
-		});
+		vi.mocked(reserveSandboxSlot).mockResolvedValueOnce({ status: 'session-limit' });
 
 		await expect(POST(makeEvent())).rejects.toMatchObject({ status: 429 });
 
@@ -105,54 +101,6 @@ describe('POST /api/sandbox', () => {
 			})
 		);
 		expect(vi.mocked(getSandboxRegistry)).not.toHaveBeenCalled();
-	});
-
-	it('terminates VMs orphaned by the capacity sweep, even when the reservation is rejected', async () => {
-		// The cross-restart leak: the sweep inside reserveSandboxSlot expires rows
-		// this process never registered. Their VMs must still be reclaimed, and a
-		// rejected reservation must not skip that cleanup.
-		const terminateById = vi.fn().mockResolvedValue(undefined);
-		const registry = {
-			client: {
-				provision: vi.fn(),
-				bootstrap: vi.fn(),
-				exec: vi.fn(),
-				restartWorker: vi.fn(),
-				killWorker: vi.fn(),
-				processLiveness: vi.fn(() => null),
-				stopServer: vi.fn(),
-				startServer: vi.fn(),
-				extendTimeout: vi.fn(),
-				terminate: vi.fn(),
-				terminateById,
-				writeFile: vi.fn()
-			},
-			handles: new Map(),
-			reaper: {
-				register: vi.fn(),
-				unregister: vi.fn(),
-				touch: vi.fn(),
-				tick: vi.fn(),
-				start: vi.fn()
-			},
-			stopReaper: vi.fn(),
-			reconciler: { tick: vi.fn(), start: vi.fn() },
-			stopReconciler: vi.fn()
-		};
-		vi.mocked(getSandboxRegistry).mockReturnValueOnce(registry);
-		vi.mocked(reserveSandboxSlot).mockResolvedValueOnce({
-			status: 'global-limit',
-			expiredSandboxIds: ['sbx-orphan-1', 'sbx-orphan-2']
-		});
-
-		await expect(POST(makeEvent())).rejects.toMatchObject({ status: 429 });
-
-		// Fire-and-forget cleanup: wait for the detached termination to settle.
-		await vi.waitFor(() => expect(terminateById).toHaveBeenCalledTimes(2));
-		expect(terminateById).toHaveBeenCalledWith('sbx-orphan-1');
-		expect(terminateById).toHaveBeenCalledWith('sbx-orphan-2');
-		expect(deregisterHandle).toHaveBeenCalledWith('sbx-orphan-1');
-		expect(deregisterHandle).toHaveBeenCalledWith('sbx-orphan-2');
 	});
 
 	it('marks the reservation error when E2B provisioning fails', async () => {

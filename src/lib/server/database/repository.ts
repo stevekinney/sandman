@@ -29,19 +29,9 @@ export type DemoSessionRecord = {
 	tokenHash: string;
 };
 
-export type SandboxReservationResult = (
+export type SandboxReservationResult =
 	| { status: 'reserved'; reservationId: string }
-	| { status: 'session-limit' | 'global-limit' }
-) & {
-	/**
-	 * E2B sandbox IDs whose rows this call's capacity sweep just flipped to
-	 * Expired. The sweep only changes the database row — it does NOT terminate
-	 * the VM — so the caller must terminate these at the provider or their VMs
-	 * leak until the provider timeout. Populated regardless of reservation
-	 * outcome, because the sweep runs even when the reservation is rejected.
-	 */
-	expiredSandboxIds: string[];
-};
+	| { status: 'session-limit' | 'global-limit' };
 
 type TouchSandboxSessionDatabase = {
 	update(table: typeof sandboxSession): {
@@ -134,12 +124,19 @@ export async function reserveSandboxSlot(
 	const rows = await database.execute<{
 		status: 'reserved' | 'session-limit' | 'global-limit';
 		reservation_id: string | null;
-		expired_sandbox_ids: string[] | null;
 	}>(sql`
 		with locked as (
 			select pg_advisory_xact_lock(hashtext('sandman:sandbox-capacity'))
 		),
 		expired as (
+			-- Only auto-expire reservations that never attached a VM: they have
+			-- nothing to terminate, so flipping their status here is safe. Rows
+			-- WITH an e2b_sandbox_id are left in an active status for the
+			-- reconciler (and the in-memory reaper) to terminate-then-mark — an
+			-- expired row is already excluded from the capacity counts below by
+			-- the expires_at gate, so leaving it active briefly costs no slot,
+			-- and coupling its status flip to a confirmed VM kill is what lets a
+			-- failed termination be retried instead of silently leaking.
 			update ${sandboxSession}
 			set
 				status = ${SANDBOX_SESSION_STATUS.Expired},
@@ -148,7 +145,8 @@ export async function reserveSandboxSlot(
 			where
 				expires_at < ${input.now}
 				and status in (${SANDBOX_SESSION_STATUS.Provisioning}, ${SANDBOX_SESSION_STATUS.Bootstrapping}, ${SANDBOX_SESSION_STATUS.Ready})
-			returning id, e2b_sandbox_id
+				and e2b_sandbox_id is null
+			returning id
 		),
 		session_active as (
 			select count(*)::int as value
@@ -195,23 +193,15 @@ export async function reserveSandboxSlot(
 				when (select value from session_active) >= ${input.perSessionLimit} then 'session-limit'
 				else 'global-limit'
 			end as status,
-			(select id from inserted) as reservation_id,
-			(
-				select coalesce(
-					json_agg(e2b_sandbox_id) filter (where e2b_sandbox_id is not null),
-					'[]'::json
-				)
-				from expired
-			) as expired_sandbox_ids
+			(select id from inserted) as reservation_id
 	`);
 	const row = rows.rows[0];
-	const expiredSandboxIds = row?.expired_sandbox_ids ?? [];
-	if (!row) return { status: 'global-limit', expiredSandboxIds };
+	if (!row) return { status: 'global-limit' };
 	if (row.status === 'reserved' && row.reservation_id) {
-		return { status: 'reserved', reservationId: row.reservation_id, expiredSandboxIds };
+		return { status: 'reserved', reservationId: row.reservation_id };
 	}
-	if (row.status === 'session-limit') return { status: 'session-limit', expiredSandboxIds };
-	return { status: 'global-limit', expiredSandboxIds };
+	if (row.status === 'session-limit') return { status: 'session-limit' };
+	return { status: 'global-limit' };
 }
 
 export async function attachSandboxToReservation(
