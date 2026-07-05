@@ -168,7 +168,7 @@
 	.temporal-ui-frame__status {
 		padding: 0.25rem 0.5rem;
 		flex-shrink: 0;
-		background: #020817;
+		background: var(--cinder-bg);
 	}
 
 	.temporal-ui-frame__iframe {
@@ -184,8 +184,8 @@
 		gap: 1rem;
 		flex: 1;
 		padding: 2rem;
-		background: linear-gradient(180deg, rgba(15, 23, 42, 0.72), rgba(2, 6, 23, 0.92)), #020817;
-		color: #e2e8f0;
+		background: var(--cinder-surface);
+		color: var(--cinder-text);
 		text-align: center;
 	}
 
@@ -198,15 +198,15 @@
 	.temporal-ui-frame__startup p {
 		max-width: 30rem;
 		margin: 0.6rem auto 0;
-		color: #94a3b8;
+		color: var(--cinder-text-muted);
 		line-height: 1.5;
 	}
 
 	.temporal-ui-frame__spinner {
 		width: 2rem;
 		height: 2rem;
-		border: 3px solid rgba(148, 163, 184, 0.28);
-		border-top-color: #7dd3fc;
+		border: 3px solid var(--cinder-border);
+		border-top-color: var(--cinder-accent);
 		border-radius: 999px;
 		animation: temporal-ui-spin 0.9s linear infinite;
 	}

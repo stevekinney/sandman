@@ -266,8 +266,8 @@ export const faqs: Faq[] = [
 		a: 'It’s deliberately over-engineered so a single, familiar scenario can exercise every core Temporal primitive — retries, sagas, signals, queries, updates, timers, child workflows, and recovery.'
 	},
 	{
-		q: 'What is the demo token for?',
-		a: 'Sandman uses one shared invite code to gate who can boot sandboxes. Only a hash is ever stored; your submitted token is compared server-side and never exposed.'
+		q: 'What is the invite code for?',
+		a: 'Sandman uses one shared invite code to gate who can boot sandboxes. Only a hash is ever stored; your submitted code is compared server-side and never exposed.'
 	},
 	{
 		q: 'Can I edit the workflow code?',
