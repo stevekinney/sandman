@@ -205,6 +205,9 @@ export class TourEngine {
  *    once the run stops, kill-worker is gated off, so an online worker can
  *    never be killed-and-restarted again.
  */
+/** Fixed, valid ISO-8601 timestamp for synthetic probe events (see below). */
+const PROBE_TIMESTAMP = '1970-01-01T00:00:00.000Z';
+
 function eventTypesProducibleAfterTerminal(workerOnline: boolean): readonly string[] {
 	const types = ['QueryCompleted', 'ServerStopped', 'ServerStarted'];
 	if (!workerOnline) types.push('WorkerRestarted');
@@ -219,6 +222,8 @@ function eventTypesProducibleAfterTerminal(workerOnline: boolean): readonly stri
  */
 export function stepStuckAtTerminal(step: TourStep, context: { workerOnline: boolean }): boolean {
 	return !eventTypesProducibleAfterTerminal(context.workerOnline).some((type) =>
-		step.completes({ sequence: 0, type, timestamp: '' })
+		// A valid ISO-8601 timestamp so a `completes` predicate that parses it
+		// can't throw or misclassify — only `type` actually drives the check.
+		step.completes({ sequence: 0, type, timestamp: PROBE_TIMESTAMP })
 	);
 }

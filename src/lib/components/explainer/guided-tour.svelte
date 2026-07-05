@@ -230,20 +230,26 @@
 			<p class="journey__nav-label">All steps</p>
 			<ol class="journey__steps">
 				{#each TOUR as step, i (step.id)}
-					{@const isDone = i < activeStep}
+					{@const isDone = progress.completedStepIds.includes(step.id)}
 					{@const isActive = i === activeStep && !isComplete}
+					<!-- A step the tour advanced past without completing it (skipped
+					     because its event could never fire) is neither done nor active. -->
+					{@const isSkipped = i < activeStep && !isDone}
 					<li
 						class={[
 							'journey__step',
 							isDone && 'journey__step--done',
+							isSkipped && 'journey__step--skipped',
 							isActive && 'journey__step--active'
 						]}
 						aria-current={isActive ? 'step' : undefined}
 					>
 						<span class="journey__step-marker" aria-hidden="true">
-							{#if isDone}✓{:else}{i + 1}{/if}
+							{#if isDone}✓{:else if isSkipped}–{:else}{i + 1}{/if}
 						</span>
-						<span class="journey__step-label">{step.title}</span>
+						<span class="journey__step-label">
+							{step.title}{#if isSkipped}<span class="journey__step-note"> (skipped)</span>{/if}
+						</span>
 					</li>
 				{/each}
 			</ol>
@@ -467,6 +473,15 @@
 		color: var(--cinder-text-muted);
 	}
 
+	.journey__step--skipped {
+		color: var(--cinder-text-subtle);
+	}
+
+	.journey__step-note {
+		font-style: italic;
+		color: var(--cinder-text-subtle);
+	}
+
 	.journey__step--active {
 		background: color-mix(in oklch, var(--cinder-accent), transparent 90%);
 		color: var(--cinder-text);
@@ -490,6 +505,11 @@
 	.journey__step--done .journey__step-marker {
 		background: var(--cinder-success);
 		color: #fff;
+	}
+
+	.journey__step--skipped .journey__step-marker {
+		background: var(--cinder-surface-inset);
+		color: var(--cinder-text-subtle);
 	}
 
 	.journey__step--active .journey__step-marker {

@@ -57,6 +57,24 @@ describe('GuidedTour', () => {
 			.toHaveAttribute('aria-current', 'step');
 	});
 
+	it('marks a skipped step distinctly from a completed one', async () => {
+		// The learner completed step 0, then skipped step 1 (its event could never
+		// fire): index advanced to 2 but step 1 is NOT in completedStepIds. The
+		// "All steps" list must not falsely show step 1 as done.
+		const progress: TourProgress = { currentStepIndex: 2, completedStepIds: [TOUR[0].id] };
+		render(GuidedTour, { props: { progress } });
+
+		const nav = page.getByRole('navigation', { name: 'Tour progress' });
+		const skippedItem = nav.getByText(TOUR[1].title).element().closest('li');
+		expect(skippedItem?.className).toContain('journey__step--skipped');
+		expect(skippedItem?.className).not.toContain('journey__step--done');
+
+		// The completed step still reads as done.
+		const doneItem = nav.getByText(TOUR[0].title).element().closest('li');
+		expect(doneItem?.className).toContain('journey__step--done');
+		await expect.element(nav.getByText('(skipped)', { exact: false })).toBeInTheDocument();
+	});
+
 	it('shows the CTA when enabled and dispatches the step control', async () => {
 		const oncta = vi.fn();
 		render(GuidedTour, { props: { progress: initialProgress, ctaEnabled: true, oncta } });
