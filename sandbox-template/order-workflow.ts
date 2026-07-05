@@ -122,6 +122,7 @@ export async function orderFoodWorkflow(
 	let courier: CourierInfo | undefined = seed?.courier;
 	let locationUpdateCount = seed?.locationUpdateCount ?? 0;
 	let appliedPromoCode = seed?.appliedPromoCode;
+	let restaurantDeadline: string | undefined = seed?.restaurantDeadline;
 	let deliveryDeadline: string | undefined = seed?.deliveryDeadline;
 	let completedAt: string | undefined = seed?.completedAt;
 	let continueAsNewPending = false;
@@ -252,6 +253,7 @@ export async function orderFoodWorkflow(
 			activityOperations,
 			courier,
 			locationUpdateCount,
+			restaurantDeadline,
 			deliveryDeadline,
 			startedAt,
 			updatedAt,
@@ -346,9 +348,13 @@ export async function orderFoodWorkflow(
 	// Each update has a validator that runs synchronously FIRST. Throw there
 	// and the update is rejected with nothing written to history — the caller
 	// gets the rejection immediately.
+	// The handler payload is annotated explicitly: with a validator present, the
+	// SDK's setHandler overloads otherwise fail to infer the update's argument
+	// types under `strict` and collapse them to `[]`. Typing the parameter anchors
+	// them and keeps this idiomatic update-with-validator pattern type-safe.
 	setHandler(
 		updateDeliveryAddressUpdate,
-		(payload) => {
+		(payload: UpdateDeliveryAddressInput) => {
 			currentInput = { ...currentInput, deliveryAddress: payload.newAddress };
 			addTimeline(
 				'Delivery address updated',
@@ -358,7 +364,9 @@ export async function orderFoodWorkflow(
 			return { updated: true, effectiveAddress: currentInput.deliveryAddress };
 		},
 		{
-			validator: () => {
+			// The parameter is unused but typed so the update's argument list stays
+			// inferred as [UpdateDeliveryAddressInput] rather than collapsing to [].
+			validator: (_payload: UpdateDeliveryAddressInput) => {
 				// Try: also reject while the order is Preparing — add
 				// `|| status === ORDER_STATUS.Preparing` and watch the update
 				// bounce synchronously.
@@ -371,7 +379,7 @@ export async function orderFoodWorkflow(
 
 	setHandler(
 		applyPromoCodeUpdate,
-		(payload) => {
+		(payload: ApplyPromoCodeInput) => {
 			const promo = getPromo(payload.code.toUpperCase());
 			if (!promo) throw ApplicationFailure.nonRetryable('invalid-code', 'UPDATE_REJECTED');
 			const discountCents =
@@ -384,7 +392,7 @@ export async function orderFoodWorkflow(
 			return { discountCents, newTotalCents: totalCents, description: promo.description };
 		},
 		{
-			validator: (payload) => {
+			validator: (payload: ApplyPromoCodeInput) => {
 				if (appliedPromoCode) {
 					throw ApplicationFailure.nonRetryable('code-already-used', 'UPDATE_REJECTED');
 				}
@@ -419,8 +427,15 @@ export async function orderFoodWorkflow(
 		return snapshot();
 	}
 
-	// `patched` lets already-running workflows replay against old code while
-	// new runs take the new path — Temporal's answer to versioning live code.
+	// `patched` is Temporal's answer to versioning live code: an in-flight
+	// workflow replays against the OLD branch while new runs take the NEW one, so
+	// you can change deployed workflow code without breaking executions mid-flight.
+	//
+	// This call is illustrative — it only records a timeline marker, it does not
+	// gate a real behavioral fork. A production patch wraps the two versions:
+	//   if (patched('use-v2-charge')) { await chargePaymentV2(...); }
+	//   else { await chargePayment(...); }
+	// where the `else` branch stays until every pre-patch execution has drained.
 	if (patched('sandman-idempotent-activity-operations')) {
 		addTimeline('Replay-safe patch marker: idempotent activity operations', 'replay-safety');
 	}
@@ -485,6 +500,11 @@ export async function orderFoodWorkflow(
 		'timers-durable-sleep',
 		WORKFLOW_EVENT_TYPE.TimerStarted
 	);
+	// Record when the acceptance deadline fires, so a getStatus query can show it
+	// (mirrors deliveryDeadline). Same value the condition timer below counts down.
+	restaurantDeadline = new Date(
+		Date.now() + (currentInput.restaurantAcceptTimeoutMinutes ?? 10) * 60 * 1000
+	).toISOString();
 	const notifyOperation = operation('notify-restaurant');
 	const notification = await notifyRestaurant(
 		notifyOperation,

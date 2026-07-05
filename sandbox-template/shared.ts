@@ -6,7 +6,13 @@
  * It ships inside the E2B Firecracker MicroVM where src/lib/ is absent,
  * so it MUST NOT import from the app layer. If you update workflow-api.ts,
  * keep this file in sync.
+ *
+ * The one exception to "no imports" is a type-only import from the Temporal
+ * SDK, which is always present inside the sandbox — it lets duration fields
+ * carry the same `Duration` type the SDK's own timer/condition APIs accept.
  */
+
+import type { Duration } from '@temporalio/common';
 
 // ---------------------------------------------------------------------------
 // Monetary primitive
@@ -338,7 +344,7 @@ export type DeliveryInput = {
 	/** Heartbeat interval in ms — set low in tests for fast iteration. */
 	heartbeatIntervalMs?: number;
 	/** SLA timeout duration for delivery completion. Defaults to '2h'. */
-	slaTimeout?: string;
+	slaTimeout?: Duration;
 	/**
 	 * Maximum heartbeat ticks before `trackCourier` exits naturally.
 	 * Undefined (default) loops forever. Set in tests to let the SLA timer

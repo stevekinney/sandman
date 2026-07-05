@@ -220,7 +220,8 @@ export type RefundResult = {
 
 /**
  * Refunds the customer's payment as part of saga compensation.
- * Has a permissive retry policy — refunds must eventually succeed.
+ * Proxied through the compensation retry policy in definitions.ts, which has no
+ * attempt cap — a refund must eventually succeed, so it retries until it does.
  */
 export async function refundPayment(
 	operation: ActivityOperationMetadata,
