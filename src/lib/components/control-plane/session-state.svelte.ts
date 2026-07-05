@@ -40,6 +40,29 @@ export type FlowPulse = {
 /** Synthetic event sequences start high so they never collide with timeline indexes. */
 const SYNTHETIC_SEQUENCE_START = 10_000;
 
+/**
+ * How long to wait for a restarted worker to actually come back online before
+ * giving up and telling the user to try again. A restart has to re-bundle the
+ * workflow code, reconnect, and replay history, so this allows for a slow cold
+ * start while still surfacing a genuinely stuck restart rather than spinning
+ * forever. Overridable in tests so they don't sleep.
+ */
+const DEFAULT_WORKER_RESTART_POLL_MS = 1500;
+const DEFAULT_WORKER_RESTART_MAX_ATTEMPTS = 12;
+
+/** Options for tuning {@link SessionState}; only tests override these. */
+export type SessionStateOptions = {
+	/** Delay between worker-liveness polls after a restart request. */
+	workerRestartPollMs?: number;
+	/** How many times to poll for the worker before surfacing a failed restart. */
+	workerRestartMaxAttempts?: number;
+};
+
+/** Resolve after `ms` milliseconds — a cancellable-free sleep for polling. */
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class SessionState {
 	readonly #controller: TemporalController;
 	readonly tour: TourState;
@@ -70,14 +93,19 @@ export class SessionState {
 	#nextSyntheticSequence = SYNTHETIC_SEQUENCE_START;
 	#nextFlowId = 1;
 	#lastFedTimelineIndex = -1;
+	readonly #workerRestartPollMs: number;
+	readonly #workerRestartMaxAttempts: number;
 
 	readonly phase: SessionPhase;
 	readonly running: boolean;
 	readonly recommendedControl: ControlId | undefined;
 
-	constructor(controller: TemporalController, tour: TourState) {
+	constructor(controller: TemporalController, tour: TourState, options: SessionStateOptions = {}) {
 		this.#controller = controller;
 		this.tour = tour;
+		this.#workerRestartPollMs = options.workerRestartPollMs ?? DEFAULT_WORKER_RESTART_POLL_MS;
+		this.#workerRestartMaxAttempts =
+			options.workerRestartMaxAttempts ?? DEFAULT_WORKER_RESTART_MAX_ATTEMPTS;
 		this.phase = $derived(derivePhase(this.run !== null, this.timelineEntries));
 		this.running = $derived(isRunActive(this.phase));
 		this.recommendedControl = $derived(this.tour.currentStep?.control);
@@ -399,21 +427,69 @@ export class SessionState {
 		});
 	}
 
+	/**
+	 * Request a worker restart, then wait for the worker to actually come back
+	 * before claiming recovery.
+	 *
+	 * The restart route is fire-and-forget (it returns before the worker has
+	 * re-bundled and started polling), and a restart can genuinely fail to bring
+	 * the worker back. Emitting a synthetic `WorkerRestarted` event optimistically
+	 * would make the durability demo *claim* a recovery that never happened — the
+	 * worst possible failure for this exact teaching moment — and would resume the
+	 * `getTimeline` poll against a dead worker, spamming 502s. So we confirm the
+	 * worker is online via the status poll before advancing the tour, and surface
+	 * a clear "try again" message if it never recovers.
+	 */
 	async restartWorker(): Promise<void> {
+		if (this.pendingControl !== null || this.serverPending !== null) return;
+		this.pendingControl = 'kill-worker';
 		this.workerRestarting = true;
+		this.#pushFlow('sw');
 		try {
-			await this.#perform('kill-worker', 'sw', async () => {
-				await this.#controller.restartWorker();
+			await this.#controller.restartWorker();
+			const recovered = await this.#waitForWorkerOnline();
+			if (recovered) {
 				this.workerOnline = true;
 				this.#emitSyntheticEvent('WorkerRestarted', this.run?.workflowId);
 				this.notify(
 					'Recovered. History replayed and the workflow resumed exactly where it left off — no state lost.',
 					'success'
 				);
-			});
+			} else {
+				// Keep the topology honest: the worker is still down, so its control
+				// stays "Restart" and no false recovery event is written.
+				this.workerOnline = false;
+				this.notify(
+					'Restart requested, but the worker has not come back online yet. Give it a moment, then click Restart to try again.',
+					'danger'
+				);
+			}
+		} catch (error) {
+			this.workerOnline = false;
+			this.notify(error instanceof Error ? error.message : String(error), 'danger');
 		} finally {
+			this.pendingControl = null;
 			this.workerRestarting = false;
 		}
+	}
+
+	/**
+	 * Poll the backend until the worker process is observed online, or the attempt
+	 * budget is exhausted. Returns whether the worker actually came back.
+	 */
+	async #waitForWorkerOnline(): Promise<boolean> {
+		for (let attempt = 0; attempt < this.#workerRestartMaxAttempts; attempt++) {
+			try {
+				const liveness = await this.#controller.readProcessLiveness();
+				if (liveness.workerOnline) return true;
+			} catch {
+				// Status not reachable yet (sandbox mid-restart) — keep waiting.
+			}
+			if (attempt < this.#workerRestartMaxAttempts - 1) {
+				await delay(this.#workerRestartPollMs);
+			}
+		}
+		return false;
 	}
 
 	/**

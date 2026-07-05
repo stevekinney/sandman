@@ -32,7 +32,11 @@ function volatileStorage(): StorageAdapter {
 function makeSession() {
 	const controller = new MockTemporalController();
 	const tour = new TourState(volatileStorage());
-	const session = new SessionState(controller, tour);
+	// Poll with no delay and a small cap so the worker-restart wait never sleeps.
+	const session = new SessionState(controller, tour, {
+		workerRestartPollMs: 0,
+		workerRestartMaxAttempts: 3
+	});
 	// The page's status poll flips this once the sandbox reports ready.
 	session.sandboxUsable = true;
 	const notifications: Array<{ message: string; variant: NotifyVariant }> = [];
@@ -272,9 +276,36 @@ describe('SessionState', () => {
 		const restore = tour.currentStepIndex;
 		await session.restartWorker();
 		expect(controller.restartWorkerCount).toBe(1);
+		// The restart is only reported as recovered once the backend confirms the
+		// worker is actually polling again.
+		expect(controller.readProcessLivenessCount).toBeGreaterThanOrEqual(1);
 		expect(session.workerOnline).toBe(true);
 		expect(session.workflowEvents.at(-1)?.type).toBe('WorkerRestarted');
 		expect(tour.currentStepIndex).toBeGreaterThanOrEqual(restore);
+	});
+
+	it('does not claim recovery when a restarted worker never comes back online', async () => {
+		const { controller, session, notifications } = makeSession();
+		await session.placeOrder();
+		await session.killWorker();
+		expect(session.workerOnline).toBe(false);
+
+		// The restart request is accepted (204) but the worker stays down — the
+		// production failure that leaves the durability demo stuck. The UI must not
+		// fabricate a WorkerRestarted event or flip the worker back online.
+		controller.processLiveness = { serverOnline: true, workerOnline: false };
+		const eventsBefore = session.workflowEvents.length;
+
+		await session.restartWorker();
+
+		expect(controller.restartWorkerCount).toBe(1);
+		expect(session.workerOnline).toBe(false);
+		expect(session.workerRestarting).toBe(false);
+		expect(session.workflowEvents.some((event) => event.type === 'WorkerRestarted')).toBe(false);
+		expect(session.workflowEvents.length).toBe(eventsBefore);
+		expect(notifications.at(-1)?.variant).toBe('danger');
+		// The control stays usable so the user can retry the restart.
+		expect(session.canDo('kill-worker')).toBe(true);
 	});
 
 	it('stop and start round-trip the Temporal server with persisted state', async () => {

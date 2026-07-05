@@ -25,6 +25,7 @@ import type {
 	VisibilityFilter,
 	VisibilityWorkflowSummary
 } from '$lib/contracts/workflow-api';
+import type { ProcessLiveness } from '$lib/contracts/sandbox';
 
 /**
  * HTTP-backed implementation of `TemporalController`.
@@ -120,6 +121,19 @@ export class FetchController implements TemporalController {
 			const message = await readErrorMessage(res);
 			throw new Error(`Restart worker failed: ${message}`);
 		}
+	}
+
+	async readProcessLiveness(): Promise<ProcessLiveness> {
+		const res = await fetch(`${this.base}/status`);
+		if (!res.ok) {
+			const message = await readErrorMessage(res);
+			throw new Error(`Read sandbox status failed: ${message}`);
+		}
+		const body = (await res.json()) as { processes?: ProcessLiveness | null };
+		// A `null`/absent `processes` means the backend can't observe the sandbox
+		// (handle gone) — treat that as "not online" so the caller keeps waiting
+		// or surfaces a failure rather than assuming recovery.
+		return body.processes ?? { serverOnline: false, workerOnline: false };
 	}
 
 	async stopServer(): Promise<void> {

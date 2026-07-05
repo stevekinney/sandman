@@ -49,6 +49,26 @@
 	const ctaEnabled = $derived(
 		session.recommendedControl !== undefined && session.canDo(session.recommendedControl)
 	);
+	// When the current step's action is gated, explain why so the guided-journey
+	// card never renders a silent dead-end (e.g. stuck at "Finish the delivery"
+	// with a disabled button after a worker restart hasn't recovered yet).
+	const ctaBlockedReason = $derived.by(() => {
+		const control = session.recommendedControl;
+		if (control === undefined || session.canDo(control)) return undefined;
+		if (session.pendingControl !== null || session.serverPending !== null) {
+			return 'Finishing the last action…';
+		}
+		if (!session.sandboxUsable) {
+			return 'The sandbox is still starting — this unlocks once it is ready.';
+		}
+		if (!session.serverOnline) {
+			return 'The Temporal server is stopped. Start it from the topology strip to continue.';
+		}
+		if (!session.workerOnline) {
+			return 'The worker is offline. Restart it from the topology strip, then this step can complete.';
+		}
+		return 'This step unlocks as the workflow reaches the right point.';
+	});
 	const execution = $derived(
 		executionPointerFor(
 			session.phase,
@@ -66,6 +86,7 @@
 		<GuidedTour
 			progress={tourProgress}
 			{ctaEnabled}
+			{ctaBlockedReason}
 			workerOnline={session.workerOnline}
 			oncta={(control) => void session.dispatch(control)}
 			onshowcode={onShowExperimentCode}
