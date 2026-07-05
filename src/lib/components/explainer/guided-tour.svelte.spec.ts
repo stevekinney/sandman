@@ -88,6 +88,63 @@ describe('GuidedTour', () => {
 		expect(oncta).not.toHaveBeenCalled();
 	});
 
+	it('offers skip and restart when the step can no longer complete', async () => {
+		// Deviation: the learner cancelled the order at the signal-accept step, so
+		// its completing event can never arrive. The card must offer a way out.
+		const signalStepIndex = TOUR.findIndex((step) => step.id === 'signal-accept');
+		const progress: TourProgress = {
+			currentStepIndex: signalStepIndex,
+			completedStepIds: TOUR.slice(0, signalStepIndex).map((step) => step.id)
+		};
+		const onskip = vi.fn();
+		const onrestart = vi.fn();
+		render(GuidedTour, {
+			props: { progress, ctaEnabled: false, stepStuck: true, onskip, onrestart }
+		});
+
+		await expect
+			.element(page.getByText("This step can't complete anymore", { exact: false }))
+			.toBeInTheDocument();
+
+		await page.getByRole('button', { name: 'Skip this step' }).click();
+		expect(onskip).toHaveBeenCalledOnce();
+
+		await page.getByRole('button', { name: 'Restart tour' }).click();
+		expect(onrestart).toHaveBeenCalledOnce();
+	});
+
+	it('replaces the CTA with the stuck notice — no dead disabled button', async () => {
+		const signalStepIndex = TOUR.findIndex((step) => step.id === 'signal-accept');
+		const progress: TourProgress = {
+			currentStepIndex: signalStepIndex,
+			completedStepIds: TOUR.slice(0, signalStepIndex).map((step) => step.id)
+		};
+		render(GuidedTour, {
+			props: {
+				progress,
+				ctaEnabled: false,
+				ctaBlockedReason: 'This step unlocks as the workflow reaches the right point.',
+				stepStuck: true
+			}
+		});
+
+		// The step's own action (and its blocked reason) must not render: the
+		// workflow is terminal, so "waiting" copy would be a lie.
+		await expect
+			.element(page.getByText("This step can't complete anymore", { exact: false }))
+			.toBeInTheDocument();
+		expect(
+			page.getByRole('button', { name: 'Send restaurant-accepted signal' }).query()
+		).toBeNull();
+		expect(page.getByText('unlocks as the workflow', { exact: false }).query()).toBeNull();
+	});
+
+	it('does not show the stuck notice when the step can still complete', async () => {
+		render(GuidedTour, { props: { progress: initialProgress, ctaEnabled: true } });
+		await expect.element(page.getByRole('button', { name: 'Place order' })).toBeInTheDocument();
+		expect(page.getByText("This step can't complete anymore", { exact: false }).query()).toBeNull();
+	});
+
 	it('shows a watching indicator on steps without a control', async () => {
 		// Step 2 (activities-run) has no control — it completes from events alone.
 		const progress: TourProgress = { currentStepIndex: 1, completedStepIds: [TOUR[0].id] };

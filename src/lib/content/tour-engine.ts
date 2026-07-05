@@ -164,6 +164,23 @@ export class TourEngine {
 	}
 
 	/**
+	 * Skip the current step WITHOUT marking it complete — for steps whose
+	 * completing event can never arrive anymore (the workflow reached a
+	 * terminal phase first). Persists like a normal advance.
+	 *
+	 * @returns `true` if a step was skipped, `false` when the tour is complete.
+	 */
+	skip(): boolean {
+		if (this._currentStepIndex >= this._steps.length) return false;
+		this._currentStepIndex++;
+		this._storage.save({
+			currentStepIndex: this._currentStepIndex,
+			completedStepIds: [...this._completedStepIds]
+		});
+		return true;
+	}
+
+	/**
 	 * Reset tour progress to the beginning and clear the storage adapter.
 	 */
 	reset(): void {
@@ -171,4 +188,37 @@ export class TourEngine {
 		this._completedStepIds = [];
 		this._storage.clear();
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Terminal-state stuck detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Event types the workbench can still emit once the workflow has reached a
+ * terminal phase (Delivered/Cancelled/Refunded):
+ *
+ *  - Queries and Visibility read closed workflows, so `QueryCompleted` events
+ *    keep flowing (a dead worker only delays them — it can be restarted).
+ *  - Server lifecycle controls are not phase-gated.
+ *  - `WorkerRestarted` remains reachable ONLY while the worker is offline;
+ *    once the run stops, kill-worker is gated off, so an online worker can
+ *    never be killed-and-restarted again.
+ */
+function eventTypesProducibleAfterTerminal(workerOnline: boolean): readonly string[] {
+	const types = ['QueryCompleted', 'ServerStopped', 'ServerStarted'];
+	if (!workerOnline) types.push('WorkerRestarted');
+	return types;
+}
+
+/**
+ * Whether a tour step can never complete now that the workflow is in a
+ * terminal phase: none of the event types the workbench can still produce
+ * satisfy the step's `completes` predicate. The guided-tour card uses this to
+ * offer an inline skip/restart affordance instead of waiting forever.
+ */
+export function stepStuckAtTerminal(step: TourStep, context: { workerOnline: boolean }): boolean {
+	return !eventTypesProducibleAfterTerminal(context.workerOnline).some((type) =>
+		step.completes({ sequence: 0, type, timestamp: '' })
+	);
 }

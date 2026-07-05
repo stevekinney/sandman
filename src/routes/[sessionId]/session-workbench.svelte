@@ -87,8 +87,11 @@
 			progress={tourProgress}
 			{ctaEnabled}
 			{ctaBlockedReason}
+			stepStuck={session.tourStepStuck}
 			workerOnline={session.workerOnline}
 			oncta={(control) => void session.dispatch(control)}
+			onskip={() => tourState.skip()}
+			onrestart={() => session.reset()}
 			onshowcode={onShowExperimentCode}
 			onlookat={onNavigateToLookAt}
 		/>

@@ -10,6 +10,7 @@
 import type { ControlId, OrderInput, TimelineEntry } from '$lib/contracts/workflow-api';
 import type { ProcessLiveness } from '$lib/contracts/sandbox';
 import type { WorkflowEvent } from '$lib/contracts/events';
+import { stepStuckAtTerminal } from '$lib/content/tour-engine';
 import type { TourState } from '$lib/components/explainer';
 import type { TemporalController, WorkflowRun } from './types.ts';
 import { isUpdateRejectionError } from './types.ts';
@@ -103,6 +104,13 @@ export class SessionState {
 	readonly phase: SessionPhase;
 	readonly running: boolean;
 	readonly recommendedControl: ControlId | undefined;
+	/**
+	 * True when the workflow has reached a terminal phase that can never
+	 * satisfy the current tour step's `completes` predicate — e.g. the learner
+	 * cancelled the order to watch saga compensation, or the run finished
+	 * before the tour caught up. The guided-tour card offers skip/restart.
+	 */
+	readonly tourStepStuck: boolean;
 
 	constructor(controller: TemporalController, tour: TourState, options: SessionStateOptions = {}) {
 		this.#controller = controller;
@@ -113,6 +121,12 @@ export class SessionState {
 		this.phase = $derived(derivePhase(this.run !== null, this.timelineEntries));
 		this.running = $derived(isRunActive(this.phase));
 		this.recommendedControl = $derived(this.tour.currentStep?.control);
+		this.tourStepStuck = $derived.by(() => {
+			if (this.phase === 'idle' || this.running) return false;
+			const step = this.tour.currentStep;
+			if (step === undefined) return false;
+			return stepStuckAtTerminal(step, { workerOnline: this.workerOnline });
+		});
 	}
 
 	/** Whether a control is usable right now (phase, sandbox, server, worker gates). */

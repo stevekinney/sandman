@@ -30,10 +30,20 @@
 		 * beneath a disabled CTA so a gated step never becomes a silent dead-end.
 		 */
 		ctaBlockedReason?: string;
+		/**
+		 * True when the workflow has reached a terminal phase that can never
+		 * fire the current step's completing event. Replaces the CTA with an
+		 * inline "skip / restart" affordance so the step is never stuck forever.
+		 */
+		stepStuck?: boolean;
 		/** Worker liveness — flips the kill-worker CTA label to "Restart". */
 		workerOnline?: boolean;
 		/** Called when the user clicks the step's call-to-action button. */
 		oncta?: (control: ControlId) => void;
+		/** Called when the user skips a step that can no longer complete. */
+		onskip?: () => void;
+		/** Called when the user restarts the tour from a stuck step. */
+		onrestart?: () => void;
 		/** Called when the user asks to see an experiment's code in the editor. */
 		onshowcode?: (experiment: TourExperiment) => void;
 		/** Called when the user asks to be taken to a "where to look" surface. */
@@ -44,8 +54,11 @@
 		progress,
 		ctaEnabled = false,
 		ctaBlockedReason,
+		stepStuck = false,
 		workerOnline = true,
 		oncta,
+		onskip,
+		onrestart,
 		onshowcode,
 		onlookat
 	}: Props = $props();
@@ -136,7 +149,29 @@
 						<span class="journey__watch-label">Watch</span>
 						<span>{currentStep.watch}</span>
 					</p>
-					{#if ctaControl === undefined}
+					{#if stepStuck}
+						<!-- The workflow reached a terminal state first — this step's
+						     completing event can never arrive. Offer a way out inline. -->
+						<div class="journey__stuck">
+							<p class="journey__stuck-copy">
+								This step can't complete anymore — the workflow has already reached a final state.
+							</p>
+							<div class="journey__stuck-actions">
+								<Button
+									variant="soft"
+									size="sm"
+									label="Skip this step"
+									onclick={() => onskip?.()}
+								/>
+								<Button
+									variant="soft"
+									size="sm"
+									label="Restart tour"
+									onclick={() => onrestart?.()}
+								/>
+							</div>
+						</div>
+					{:else if ctaControl === undefined}
 						<p class="journey__watching">
 							<Spinner size="sm" label="Watching the system respond" />
 							Watching the system respond…
@@ -329,6 +364,25 @@
 		font-size: 0.72rem;
 		line-height: 1.45;
 		color: var(--cinder-text-subtle);
+	}
+
+	.journey__stuck {
+		padding: 0.5625rem 0.75rem;
+		border-radius: 0.5625rem;
+		border: 1px solid var(--cinder-color-warning-border, var(--cinder-border));
+		background: var(--cinder-color-warning-bg, var(--cinder-surface-inset));
+	}
+
+	.journey__stuck-copy {
+		margin: 0 0 0.5625rem;
+		font-size: 0.75rem;
+		line-height: 1.5;
+		color: var(--cinder-color-warning-fg, var(--cinder-text-muted));
+	}
+
+	.journey__stuck-actions {
+		display: flex;
+		gap: 0.5rem;
 	}
 
 	.journey__watching {
