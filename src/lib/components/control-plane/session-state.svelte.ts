@@ -468,12 +468,19 @@ export class SessionState {
 			await this.#controller.restartWorker();
 			const recovered = await this.#waitForWorkerOnline();
 			if (recovered) {
+				// The worker is genuinely back, so reflect that honestly even if the
+				// run was reset mid-wait.
 				this.workerOnline = true;
-				this.#emitSyntheticEvent('WorkerRestarted', this.run?.workflowId);
-				this.notify(
-					'Recovered. History replayed and the workflow resumed exactly where it left off — no state lost.',
-					'success'
-				);
+				// But only narrate a workflow recovery when there is still a run to
+				// recover: a Reset during the poll window clears it, and firing a
+				// WorkerRestarted event on a freshly-idle session would be misleading.
+				if (this.run !== null) {
+					this.#emitSyntheticEvent('WorkerRestarted', this.run.workflowId);
+					this.notify(
+						'Recovered. History replayed and the workflow resumed exactly where it left off — no state lost.',
+						'success'
+					);
+				}
 			} else {
 				// Keep the topology honest: the worker is still down, so its control
 				// stays "Restart" and no false recovery event is written.

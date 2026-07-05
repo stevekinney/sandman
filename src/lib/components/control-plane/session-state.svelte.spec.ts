@@ -308,6 +308,25 @@ describe('SessionState', () => {
 		expect(session.canDo('kill-worker')).toBe(true);
 	});
 
+	it('does not narrate recovery if the run was reset while the restart was waiting', async () => {
+		const { controller, session } = makeSession();
+		await session.placeOrder();
+		await session.killWorker();
+		// The worker will report back online during the restart's poll…
+		controller.processLiveness = { serverOnline: true, workerOnline: true };
+		// …but the learner clicked Reset mid-wait, clearing the run.
+		session.run = null;
+		const eventsBefore = session.workflowEvents.length;
+
+		await session.restartWorker();
+
+		// The worker is honestly marked online, but no WorkerRestarted event or
+		// success toast is synthesized onto a now-idle session.
+		expect(session.workerOnline).toBe(true);
+		expect(session.workflowEvents.length).toBe(eventsBefore);
+		expect(session.workflowEvents.some((event) => event.type === 'WorkerRestarted')).toBe(false);
+	});
+
 	it('stop and start round-trip the Temporal server with persisted state', async () => {
 		const { controller, session, notifications } = makeSession();
 		await session.placeOrder();
