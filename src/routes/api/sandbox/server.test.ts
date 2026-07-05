@@ -7,7 +7,8 @@ import {
 	reserveSandboxSlot,
 	updateSandboxStatus
 } from '$lib/server/database/repository';
-import { getSandboxRegistry } from '$lib/server/sandbox/registry';
+import { deregisterHandle, getSandboxRegistry } from '$lib/server/sandbox/registry';
+import { logError } from '$lib/server/logging';
 
 vi.mock('$lib/server/database/connection', () => ({
 	getDatabase: vi.fn(() => ({}))
@@ -216,5 +217,81 @@ describe('POST /api/sandbox', () => {
 		expect(readyInput?.expiresAt?.getTime()).toBe(
 			readyInput === undefined ? undefined : readyInput.now.getTime() + 300_000
 		);
+	});
+
+	/** A fully-shaped registry mock (matches the inline mocks used above). */
+	function makeReadyRegistryMock() {
+		return {
+			client: {
+				provision: vi
+					.fn()
+					.mockResolvedValue({ id: 'sandbox-1', status: 'Ready', host: () => 'localhost' }),
+				bootstrap: vi.fn().mockResolvedValue({ ready: true }),
+				exec: vi.fn(),
+				restartWorker: vi.fn(),
+				killWorker: vi.fn(),
+				processLiveness: vi.fn(() => null),
+				stopServer: vi.fn(),
+				startServer: vi.fn(),
+				extendTimeout: vi.fn(),
+				terminate: vi.fn().mockResolvedValue(undefined),
+				writeFile: vi.fn()
+			},
+			handles: new Map(),
+			reaper: {
+				register: vi.fn(),
+				unregister: vi.fn(),
+				touch: vi.fn(),
+				tick: vi.fn(),
+				start: vi.fn()
+			},
+			stopReaper: vi.fn()
+		};
+	}
+
+	it('recovers a ready sandbox by retrying the status write once', async () => {
+		const registry = makeReadyRegistryMock();
+		vi.mocked(getSandboxRegistry).mockReturnValueOnce(registry);
+		// Bootstrapping write ok; first Ready write fails (transient blip); the
+		// best-effort retry succeeds.
+		vi.mocked(updateSandboxStatus)
+			.mockResolvedValueOnce(undefined)
+			.mockRejectedValueOnce(new Error('database blip'))
+			.mockResolvedValueOnce(undefined);
+
+		const response = await POST(makeEvent());
+		expect(response.status).toBe(200);
+
+		await vi.waitFor(() => {
+			const readyWrites = vi
+				.mocked(updateSandboxStatus)
+				.mock.calls.filter(([, input]) => input.status === 'ready');
+			// Two Ready attempts: the failed first and the successful retry.
+			expect(readyWrites.length).toBe(2);
+		});
+		expect(registry.client.terminate).not.toHaveBeenCalled();
+		expect(vi.mocked(deregisterHandle)).not.toHaveBeenCalled();
+	});
+
+	it('never tears down a ready sandbox even if the status write cannot be recovered', async () => {
+		const registry = makeReadyRegistryMock();
+		vi.mocked(getSandboxRegistry).mockReturnValueOnce(registry);
+		// Bootstrapping ok; both the Ready write and its retry fail (DB down).
+		vi.mocked(updateSandboxStatus)
+			.mockResolvedValueOnce(undefined)
+			.mockRejectedValueOnce(new Error('database unavailable'))
+			.mockRejectedValueOnce(new Error('database still unavailable'));
+
+		const response = await POST(makeEvent());
+		expect(response.status).toBe(200);
+
+		await vi.waitFor(() => {
+			expect(vi.mocked(logError)).toHaveBeenCalledWith(
+				expect.objectContaining({ event: 'sandbox.bootstrap.bookkeeping_failed' })
+			);
+		});
+		// The working VM must NOT be torn down just because bookkeeping failed.
+		expect(registry.client.terminate).not.toHaveBeenCalled();
+		expect(vi.mocked(deregisterHandle)).not.toHaveBeenCalled();
 	});
 });

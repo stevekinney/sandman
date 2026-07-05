@@ -32,14 +32,9 @@ import type * as activities from './activities.ts';
  * of retrying. Or stretch `initialInterval` to '10s' and watch the retry
  * pause in the event stream.
  */
-export const {
-	chargePayment,
-	refundPayment,
-	notifyRestaurant,
-	assignCourier,
-	releaseCourier,
-	dispatchCourier
-} = proxyActivities<typeof activities>({
+export const { chargePayment, notifyRestaurant, assignCourier, dispatchCourier } = proxyActivities<
+	typeof activities
+>({
 	// How long one attempt may run before Temporal times it out and retries.
 	startToCloseTimeout: '30s',
 	retry: {
@@ -49,6 +44,27 @@ export const {
 		// Some failures should never be retried — a declined card stays declined.
 		// Throwing ApplicationFailure with one of these types skips the policy.
 		nonRetryableErrorTypes: ['PAYMENT_DECLINED', 'INVALID_ORDER', 'INVALID_ADDRESS']
+	}
+});
+
+/**
+ * Compensation activities (the saga's rollback steps): refunding the customer
+ * and releasing a held courier.
+ *
+ * These get their OWN, more patient retry policy on purpose. A compensation
+ * that gives up after a handful of attempts is the exact failure a saga exists
+ * to prevent — a refund that stops retrying leaves the customer charged for an
+ * order that was rolled back. So there is no `maximumAttempts` here: an unset
+ * limit means Temporal retries indefinitely (with a capped backoff) until the
+ * refund succeeds or the workflow itself is cancelled.
+ */
+export const { refundPayment, releaseCourier } = proxyActivities<typeof activities>({
+	startToCloseTimeout: '30s',
+	retry: {
+		initialInterval: '1s',
+		backoffCoefficient: 2,
+		maximumInterval: '30s'
+		// No maximumAttempts → retry until it succeeds. Compensations must land.
 	}
 });
 

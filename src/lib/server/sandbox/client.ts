@@ -78,6 +78,31 @@ const DEFAULT_READINESS_DELAY_MS = 2_000;
 /** Default sandbox lifetime (10 minutes). */
 const DEFAULT_SANDBOX_TIMEOUT_MS = 10 * 60 * 1_000;
 
+/** Cap on a single file write into the sandbox before we give up. */
+const DEFAULT_WRITE_FILE_TIMEOUT_MS = 30_000;
+
+/**
+ * Reject with a timeout error if `operation` does not settle within `timeoutMs`.
+ *
+ * Used to bound sandbox calls that would otherwise hang a request handler
+ * forever if the sandbox filesystem/network wedges. The underlying operation is
+ * not cancelled (the E2B SDK owns that) — this just stops the caller waiting.
+ */
+async function withTimeout<T>(operation: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timeout = new Promise<never>((_resolve, reject) => {
+		timer = setTimeout(
+			() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+			timeoutMs
+		);
+	});
+	try {
+		return await Promise.race([operation, timeout]);
+	} finally {
+		if (timer !== undefined) clearTimeout(timer);
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
@@ -616,7 +641,14 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 
 	async function writeFile(handle: SandboxHandle, path: string, contents: string): Promise<void> {
 		const { session } = getState(handle.id);
-		await session.files.write(path, contents);
+		// Every other sandbox call is time-bounded; a wedged filesystem here would
+		// otherwise hang the editor's save request (and its already-slid session
+		// TTL) indefinitely. Cap it so the client gets a definite failure instead.
+		await withTimeout(
+			session.files.write(path, contents),
+			DEFAULT_WRITE_FILE_TIMEOUT_MS,
+			`Writing ${path}`
+		);
 	}
 
 	// ------------------------------------------------------------------

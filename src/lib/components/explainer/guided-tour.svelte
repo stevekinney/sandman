@@ -25,6 +25,11 @@
 		progress: TourProgress;
 		/** Whether the current step's control can run right now. */
 		ctaEnabled?: boolean;
+		/**
+		 * Why the current step's control is disabled right now, if it is. Shown
+		 * beneath a disabled CTA so a gated step never becomes a silent dead-end.
+		 */
+		ctaBlockedReason?: string;
 		/** Worker liveness — flips the kill-worker CTA label to "Restart". */
 		workerOnline?: boolean;
 		/** Called when the user clicks the step's call-to-action button. */
@@ -38,6 +43,7 @@
 	let {
 		progress,
 		ctaEnabled = false,
+		ctaBlockedReason,
 		workerOnline = true,
 		oncta,
 		onshowcode,
@@ -130,17 +136,24 @@
 						<span class="journey__watch-label">Watch</span>
 						<span>{currentStep.watch}</span>
 					</p>
-					{#if ctaControl !== undefined && ctaEnabled}
+					{#if ctaControl === undefined}
+						<p class="journey__watching">
+							<Spinner size="sm" label="Watching the system respond" />
+							Watching the system respond…
+						</p>
+					{:else if ctaEnabled}
 						<Button
 							variant="primary"
 							fullWidth
 							label={getActionLabel(ctaControl)}
 							onclick={() => oncta?.(ctaControl)}
 						/>
-					{:else if ctaControl === undefined}
-						<p class="journey__watching">
-							<Spinner size="sm" label="Watching the system respond" />
-							Watching the system respond…
+					{:else}
+						<!-- The step has an action but it is gated right now. Show it
+						     disabled with the reason so the tour is never a dead-end. -->
+						<Button variant="primary" fullWidth disabled label={getActionLabel(ctaControl)} />
+						<p class="journey__cta-blocked">
+							{ctaBlockedReason ?? 'Waiting for the sandbox to be ready…'}
 						</p>
 					{/if}
 					{#if currentStep.lookAt !== undefined}
@@ -309,6 +322,13 @@
 		font-size: 0.75rem;
 		line-height: 1.45;
 		color: var(--cinder-text-muted);
+	}
+
+	.journey__cta-blocked {
+		margin: 0.5rem 0 0;
+		font-size: 0.72rem;
+		line-height: 1.45;
+		color: var(--cinder-text-subtle);
 	}
 
 	.journey__watching {

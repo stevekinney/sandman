@@ -40,6 +40,29 @@ export type FlowPulse = {
 /** Synthetic event sequences start high so they never collide with timeline indexes. */
 const SYNTHETIC_SEQUENCE_START = 10_000;
 
+/**
+ * How long to wait for a restarted worker to actually come back online before
+ * giving up and telling the user to try again. A restart has to re-bundle the
+ * workflow code, reconnect, and replay history, so this allows for a slow cold
+ * start while still surfacing a genuinely stuck restart rather than spinning
+ * forever. Overridable in tests so they don't sleep.
+ */
+const DEFAULT_WORKER_RESTART_POLL_MS = 1500;
+const DEFAULT_WORKER_RESTART_MAX_ATTEMPTS = 12;
+
+/** Options for tuning {@link SessionState}; only tests override these. */
+export type SessionStateOptions = {
+	/** Delay between worker-liveness polls after a restart request. */
+	workerRestartPollMs?: number;
+	/** How many times to poll for the worker before surfacing a failed restart. */
+	workerRestartMaxAttempts?: number;
+};
+
+/** Resolve after `ms` milliseconds — a cancellable-free sleep for polling. */
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class SessionState {
 	readonly #controller: TemporalController;
 	readonly tour: TourState;
@@ -70,14 +93,23 @@ export class SessionState {
 	#nextSyntheticSequence = SYNTHETIC_SEQUENCE_START;
 	#nextFlowId = 1;
 	#lastFedTimelineIndex = -1;
+	// Bumped by every restart and by reset(), so an in-flight restart's poll can
+	// tell it has been superseded (a reset, possibly followed by a new order)
+	// and must not touch state or narrate a recovery for a run it no longer owns.
+	#restartGeneration = 0;
+	readonly #workerRestartPollMs: number;
+	readonly #workerRestartMaxAttempts: number;
 
 	readonly phase: SessionPhase;
 	readonly running: boolean;
 	readonly recommendedControl: ControlId | undefined;
 
-	constructor(controller: TemporalController, tour: TourState) {
+	constructor(controller: TemporalController, tour: TourState, options: SessionStateOptions = {}) {
 		this.#controller = controller;
 		this.tour = tour;
+		this.#workerRestartPollMs = options.workerRestartPollMs ?? DEFAULT_WORKER_RESTART_POLL_MS;
+		this.#workerRestartMaxAttempts =
+			options.workerRestartMaxAttempts ?? DEFAULT_WORKER_RESTART_MAX_ATTEMPTS;
 		this.phase = $derived(derivePhase(this.run !== null, this.timelineEntries));
 		this.running = $derived(isRunActive(this.phase));
 		this.recommendedControl = $derived(this.tour.currentStep?.control);
@@ -175,6 +207,9 @@ export class SessionState {
 		this.serverPending = null;
 		this.pendingControl = null;
 		this.flows = [];
+		// Invalidate any in-flight restart poll so its late completion can't act on
+		// this now-reset (or freshly-restarted) session.
+		this.#restartGeneration++;
 		this.#lastFedTimelineIndex = -1;
 		this.#nextSyntheticSequence = SYNTHETIC_SEQUENCE_START;
 		this.tour.reset();
@@ -197,8 +232,27 @@ export class SessionState {
 		if (this.pendingControl !== null || this.serverPending !== null || this.workerRestarting) {
 			return;
 		}
+		// A worker that comes back online while the server stayed up — with no
+		// explicit restart in flight — is a recovery the poll observed out of band:
+		// either a restart that only succeeded after `restartWorker` gave up
+		// waiting, or an editor save that hot-restarted the worker through the files
+		// route. Narrate it and emit the event so the durable-recovery tour step
+		// advances, exactly as an in-band restart would.
+		const workerRecovered =
+			this.run !== null &&
+			this.serverOnline &&
+			liveness.serverOnline &&
+			!this.workerOnline &&
+			liveness.workerOnline;
 		this.serverOnline = liveness.serverOnline;
 		this.workerOnline = liveness.workerOnline;
+		if (workerRecovered) {
+			this.#emitSyntheticEvent('WorkerRestarted', this.run?.workflowId);
+			this.notify(
+				'Recovered. History replayed and the workflow resumed exactly where it left off — no state lost.',
+				'success'
+			);
+		}
 	}
 
 	// -- actions --------------------------------------------------------------
@@ -399,21 +453,82 @@ export class SessionState {
 		});
 	}
 
+	/**
+	 * Request a worker restart, then wait for the worker to actually come back
+	 * before claiming recovery.
+	 *
+	 * The restart route is fire-and-forget (it returns before the worker has
+	 * re-bundled and started polling), and a restart can genuinely fail to bring
+	 * the worker back. Emitting a synthetic `WorkerRestarted` event optimistically
+	 * would make the durability demo *claim* a recovery that never happened — the
+	 * worst possible failure for this exact teaching moment — and would resume the
+	 * `getTimeline` poll against a dead worker, spamming 502s. So we confirm the
+	 * worker is online via the status poll before advancing the tour, and surface
+	 * a clear "try again" message if it never recovers.
+	 */
 	async restartWorker(): Promise<void> {
+		if (this.pendingControl !== null || this.serverPending !== null) return;
+		const generation = ++this.#restartGeneration;
+		this.pendingControl = 'kill-worker';
 		this.workerRestarting = true;
+		this.#pushFlow('sw');
 		try {
-			await this.#perform('kill-worker', 'sw', async () => {
-				await this.#controller.restartWorker();
+			await this.#controller.restartWorker();
+			const recovered = await this.#waitForWorkerOnline();
+			// If the session was reset (and possibly a new order started) while the
+			// poll was running, this restart is stale: another operation now owns the
+			// state, so don't touch it or narrate a recovery for a run we lost.
+			if (generation !== this.#restartGeneration) return;
+			if (recovered) {
 				this.workerOnline = true;
-				this.#emitSyntheticEvent('WorkerRestarted', this.run?.workflowId);
+				// Only narrate a workflow recovery when there is still a run to recover.
+				if (this.run !== null) {
+					this.#emitSyntheticEvent('WorkerRestarted', this.run.workflowId);
+					this.notify(
+						'Recovered. History replayed and the workflow resumed exactly where it left off — no state lost.',
+						'success'
+					);
+				}
+			} else {
+				// Keep the topology honest: the worker is still down, so its control
+				// stays "Restart" and no false recovery event is written.
+				this.workerOnline = false;
 				this.notify(
-					'Recovered. History replayed and the workflow resumed exactly where it left off — no state lost.',
-					'success'
+					'Restart requested, but the worker has not come back online yet. Give it a moment, then click Restart to try again.',
+					'danger'
 				);
-			});
+			}
+		} catch (error) {
+			if (generation !== this.#restartGeneration) return;
+			this.workerOnline = false;
+			this.notify(error instanceof Error ? error.message : String(error), 'danger');
 		} finally {
-			this.workerRestarting = false;
+			// Only release the in-flight flags if they still belong to this restart —
+			// a reset (or superseding restart) may already have taken them over.
+			if (generation === this.#restartGeneration) {
+				this.pendingControl = null;
+				this.workerRestarting = false;
+			}
 		}
+	}
+
+	/**
+	 * Poll the backend until the worker process is observed online, or the attempt
+	 * budget is exhausted. Returns whether the worker actually came back.
+	 */
+	async #waitForWorkerOnline(): Promise<boolean> {
+		for (let attempt = 0; attempt < this.#workerRestartMaxAttempts; attempt++) {
+			try {
+				const liveness = await this.#controller.readProcessLiveness();
+				if (liveness.workerOnline) return true;
+			} catch {
+				// Status not reachable yet (sandbox mid-restart) — keep waiting.
+			}
+			if (attempt < this.#workerRestartMaxAttempts - 1) {
+				await delay(this.#workerRestartPollMs);
+			}
+		}
+		return false;
 	}
 
 	/**

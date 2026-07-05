@@ -55,7 +55,7 @@ export const POST: RequestHandler = async (event) => {
 	});
 	if (rateLimitCount > configuration.sessionCreationsPerTokenPerHour) {
 		logWarning({ event: 'sandbox.provision.blocked', sessionId: session.id, status: 'rate-limit' });
-		throw error(429, 'This demo token has reached its hourly session creation limit');
+		throw error(429, 'This invite code has reached its hourly session creation limit');
 	}
 
 	const reservation = await reserveSandboxSlot(database, {
@@ -143,6 +143,11 @@ export const POST: RequestHandler = async (event) => {
 	// warms up. The worker status strip will reflect readiness.
 	void (async () => {
 		const bootstrapStartedAt = performance.now();
+		// Track readiness so the catch never tears down a sandbox that actually
+		// came up — only a post-success bookkeeping step (e.g. the `Ready` status
+		// write) failed in that case, and destroying a working VM would be worse
+		// than a stale DB row.
+		let sandboxReady = false;
 		try {
 			await updateSandboxStatus(database, {
 				sandboxId: handle.id,
@@ -150,6 +155,7 @@ export const POST: RequestHandler = async (event) => {
 				now: new Date()
 			});
 			const result = await registry.client.bootstrap(handle);
+			sandboxReady = result.ready;
 			const completedAt = new Date();
 			await updateSandboxStatus(database, {
 				sandboxId: handle.id,
@@ -160,6 +166,13 @@ export const POST: RequestHandler = async (event) => {
 					: undefined,
 				errorMessage: result.ready ? undefined : 'Temporal server did not become ready'
 			});
+			// A sandbox that never became ready is unusable, and its DB row just
+			// left the active-status set — so nothing else will ever reclaim the
+			// running E2B VM. Terminate it now, or it leaks (billed) until its own
+			// provider-side timeout, while the per-session slot frees immediately.
+			if (!result.ready) {
+				await reclaimSandbox(() => registry.client.terminate(handle), handle.id, session.id);
+			}
 			logInfo({
 				event: 'sandbox.bootstrap.completed',
 				sessionId: session.id,
@@ -168,6 +181,45 @@ export const POST: RequestHandler = async (event) => {
 				durationMs: Math.round(performance.now() - bootstrapStartedAt)
 			});
 		} catch (err) {
+			if (sandboxReady) {
+				// The sandbox is genuinely up; only the `Ready` status write threw. Do
+				// NOT reclaim a working VM. But the page gates controls on
+				// `status === 'ready'`, so a row stuck at `bootstrapping` would leave
+				// the sandbox unusable — retry the Ready write once (best-effort) to
+				// recover from a transient blip.
+				const recoveredAt = new Date();
+				try {
+					await updateSandboxStatus(database, {
+						sandboxId: handle.id,
+						status: SANDBOX_SESSION_STATUS.Ready,
+						now: recoveredAt,
+						expiresAt: new Date(recoveredAt.getTime() + configuration.sessionTtlMs)
+					});
+					logInfo({
+						event: 'sandbox.bootstrap.completed',
+						sessionId: session.id,
+						sandboxId: handle.id,
+						status: 'ready',
+						durationMs: Math.round(performance.now() - bootstrapStartedAt)
+					});
+				} catch (retryErr) {
+					// Still couldn't mark it ready. Leave the working VM running (never
+					// tear it down) and let the status poll / TTL reconcile the row.
+					logError({
+						event: 'sandbox.bootstrap.bookkeeping_failed',
+						sessionId: session.id,
+						sandboxId: handle.id,
+						status: 'error',
+						durationMs: Math.round(performance.now() - bootstrapStartedAt),
+						error: retryErr
+					});
+				}
+				return;
+			}
+			// Bootstrap itself failed. Reclaim the VM FIRST — it's the billed
+			// resource — before the fallible DB write, so a database outage right
+			// after provisioning can't leak it.
+			await reclaimSandbox(() => registry.client.terminate(handle), handle.id, session.id);
 			await updateSandboxStatus(database, {
 				sandboxId: handle.id,
 				status: SANDBOX_SESSION_STATUS.Error,
@@ -187,6 +239,34 @@ export const POST: RequestHandler = async (event) => {
 
 	return json({ sandboxId: handle.id });
 };
+
+/**
+ * Terminate a sandbox VM and drop it from the in-process registry, logging (but
+ * not throwing) if termination fails. Used to reclaim a sandbox that failed to
+ * bootstrap so its E2B VM doesn't leak past the session's active-slot lifetime.
+ */
+async function reclaimSandbox(
+	terminate: () => Promise<void>,
+	sandboxId: string,
+	sessionId: string
+): Promise<void> {
+	try {
+		await terminate();
+	} catch (terminationError) {
+		logError({
+			event: 'sandbox.bootstrap_cleanup.failed',
+			sessionId,
+			sandboxId,
+			status: 'error',
+			error: terminationError
+		});
+	} finally {
+		// Deregister even if terminate() threw: a sandbox we failed to tear down is
+		// not one we should keep handing out from the registry, and the E2B VM will
+		// still self-expire on its provider-side timeout.
+		deregisterHandle(sandboxId);
+	}
+}
 
 function getHourWindowStart(now: Date): Date {
 	const windowStart = new Date(now);

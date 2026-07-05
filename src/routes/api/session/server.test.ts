@@ -38,7 +38,7 @@ describe('POST /api/session', () => {
 		vi.clearAllMocks();
 	});
 
-	it('rejects invalid demo tokens', async () => {
+	it('rejects invalid invite codes', async () => {
 		await expect(POST(makeEvent({ token: 'wrong-token' }))).rejects.toMatchObject({ status: 401 });
 	});
 

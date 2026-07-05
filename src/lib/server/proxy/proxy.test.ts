@@ -251,4 +251,40 @@ describe('proxyRequest — upstream errors', () => {
 		const response = await proxyRequest(defaultParams());
 		expect(response.status).toBe(503);
 	});
+
+	it('returns 504 with a typed ProxyError when the upstream times out', async () => {
+		// AbortSignal.timeout aborts with a DOMException named "TimeoutError".
+		const timeoutError = new DOMException('The operation timed out', 'TimeoutError');
+		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(timeoutError));
+
+		const response = await proxyRequest(defaultParams());
+		expect(response.status).toBe(504);
+
+		const payload = (await response.json()) as ProxyError;
+		expect(payload.status).toBe(504);
+		expect(payload.sandboxId).toBe(SANDBOX_ID);
+		expect(payload.message).toContain('did not respond');
+	});
+
+	it('returns 504 when the upstream stalls the body after sending headers', async () => {
+		// The timeout covers the whole exchange, so a slow-loris upstream that
+		// sends headers then stalls the body aborts during upstream.text(). That
+		// read is on the rewritable (text/html) path and must map to 504, not a
+		// raw 500 from an unhandled abort.
+		const stalledResponse = new Response('unused', {
+			status: 200,
+			headers: { 'content-type': 'text/html' }
+		});
+		vi.spyOn(stalledResponse, 'text').mockRejectedValue(
+			new DOMException('The operation timed out', 'TimeoutError')
+		);
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(stalledResponse));
+
+		const response = await proxyRequest(defaultParams());
+		expect(response.status).toBe(504);
+
+		const payload = (await response.json()) as ProxyError;
+		expect(payload.status).toBe(504);
+		expect(payload.message).toContain('did not respond');
+	});
 });

@@ -35,8 +35,7 @@ export const GET: RequestHandler = async (event) => {
 	if (customerTier !== null && !isCustomerTier(customerTier)) {
 		return json({ error: `Unknown customer tier: ${customerTier}` }, { status: 400 });
 	}
-
-	const query = buildVisibilityQuery({ status, customerTier, restaurantId });
+	const query = _buildVisibilityQuery({ status, customerTier, restaurantId });
 	const entry = getTemporalCliTarget(params.id);
 	const result = await runTemporalCommand(
 		entry,
@@ -72,16 +71,37 @@ export const GET: RequestHandler = async (event) => {
 	}
 };
 
-function buildVisibilityQuery(filter: {
+/**
+ * Build the Temporal List Filter for the given search attributes.
+ *
+ * Exported (underscore-prefixed, per SvelteKit's `+server.ts` export rules) so
+ * the escaping can be unit-tested directly, without the downstream shell layer
+ * obscuring it.
+ */
+export function _buildVisibilityQuery(filter: {
 	status: string | null;
 	customerTier: string | null;
 	restaurantId: string | null;
 }): string {
 	const clauses = [];
+	// `status` and `customerTier` are enum-validated by the caller, so they're
+	// known-safe literals. `restaurantId` is free-form and interpolated into a
+	// single-quoted Temporal List Filter clause, so escape it: doubling embedded
+	// single quotes is the SQL-style escape the filter grammar uses, which keeps
+	// a quote-containing value from breaking out of the clause (List Filter
+	// injection) while still letting any restaurantId the order path accepted be
+	// searched. (The whole query is separately shell-escaped downstream.)
 	if (filter.status !== null) clauses.push(`OrderStatus='${filter.status}'`);
 	if (filter.customerTier !== null) clauses.push(`CustomerTier='${filter.customerTier}'`);
-	if (filter.restaurantId !== null) clauses.push(`RestaurantId='${filter.restaurantId}'`);
+	if (filter.restaurantId !== null) {
+		clauses.push(`RestaurantId='${escapeListFilterLiteral(filter.restaurantId)}'`);
+	}
 	return clauses.join(' AND ');
+}
+
+/** Escape a value for a single-quoted Temporal List Filter literal (`'` → `''`). */
+function escapeListFilterLiteral(value: string): string {
+	return value.replaceAll("'", "''");
 }
 
 function getWorkflowSummaries(value: unknown): VisibilityWorkflowSummary[] {

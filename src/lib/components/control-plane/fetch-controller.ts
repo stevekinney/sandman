@@ -25,6 +25,7 @@ import type {
 	VisibilityFilter,
 	VisibilityWorkflowSummary
 } from '$lib/contracts/workflow-api';
+import type { ProcessLiveness } from '$lib/contracts/sandbox';
 
 /**
  * HTTP-backed implementation of `TemporalController`.
@@ -122,6 +123,21 @@ export class FetchController implements TemporalController {
 		}
 	}
 
+	async readProcessLiveness(): Promise<ProcessLiveness> {
+		const res = await fetch(`${this.base}/status`);
+		if (!res.ok) {
+			const message = await readErrorMessage(res);
+			throw new Error(`Read sandbox status failed: ${message}`);
+		}
+		const body: unknown = await res.json();
+		const processes = isRecord(body) ? body.processes : undefined;
+		// A `null`/absent/malformed `processes` means the backend can't vouch for
+		// the sandbox (handle gone, or an unexpected shape) — treat that as "not
+		// online" so the caller keeps waiting or surfaces a failure rather than
+		// assuming recovery from data it can't trust.
+		return isProcessLiveness(processes) ? processes : { serverOnline: false, workerOnline: false };
+	}
+
 	async stopServer(): Promise<void> {
 		const res = await fetch(`${this.base}/server/stop`, { method: 'POST' });
 		if (!res.ok) {
@@ -182,6 +198,15 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Validate that a value has the `ProcessLiveness` shape (two booleans). */
+function isProcessLiveness(value: unknown): value is ProcessLiveness {
+	return (
+		isRecord(value) &&
+		typeof value.serverOnline === 'boolean' &&
+		typeof value.workerOnline === 'boolean'
+	);
 }
 
 function getStringProperty(value: Record<string, unknown>, key: string): string | null {
