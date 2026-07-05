@@ -26,6 +26,7 @@
 	import '@lostgradient/cinder/button/styles';
 	import '@lostgradient/cinder/status-dot/styles';
 	import '@lostgradient/cinder/toast-region/styles';
+	import { ActiveWorkflowTracker } from '$lib/components/control-plane/active-workflow-tracker';
 	import { FetchController } from '$lib/components/control-plane/fetch-controller';
 	import { restoreSessionFromSandbox } from '$lib/components/control-plane/session-restore';
 	import { SessionState } from '../../lib/components/control-plane/session-state.svelte.ts';
@@ -102,17 +103,20 @@
 		tourState.replaceStorage(storage);
 	});
 
+	const activeWorkflowTracker = new ActiveWorkflowTracker();
+
 	// Track the sandbox's most recently active workflow id so a reload can
 	// disambiguate which run to restore if more than one is running (Reset is
 	// client-only and does not cancel the workflow, so an old run can still be
-	// live when the learner starts a new one).
+	// live when the learner starts a new one). See ActiveWorkflowTracker for
+	// why this can't simply mirror "is `run` null" onto storage.
 	$effect(() => {
 		if (!browser) return;
 		const key = activeWorkflowIdKey(data.sandboxId);
-		const workflowId = session.run?.workflowId;
+		const action = activeWorkflowTracker.next(session);
 		try {
-			if (workflowId) localStorage.setItem(key, workflowId);
-			else localStorage.removeItem(key);
+			if (action.kind === 'set') localStorage.setItem(key, action.workflowId);
+			else if (action.kind === 'clear') localStorage.removeItem(key);
 		} catch {
 			// Quota exceeded or private-browsing restriction — fail silently,
 			// matching localStorageAdapter's own tolerance for this.
