@@ -134,10 +134,41 @@ describe('POST /api/sandbox/[id]/files', () => {
 		});
 	});
 
+	describe('allowlist guard', () => {
+		it('returns 400 for a path that is not a known editable file', async () => {
+			const writeFile = vi.fn().mockResolvedValue(undefined);
+			configureSandboxResolver(async () => ({
+				client: makeClient({ writeFile }),
+				handle: makeHandle()
+			}));
+
+			const event = makeEvent('sandbox-1', { path: 'order-workflow.ts.bak', contents: 'x' });
+			await expect(POST(event)).rejects.toMatchObject({ status: 400 });
+			expect(writeFile).not.toHaveBeenCalled();
+			expect(touchSessionActivity).not.toHaveBeenCalled();
+		});
+
+		it('rejects a path-traversal attempt without writing anything', async () => {
+			const writeFile = vi.fn().mockResolvedValue(undefined);
+			configureSandboxResolver(async () => ({
+				client: makeClient({ writeFile }),
+				handle: makeHandle()
+			}));
+
+			const event = makeEvent('sandbox-1', {
+				path: '../../etc/cron.d/pwn',
+				contents: '* * * * * root sh'
+			});
+			await expect(POST(event)).rejects.toMatchObject({ status: 400 });
+			expect(writeFile).not.toHaveBeenCalled();
+			expect(touchSessionActivity).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('sandbox resolver', () => {
 		it('returns 503 when the resolver throws (unconfigured)', async () => {
 			// beforeEach already sets a throwing resolver
-			const event = makeEvent('sandbox-1', { path: 'workflows.ts', contents: 'code' });
+			const event = makeEvent('sandbox-1', { path: 'order-workflow.ts', contents: 'code' });
 			await expect(POST(event)).rejects.toMatchObject({ status: 503 });
 		});
 	});
@@ -154,10 +185,13 @@ describe('POST /api/sandbox/[id]/files', () => {
 				handle
 			}));
 
-			const event = makeEvent('sandbox-1', { path: 'workflows.ts', contents: 'workflow code' });
+			const event = makeEvent('sandbox-1', {
+				path: 'order-workflow.ts',
+				contents: 'workflow code'
+			});
 			await POST(event);
 
-			expect(writeFile).toHaveBeenCalledWith(handle, 'workflows.ts', 'workflow code');
+			expect(writeFile).toHaveBeenCalledWith(handle, 'order-workflow.ts', 'workflow code');
 		});
 
 		it('returns the WorkerStatus from restartWorker as JSON', async () => {
@@ -199,7 +233,7 @@ describe('POST /api/sandbox/[id]/files', () => {
 				handle: makeHandle()
 			}));
 
-			const event = makeEvent('sandbox-1', { path: 'workflows.ts', contents: 'code' });
+			const event = makeEvent('sandbox-1', { path: 'order-workflow.ts', contents: 'code' });
 			await POST(event);
 
 			expect(requireOwnedSandbox).toHaveBeenCalledWith(event, 'sandbox-1');

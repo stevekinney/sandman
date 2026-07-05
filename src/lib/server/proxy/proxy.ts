@@ -35,9 +35,39 @@ const HOP_BY_HOP = new Set([
  */
 const BLOCKED_RESPONSE_HEADERS = new Set(['x-frame-options', 'e2b-traffic-access-token']);
 
+/**
+ * Cap on a single upstream (sandbox Temporal UI) request. A wedged or
+ * slow-loris'd sandbox would otherwise hold this fetch — and the containing
+ * request handler — open indefinitely, and a UI page load fans out into many
+ * such sub-requests. 30s comfortably covers a healthy response.
+ */
+const UPSTREAM_TIMEOUT_MS = 30_000;
+
 /** Returns true for content-types that should be buffered and URL-rewritten. */
 function isRewritable(contentType: string): boolean {
 	return contentType.startsWith('text/html') || contentType.startsWith('application/json');
+}
+
+/**
+ * Build the typed JSON error response for an upstream failure: 504 when the
+ * `AbortSignal.timeout` fired (connect or body read), 502 otherwise.
+ */
+function upstreamErrorResponse(cause: unknown, sandboxId: string): Response {
+	const timedOut = cause instanceof Error && cause.name === 'TimeoutError';
+	const error: ProxyError = {
+		status: timedOut ? 504 : 502,
+		message: timedOut
+			? `upstream did not respond within ${UPSTREAM_TIMEOUT_MS}ms`
+			: cause instanceof Error
+				? cause.message
+				: 'upstream fetch failed',
+		sandboxId,
+		timestamp: new Date().toISOString()
+	};
+	return new Response(JSON.stringify(error), {
+		status: error.status,
+		headers: { 'content-type': 'application/json' }
+	});
 }
 
 /** Parameters for a single proxy round-trip. */
@@ -107,24 +137,23 @@ export async function proxyRequest({
 	const reqBody =
 		request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.arrayBuffer();
 
+	// One deadline covers the whole exchange — connect AND body read. `text()`
+	// below can therefore also abort with a TimeoutError, so both the fetch and
+	// the buffered read map through the same typed error path (a slow-loris
+	// upstream that sends headers then stalls the body would otherwise throw an
+	// unhandled AbortError and surface as a raw 500).
+	const timeoutSignal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
+
 	let upstream: Response;
 	try {
 		upstream = await fetch(upstreamUrl, {
 			method: request.method,
 			headers: forwardHeaders,
-			body: reqBody
+			body: reqBody,
+			signal: timeoutSignal
 		});
 	} catch (cause) {
-		const error: ProxyError = {
-			status: 502,
-			message: cause instanceof Error ? cause.message : 'upstream fetch failed',
-			sandboxId,
-			timestamp: new Date().toISOString()
-		};
-		return new Response(JSON.stringify(error), {
-			status: 502,
-			headers: { 'content-type': 'application/json' }
-		});
+		return upstreamErrorResponse(cause, sandboxId);
 	}
 
 	// Build response headers — strip hop-by-hop, blocked headers, and
@@ -143,8 +172,14 @@ export async function proxyRequest({
 	const contentType = upstream.headers.get('content-type') ?? '';
 
 	if (isRewritable(contentType)) {
-		// Buffer the body so we can rewrite upstream URLs before sending.
-		const text = await upstream.text();
+		// Buffer the body so we can rewrite upstream URLs before sending. This read
+		// is still under the timeout signal, so a stalled body is caught here too.
+		let text: string;
+		try {
+			text = await upstream.text();
+		} catch (cause) {
+			return upstreamErrorResponse(cause, sandboxId);
+		}
 		const rewritten = rewriteUrls(text, origin, proxyPrefix);
 		responseHeaders.set('content-type', contentType);
 		return new Response(rewritten, {
