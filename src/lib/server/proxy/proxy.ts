@@ -48,6 +48,28 @@ function isRewritable(contentType: string): boolean {
 	return contentType.startsWith('text/html') || contentType.startsWith('application/json');
 }
 
+/**
+ * Build the typed JSON error response for an upstream failure: 504 when the
+ * `AbortSignal.timeout` fired (connect or body read), 502 otherwise.
+ */
+function upstreamErrorResponse(cause: unknown, sandboxId: string): Response {
+	const timedOut = cause instanceof Error && cause.name === 'TimeoutError';
+	const error: ProxyError = {
+		status: timedOut ? 504 : 502,
+		message: timedOut
+			? `upstream did not respond within ${UPSTREAM_TIMEOUT_MS}ms`
+			: cause instanceof Error
+				? cause.message
+				: 'upstream fetch failed',
+		sandboxId,
+		timestamp: new Date().toISOString()
+	};
+	return new Response(JSON.stringify(error), {
+		status: error.status,
+		headers: { 'content-type': 'application/json' }
+	});
+}
+
 /** Parameters for a single proxy round-trip. */
 export type ProxyRequestParams = {
 	/** Full `https://` origin of the upstream Temporal Web UI (no trailing slash). */
@@ -115,30 +137,23 @@ export async function proxyRequest({
 	const reqBody =
 		request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.arrayBuffer();
 
+	// One deadline covers the whole exchange — connect AND body read. `text()`
+	// below can therefore also abort with a TimeoutError, so both the fetch and
+	// the buffered read map through the same typed error path (a slow-loris
+	// upstream that sends headers then stalls the body would otherwise throw an
+	// unhandled AbortError and surface as a raw 500).
+	const timeoutSignal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
+
 	let upstream: Response;
 	try {
 		upstream = await fetch(upstreamUrl, {
 			method: request.method,
 			headers: forwardHeaders,
 			body: reqBody,
-			signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS)
+			signal: timeoutSignal
 		});
 	} catch (cause) {
-		const timedOut = cause instanceof Error && cause.name === 'TimeoutError';
-		const error: ProxyError = {
-			status: timedOut ? 504 : 502,
-			message: timedOut
-				? `upstream did not respond within ${UPSTREAM_TIMEOUT_MS}ms`
-				: cause instanceof Error
-					? cause.message
-					: 'upstream fetch failed',
-			sandboxId,
-			timestamp: new Date().toISOString()
-		};
-		return new Response(JSON.stringify(error), {
-			status: error.status,
-			headers: { 'content-type': 'application/json' }
-		});
+		return upstreamErrorResponse(cause, sandboxId);
 	}
 
 	// Build response headers — strip hop-by-hop, blocked headers, and
@@ -157,8 +172,14 @@ export async function proxyRequest({
 	const contentType = upstream.headers.get('content-type') ?? '';
 
 	if (isRewritable(contentType)) {
-		// Buffer the body so we can rewrite upstream URLs before sending.
-		const text = await upstream.text();
+		// Buffer the body so we can rewrite upstream URLs before sending. This read
+		// is still under the timeout signal, so a stalled body is caught here too.
+		let text: string;
+		try {
+			text = await upstream.text();
+		} catch (cause) {
+			return upstreamErrorResponse(cause, sandboxId);
+		}
 		const rewritten = rewriteUrls(text, origin, proxyPrefix);
 		responseHeaders.set('content-type', contentType);
 		return new Response(rewritten, {

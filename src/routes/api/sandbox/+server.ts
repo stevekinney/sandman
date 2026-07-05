@@ -209,7 +209,6 @@ async function reclaimSandbox(
 ): Promise<void> {
 	try {
 		await terminate();
-		deregisterHandle(sandboxId);
 	} catch (terminationError) {
 		logError({
 			event: 'sandbox.bootstrap_cleanup.failed',
@@ -218,6 +217,11 @@ async function reclaimSandbox(
 			status: 'error',
 			error: terminationError
 		});
+	} finally {
+		// Deregister even if terminate() threw: a sandbox we failed to tear down is
+		// not one we should keep handing out from the registry, and the E2B VM will
+		// still self-expire on its provider-side timeout.
+		deregisterHandle(sandboxId);
 	}
 }
 

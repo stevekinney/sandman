@@ -29,7 +29,7 @@ export type ProxiedUiRouteParams = {
 	path: string[];
 };
 
-/** Typed error payload returned when the upstream sandbox is unreachable. */
+/** Typed error payload returned when the upstream sandbox is unreachable or times out. */
 export type ProxyError = {
 	/** HTTP status code: 502 when the upstream is unreachable, 504 when it timed out. */
 	status: 502 | 504;
