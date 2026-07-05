@@ -63,7 +63,18 @@
 	// read before mount to jump the tour ahead of what was server-rendered).
 	// The effect below swaps in the real adapter and fast-forwards to any
 	// persisted progress once mounted, client-side only.
-	const tourState = $derived(new TourState(createVolatileTourStorage()));
+	const tourState = $derived.by(() => {
+		// Read data.sandboxId to key this derived on it, even though the
+		// constructor below doesn't need the value directly. Without this,
+		// tourState reads nothing reactive and would never recreate — so
+		// navigating client-side between two sandboxes (SvelteKit reuses this
+		// component across the [sessionId] param) would keep the previous
+		// sandbox's tour instance alive. advanceTo is forward-only, so the
+		// stuck-behind tour could never load the new sandbox's saved progress,
+		// and the next persist write would overwrite it with the wrong state.
+		void data.sandboxId;
+		return new TourState(createVolatileTourStorage());
+	});
 	const controller = $derived(new FetchController(data.sandboxId));
 	const session = $derived(new SessionState(controller, tourState));
 
