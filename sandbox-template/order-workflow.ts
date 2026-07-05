@@ -500,11 +500,6 @@ export async function orderFoodWorkflow(
 		'timers-durable-sleep',
 		WORKFLOW_EVENT_TYPE.TimerStarted
 	);
-	// Record when the acceptance deadline fires, so a getStatus query can show it
-	// (mirrors deliveryDeadline). Same value the condition timer below counts down.
-	restaurantDeadline = new Date(
-		Date.now() + (currentInput.restaurantAcceptTimeoutMinutes ?? 10) * 60 * 1000
-	).toISOString();
 	const notifyOperation = operation('notify-restaurant');
 	const notification = await notifyRestaurant(
 		notifyOperation,
@@ -517,9 +512,16 @@ export async function orderFoodWorkflow(
 	// lives in the Temporal server: kill the worker and it still counts down.
 	// Try: shrink the `?? 10` minute fallback to `?? 1`, place an order, and
 	// let the deadline pass — the saga refunds the payment automatically.
+	const restaurantAcceptTimeoutMinutes = currentInput.restaurantAcceptTimeoutMinutes ?? 10;
+	// Record the deadline right before the timer starts, so a getStatus query
+	// reports the same moment the condition() timer below actually fires — not an
+	// earlier one skewed by however long notifyRestaurant (and its retries) took.
+	restaurantDeadline = new Date(
+		Date.now() + restaurantAcceptTimeoutMinutes * 60 * 1000
+	).toISOString();
 	const accepted = await condition(
 		() => restaurantAccepted || Boolean(restaurantRejectedReason) || Boolean(cancelReason),
-		`${currentInput.restaurantAcceptTimeoutMinutes ?? 10}m`
+		`${restaurantAcceptTimeoutMinutes}m`
 	);
 	if (!accepted) return refundAndFinish(ORDER_STATUS.Refunded, 'Restaurant did not respond');
 	if (cancelReason) return refundAndFinish(ORDER_STATUS.Cancelled, `Cancelled: ${cancelReason}`);
