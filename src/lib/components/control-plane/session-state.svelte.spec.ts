@@ -538,6 +538,29 @@ describe('SessionState', () => {
 			expect(session.activeOrder?.orderId).not.toBe('order-stale');
 		});
 
+		it('abandons adopting a run if the learner hits Reset while the Visibility lookup is in flight', async () => {
+			const { controller, session } = makeSession();
+			// A workflow really is still running server-side (Reset doesn't
+			// cancel it) — but the learner reset mid-lookup, and `run` was
+			// already null before and after, so a plain `run !== null` recheck
+			// wouldn't catch this.
+			controller.visibility = async () => {
+				session.reset();
+				return [runningOrderSummary('order-still-running')];
+			};
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run).toBeNull();
+			expect(session.activeOrder).toBeNull();
+
+			// The abandoned attempt doesn't block a later, uncontested retry —
+			// matching what would happen if Reset had simply run first.
+			controller.visibility = async () => [runningOrderSummary('order-still-running')];
+			await restoreSessionFromSandbox(controller, session);
+			expect(session.run?.workflowId).toBe('order-still-running');
+		});
+
 		it('discards a stale timeline if the learner reset and placed a new order mid-query', async () => {
 			const { controller, session } = makeSession();
 			controller.visibilityResult = [runningOrderSummary('order-restored')];

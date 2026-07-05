@@ -67,6 +67,14 @@ export class SessionState {
 	 */
 	sandboxUsable = $state(false);
 	flows = $state<FlowPulse[]>([]);
+	/**
+	 * Bumped by every `reset()`. Lets an in-flight async operation started
+	 * before a reset (e.g. reload restoration's Visibility lookup) detect that
+	 * the learner reset mid-flight and abandon adopting stale state — even in
+	 * the edge case where `run` was already null both before and after, so a
+	 * plain `run !== null` recheck wouldn't reveal that a reset happened.
+	 */
+	resetEpoch = $state(0);
 
 	#nextSyntheticSequence = SYNTHETIC_SEQUENCE_START;
 	#nextFlowId = 1;
@@ -184,6 +192,7 @@ export class SessionState {
 		this.#lastFedTimelineIndex = -1;
 		this.#nextSyntheticSequence = SYNTHETIC_SEQUENCE_START;
 		this.tour.reset();
+		this.resetEpoch++;
 	}
 
 	/**

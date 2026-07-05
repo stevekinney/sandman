@@ -27,6 +27,8 @@ export type RestorableSession = {
 	run: WorkflowRun | null;
 	activeOrder: OrderInput | null;
 	readonly phase: SessionPhase;
+	/** Bumped by `reset()` — lets an in-flight restore detect a mid-flight Reset. */
+	readonly resetEpoch: number;
 	readonly tour: {
 		readonly currentStepIndex: number;
 		readonly isComplete: boolean;
@@ -135,7 +137,11 @@ const NOT_FOUND_CONFIRMATION_ROUNDS = 3;
  *
  * Runs at most once per session (once it finds and adopts a run, or confirms
  * none exists); a Visibility failure or an unconfirmed empty result clears
- * the attempt so the caller's regular polling cadence can retry.
+ * the attempt so the caller's regular polling cadence can retry. A Reset
+ * mid-flight abandons this attempt the same way — the next poll tick starts
+ * fresh and, if the workflow is still running server-side, re-attaches to it
+ * exactly as it would without the race (Reset is client-only and does not
+ * cancel the run — see the module doc).
  */
 export async function restoreSessionFromSandbox(
 	controller: TemporalController,
@@ -144,6 +150,7 @@ export async function restoreSessionFromSandbox(
 ): Promise<void> {
 	if (restoreAttempted.has(session) || session.run !== null) return;
 	restoreAttempted.add(session);
+	const epochAtStart = session.resetEpoch;
 
 	let workflows: VisibilityWorkflowSummary[];
 	try {
@@ -152,8 +159,13 @@ export async function restoreSessionFromSandbox(
 		restoreAttempted.delete(session);
 		return;
 	}
-	// The learner may have placed a new order while the lookup was in flight.
+	// The learner may have placed a new order, or hit Reset (which doesn't
+	// change `run` if it was already null), while the lookup was in flight.
 	if (session.run !== null) return;
+	if (session.resetEpoch !== epochAtStart) {
+		restoreAttempted.delete(session);
+		return;
+	}
 
 	const resumable = workflows.filter(isResumableOrderWorkflow);
 	const active =
