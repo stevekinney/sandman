@@ -31,6 +31,24 @@
 	function setLens(nextLens: 'events' | 'steps'): void {
 		lens = nextLens;
 	}
+
+	function focusLens(nextLens: 'events' | 'steps'): void {
+		document.querySelector<HTMLButtonElement>(`[data-history-lens="${nextLens}"]`)?.focus();
+	}
+
+	function handleLensKeydown(event: KeyboardEvent): void {
+		const nextLens =
+			event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === 'End'
+				? 'steps'
+				: event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'Home'
+					? 'events'
+					: null;
+
+		if (nextLens === null) return;
+		event.preventDefault();
+		setLens(nextLens);
+		requestAnimationFrame(() => focusLens(nextLens));
+	}
 </script>
 
 <aside class="history" aria-label="Workflow history">
@@ -50,8 +68,10 @@
 				role="radio"
 				aria-checked={lens === 'events'}
 				tabindex={lens === 'events' ? 0 : -1}
+				data-history-lens="events"
 				data-cinder-selected={lens === 'events' ? '' : undefined}
 				onclick={() => setLens('events')}
+				onkeydown={handleLensKeydown}
 			>
 				Events
 			</button>
@@ -61,8 +81,10 @@
 				role="radio"
 				aria-checked={lens === 'steps'}
 				tabindex={lens === 'steps' ? 0 : -1}
+				data-history-lens="steps"
 				data-cinder-selected={lens === 'steps' ? '' : undefined}
 				onclick={() => setLens('steps')}
+				onkeydown={handleLensKeydown}
 			>
 				Steps
 			</button>

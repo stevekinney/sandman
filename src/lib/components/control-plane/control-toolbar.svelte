@@ -69,6 +69,24 @@
 	function setView(nextView: CenterView): void {
 		view = nextView;
 	}
+
+	function focusViewTab(nextView: CenterView): void {
+		document.querySelector<HTMLButtonElement>(`[data-view-tab="${nextView}"]`)?.focus();
+	}
+
+	function handleViewKeydown(event: KeyboardEvent): void {
+		const nextView =
+			event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === 'End'
+				? 'temporal'
+				: event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'Home'
+					? 'code'
+					: null;
+
+		if (nextView === null) return;
+		event.preventDefault();
+		setView(nextView);
+		requestAnimationFrame(() => focusViewTab(nextView));
+	}
 </script>
 
 <div class="toolbar-shell">
@@ -133,8 +151,10 @@
 				aria-selected={view === 'code'}
 				aria-controls="center-panel-code"
 				tabindex={view === 'code' ? 0 : -1}
+				data-view-tab="code"
 				data-cinder-selected={view === 'code' ? '' : undefined}
 				onclick={() => setView('code')}
+				onkeydown={handleViewKeydown}
 			>
 				Code
 			</button>
@@ -145,8 +165,10 @@
 				aria-selected={view === 'temporal'}
 				aria-controls="center-panel-temporal"
 				tabindex={view === 'temporal' ? 0 : -1}
+				data-view-tab="temporal"
 				data-cinder-selected={view === 'temporal' ? '' : undefined}
 				onclick={() => setView('temporal')}
+				onkeydown={handleViewKeydown}
 			>
 				Temporal UI
 			</button>

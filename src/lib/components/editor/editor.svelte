@@ -90,6 +90,53 @@
 		return _debouncers.get(path)!;
 	}
 
+	function focusFileTab(fileName: string): void {
+		document.querySelector<HTMLButtonElement>(`[data-file-tab="${CSS.escape(fileName)}"]`)?.focus();
+	}
+
+	function selectFileByOffset(offset: number): void {
+		const currentIndex = FILE_DESCRIPTORS.findIndex(
+			(descriptor) => descriptor.name === activeFileName
+		);
+		const nextIndex = (currentIndex + offset + FILE_DESCRIPTORS.length) % FILE_DESCRIPTORS.length;
+		const nextFileName = FILE_DESCRIPTORS[nextIndex].name;
+
+		selectFile(nextFileName);
+		requestAnimationFrame(() => focusFileTab(nextFileName));
+	}
+
+	function selectFileByIndex(index: number): void {
+		const nextFileName = FILE_DESCRIPTORS[index].name;
+
+		selectFile(nextFileName);
+		requestAnimationFrame(() => focusFileTab(nextFileName));
+	}
+
+	function handleFileTabKeydown(event: KeyboardEvent): void {
+		if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+			event.preventDefault();
+			selectFileByOffset(1);
+			return;
+		}
+
+		if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+			event.preventDefault();
+			selectFileByOffset(-1);
+			return;
+		}
+
+		if (event.key === 'Home') {
+			event.preventDefault();
+			selectFileByIndex(0);
+			return;
+		}
+
+		if (event.key === 'End') {
+			event.preventDefault();
+			selectFileByIndex(FILE_DESCRIPTORS.length - 1);
+		}
+	}
+
 	/** POSTs a file payload to the sandbox files route and updates workerStatus. */
 	async function saveFile(payload: SavePayload): Promise<void> {
 		isLoading = true;
@@ -338,10 +385,12 @@
 						role="tab"
 						aria-selected={activeFile.name === descriptor.name}
 						tabindex={activeFile.name === descriptor.name ? 0 : -1}
+						data-file-tab={descriptor.name}
 						class={`cinder-tab editor-tab${activeFile.name === descriptor.name ? ' active' : ''}${
 							descriptor.readOnly ? ' readonly' : ''
 						}`}
 						onclick={() => selectFile(descriptor.name)}
+						onkeydown={handleFileTabKeydown}
 					>
 						{descriptor.name}
 						{#if descriptor.readOnly}
