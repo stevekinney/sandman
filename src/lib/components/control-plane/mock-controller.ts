@@ -128,6 +128,9 @@ export class MockTemporalController implements TemporalController {
 	/** Result returned by `visibility()`. */
 	visibilityResult: VisibilityWorkflowSummary[] = [];
 
+	/** When set, `visibility()` throws this error instead of succeeding. */
+	visibilityError: Error | null = null;
+
 	/**
 	 * Liveness returned by `readProcessLiveness()`. Defaults to fully online so
 	 * the happy-path restart confirms recovery immediately. Set `workerOnline`
@@ -201,6 +204,7 @@ export class MockTemporalController implements TemporalController {
 
 	async visibility(filter: VisibilityFilter): Promise<VisibilityWorkflowSummary[]> {
 		this.visibilityCalls.push({ filter });
+		if (this.visibilityError !== null) throw this.visibilityError;
 		return this.visibilityResult;
 	}
 }

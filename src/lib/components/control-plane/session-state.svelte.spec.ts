@@ -6,11 +6,19 @@
  * the in-memory MockTemporalController.
  */
 import { describe, expect, it } from 'vitest';
-import type { OrderSnapshot, TimelineEntry } from '$lib/contracts/workflow-api';
-import { ORDER_STATUS } from '$lib/contracts/workflow-api';
+import type {
+	OrderSnapshot,
+	QueryName,
+	QueryReturnMap,
+	TimelineEntry,
+	VisibilityWorkflowSummary
+} from '$lib/contracts/workflow-api';
+import { ORDER_FOOD_WORKFLOW, ORDER_STATUS } from '$lib/contracts/workflow-api';
+import { TOUR } from '$lib/content/demo-script';
 import { TourState } from '$lib/components/explainer';
 import type { StorageAdapter, TourProgress } from '$lib/content/tour-engine';
 import { MockTemporalController } from './mock-controller.ts';
+import { restoreSessionFromSandbox } from './session-restore.ts';
 import { SessionState, type NotifyVariant } from './session-state.svelte.ts';
 
 function volatileStorage(): StorageAdapter {
@@ -56,6 +64,23 @@ function timelineEntry(
 		status,
 		eventType
 	};
+}
+
+/**
+ * Looks up a mocked query response keyed exactly like `QueryReturnMap`, so
+ * the generic index `responses[name]` type-checks as `QueryReturnMap[N] |
+ * undefined` and narrows to `QueryReturnMap[N]` after the `undefined` check
+ * below — without a cast. (A same-shaped object literal alone can't prove
+ * this to the compiler; indexing a record declared over the same key space
+ * as the return-type map can.)
+ */
+function queryResponseFor<N extends QueryName>(
+	responses: Partial<{ [K in QueryName]: QueryReturnMap[K] }>,
+	name: N
+): QueryReturnMap[N] {
+	const value = responses[name];
+	if (value === undefined) throw new Error(`No mock response configured for query "${name}"`);
+	return value;
 }
 
 describe('SessionState', () => {
@@ -396,6 +421,540 @@ describe('SessionState', () => {
 		expect(session.serverOnline).toBe(false);
 		expect(session.serverPending).toBeNull();
 		expect(session.canDo('start-order')).toBe(false);
+	});
+
+	it('calls onRunChanged synchronously whenever run changes', async () => {
+		const { session } = makeSession();
+		const seen: Array<{ workflowId: string } | null> = [];
+		session.onRunChanged = (run) => seen.push(run ? { workflowId: run.workflowId } : null);
+
+		await session.placeOrder();
+		expect(seen).toEqual([{ workflowId: session.run?.workflowId }]);
+
+		session.reset();
+		expect(seen).toEqual([{ workflowId: seen[0]?.workflowId }, null]);
+	});
+
+	describe('restoreSessionFromSandbox', () => {
+		function runningOrderSummary(
+			workflowId: string,
+			overrides: Partial<VisibilityWorkflowSummary> = {}
+		): VisibilityWorkflowSummary {
+			return {
+				workflowId,
+				runId: 'run-restored-1',
+				status: 'RUNNING',
+				type: ORDER_FOOD_WORKFLOW,
+				businessSnapshot: {},
+				...overrides
+			};
+		}
+
+		/** A TourState whose storage already holds progress, as after a reload. */
+		function restoredTour(storage: StorageAdapter, stepIndex: number): TourState {
+			storage.save({
+				currentStepIndex: stepIndex,
+				completedStepIds: TOUR.slice(0, stepIndex).map((step) => step.id)
+			});
+			return new TourState(storage);
+		}
+
+		it('re-attaches to the running order workflow and replays its timeline', async () => {
+			const { controller, tour, session } = makeSession();
+			controller.visibilityResult = [
+				runningOrderSummary('delivery-order-9', { type: 'deliveryWorkflow' }),
+				runningOrderSummary('order-9')
+			];
+			controller.queryResults.set('getTimeline', [
+				timelineEntry(0, ORDER_STATUS.Created, 'WorkflowExecutionStarted'),
+				timelineEntry(1, ORDER_STATUS.Validating, 'ActivityTaskCompleted'),
+				timelineEntry(2, ORDER_STATUS.AwaitingRestaurant, 'TimerStarted')
+			]);
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run).toEqual({ workflowId: 'order-9', runId: 'run-restored-1' });
+			// The workflow id is the order id, so the demo order is rebuilt around it.
+			expect(session.activeOrder?.orderId).toBe('order-9');
+			expect(session.phase).toBe(ORDER_STATUS.AwaitingRestaurant);
+			// Replayed history advanced the tour to the signal step.
+			expect(TOUR[tour.currentStepIndex]?.id).toBe('signal-accept');
+		});
+
+		it('restores tour progress and the run together across a reload', async () => {
+			// First page load: place an order and advance the tour, persisting
+			// progress into the (shared) storage adapter.
+			const storage = volatileStorage();
+			const firstController = new MockTemporalController();
+			const firstSession = new SessionState(firstController, new TourState(storage));
+			firstSession.sandboxUsable = true;
+			await firstSession.placeOrder();
+			expect(storage.load()?.currentStepIndex).toBe(1);
+
+			// Reload: everything client-side is fresh except the storage adapter.
+			const controller = new MockTemporalController();
+			controller.visibilityResult = [runningOrderSummary(firstController.startResult.workflowId)];
+			controller.queryResults.set('getTimeline', [
+				timelineEntry(0, ORDER_STATUS.Created, 'WorkflowExecutionStarted')
+			]);
+			const tour = new TourState(storage);
+			expect(tour.currentStepIndex).toBe(1);
+			const session = new SessionState(controller, tour);
+			session.sandboxUsable = true;
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run).toEqual({
+				workflowId: firstController.startResult.workflowId,
+				runId: 'run-restored-1'
+			});
+			expect(session.phase).toBe(ORDER_STATUS.Created);
+			// No inconsistent half-state: the restored tour step and the restored
+			// run agree, and the replayed start event did not double-advance.
+			expect(tour.currentStepIndex).toBe(1);
+		});
+
+		it('skips restored steps the real workflow phase has made impossible', async () => {
+			const storage = volatileStorage();
+			const updateStepIndex = TOUR.findIndex((step) => step.id === 'update-with-validator');
+			const tour = restoredTour(storage, updateStepIndex);
+			const controller = new MockTemporalController();
+			controller.visibilityResult = [runningOrderSummary('order-3')];
+			// The order moved to delivery while the page was closed; the learner
+			// never performed the update, so no update event exists to replay.
+			controller.queryResults.set('getTimeline', [
+				timelineEntry(0, ORDER_STATUS.InDelivery, 'ChildWorkflowExecutionStarted')
+			]);
+			const session = new SessionState(controller, tour);
+			session.sandboxUsable = true;
+
+			await restoreSessionFromSandbox(controller, session);
+
+			// The update validator rejects in-delivery changes, so the tour floors
+			// forward past the update and child steps instead of sitting stuck.
+			expect(TOUR[tour.currentStepIndex]?.id).toBe('queryable-business-snapshot');
+			expect(tour.completedStepIds).toContain('update-with-validator');
+			expect(tour.completedStepIds).toContain('child-workflow');
+		});
+
+		it('resets stale in-progress tour state once no order workflow is confirmed absent', async () => {
+			const storage = volatileStorage();
+			const tour = restoredTour(storage, 3);
+			const controller = new MockTemporalController();
+			// A delivery child alone doesn't count — no order workflow of any
+			// status exists, which is the only case that should reset progress.
+			controller.visibilityResult = [
+				runningOrderSummary('delivery-order-1', { type: 'deliveryWorkflow' })
+			];
+			const session = new SessionState(controller, tour);
+
+			// Visibility is eventually consistent, so a single empty result isn't
+			// conclusive — it takes a few consecutive confirmations (simulating the
+			// caller's normal polling cadence) before stale progress is reset.
+			await restoreSessionFromSandbox(controller, session);
+			expect(session.run).toBeNull();
+			expect(tour.currentStepIndex).toBe(3);
+
+			await restoreSessionFromSandbox(controller, session);
+			expect(tour.currentStepIndex).toBe(3);
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run).toBeNull();
+			expect(tour.currentStepIndex).toBe(0);
+			expect(storage.load()).toBeNull();
+		});
+
+		it('does not confirm "not found" once a workflow appears mid-retry', async () => {
+			const storage = volatileStorage();
+			const tour = restoredTour(storage, 3);
+			const controller = new MockTemporalController();
+			const session = new SessionState(controller, tour);
+
+			// First two polls see nothing (Visibility indexing lag); the third
+			// sees the workflow the learner actually started.
+			controller.visibilityResult = [];
+			await restoreSessionFromSandbox(controller, session);
+			await restoreSessionFromSandbox(controller, session);
+			expect(tour.currentStepIndex).toBe(3);
+
+			controller.visibilityResult = [runningOrderSummary('order-late')];
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run?.workflowId).toBe('order-late');
+			expect(tour.currentStepIndex).toBe(3);
+		});
+
+		it('does not let an empty result after a Visibility error count towards confirmation', async () => {
+			const storage = volatileStorage();
+			const tour = restoredTour(storage, 3);
+			const controller = new MockTemporalController();
+			const session = new SessionState(controller, tour);
+
+			// Two empty results build a streak of 2 (one short of confirmation).
+			controller.visibilityResult = [];
+			await restoreSessionFromSandbox(controller, session);
+			await restoreSessionFromSandbox(controller, session);
+			expect(tour.currentStepIndex).toBe(3);
+
+			// A transient error interrupts the sequence — it isn't an
+			// observation and must not let the streak survive to combine with
+			// the next empty result.
+			controller.visibilityError = new Error('temporal exploded');
+			await restoreSessionFromSandbox(controller, session);
+			controller.visibilityError = null;
+
+			// Without clearing the streak on error, this would be the "third"
+			// confirmed-empty result and would wipe progress.
+			await restoreSessionFromSandbox(controller, session);
+			expect(session.run).toBeNull();
+			expect(tour.currentStepIndex).toBe(3);
+		});
+
+		it('keeps a finished tour finished when the workflow has since completed', async () => {
+			const storage = volatileStorage();
+			const tour = restoredTour(storage, TOUR.length);
+			const controller = new MockTemporalController();
+			const session = new SessionState(controller, tour);
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(tour.isComplete).toBe(true);
+		});
+
+		it('leaves the session untouched and allows a retry when visibility fails', async () => {
+			const storage = volatileStorage();
+			const tour = restoredTour(storage, 2);
+			const controller = new MockTemporalController();
+			controller.visibilityError = new Error('server is down');
+			const session = new SessionState(controller, tour);
+
+			await restoreSessionFromSandbox(controller, session);
+			expect(session.run).toBeNull();
+			expect(tour.currentStepIndex).toBe(2);
+
+			// Once the server recovers, the next trigger retries the restore.
+			controller.visibilityError = null;
+			controller.visibilityResult = [runningOrderSummary('order-2')];
+			await restoreSessionFromSandbox(controller, session);
+			expect(session.run?.workflowId).toBe('order-2');
+		});
+
+		it('runs at most once and never clobbers a run the learner started', async () => {
+			const { controller, session } = makeSession();
+			controller.visibilityResult = [runningOrderSummary('order-stale')];
+			await session.placeOrder();
+
+			await restoreSessionFromSandbox(controller, session);
+			expect(session.run).toEqual(controller.startResult);
+			expect(controller.visibilityCalls).toHaveLength(0);
+		});
+
+		it('does not let a later poll undo a Reset when the learner ordered before restore ever ran', async () => {
+			const { controller, session } = makeSession();
+			// The learner places an order fast enough that restoreSessionFromSandbox
+			// has never actually run yet when it's first called — run is already
+			// non-null, so it short-circuits without ever calling Visibility.
+			await session.placeOrder();
+			const orderedWorkflowId = session.run?.workflowId;
+			await restoreSessionFromSandbox(controller, session);
+			expect(controller.visibilityCalls).toHaveLength(0);
+
+			// Reset is client-only — the workflow above keeps running server-side.
+			session.reset();
+			controller.visibilityResult = [runningOrderSummary(orderedWorkflowId ?? '')];
+
+			// A later poll tick (the same trigger that ran restore the first time)
+			// must not resurrect the just-reset run.
+			await restoreSessionFromSandbox(controller, session);
+			expect(session.run).toBeNull();
+			expect(controller.visibilityCalls).toHaveLength(0);
+		});
+
+		it('does not adopt a stale run when an order is placed mid-restore', async () => {
+			const { controller, session } = makeSession();
+			// Simulate the race: the learner places an order while the visibility
+			// lookup is still in flight.
+			controller.visibility = async () => {
+				await session.placeOrder();
+				return [runningOrderSummary('order-stale')];
+			};
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run).toEqual(controller.startResult);
+			expect(session.activeOrder?.orderId).not.toBe('order-stale');
+		});
+
+		it('abandons adopting a run if the learner hits Reset while the Visibility lookup is in flight', async () => {
+			const { controller, session } = makeSession();
+			// A workflow really is still running server-side (Reset doesn't
+			// cancel it) — but the learner reset mid-lookup, and `run` was
+			// already null before and after, so a plain `run !== null` recheck
+			// wouldn't catch this.
+			controller.visibility = async () => {
+				session.reset();
+				return [runningOrderSummary('order-still-running')];
+			};
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run).toBeNull();
+			expect(session.activeOrder).toBeNull();
+
+			// The abandoned attempt doesn't block a later, uncontested retry —
+			// matching what would happen if Reset had simply run first.
+			controller.visibility = async () => [runningOrderSummary('order-still-running')];
+			await restoreSessionFromSandbox(controller, session);
+			expect(session.run?.workflowId).toBe('order-still-running');
+		});
+
+		it('discards a stale timeline if the learner reset and placed a new order mid-query', async () => {
+			const { controller, session } = makeSession();
+			controller.visibilityResult = [runningOrderSummary('order-restored')];
+			const staleEntries = [timelineEntry(0, ORDER_STATUS.AwaitingRestaurant, 'TimerStarted')];
+			// The Visibility lookup resolves fine, but while the getTimeline query
+			// for the restored run is in flight, the learner resets and starts a
+			// brand-new order — a race Bugbot flagged (comment_id=3525759058).
+			controller.query = async (_workflowId, name) => {
+				session.reset();
+				await session.placeOrder();
+				return queryResponseFor({ getTimeline: staleEntries }, name);
+			};
+
+			await restoreSessionFromSandbox(controller, session);
+
+			// The restored run's stale timeline must not be applied to the new run.
+			expect(session.run).toEqual(controller.startResult);
+			expect(session.timelineEntries).toEqual([]);
+			expect(session.phase).toBe(ORDER_STATUS.Created);
+		});
+
+		it('does not seed a stale fallback phase if the learner reset and placed a new order mid-query (offline path)', async () => {
+			const { controller, session } = makeSession();
+			controller.visibilityResult = [
+				runningOrderSummary('order-restored', {
+					businessSnapshot: { OrderStatus: ORDER_STATUS.AwaitingRestaurant }
+				})
+			];
+			// The same race as above, but this time getTimeline REJECTS (worker
+			// offline) instead of resolving — the seeding fallback has its own
+			// re-check, mirroring the success path's.
+			controller.query = async <N extends QueryName>(): Promise<QueryReturnMap[N]> => {
+				session.reset();
+				await session.placeOrder();
+				throw new Error('no worker available');
+			};
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run).toEqual(controller.startResult);
+			expect(session.timelineEntries).toEqual([]);
+			expect(session.phase).toBe(ORDER_STATUS.Created);
+		});
+
+		it('keeps the run when the timeline query fails (worker offline)', async () => {
+			const storage = volatileStorage();
+			const tour = restoredTour(storage, 8);
+			const controller = new MockTemporalController();
+			controller.visibilityResult = [runningOrderSummary('order-7')];
+			controller.query = async () => {
+				throw new Error('no worker available');
+			};
+			const session = new SessionState(controller, tour);
+
+			await restoreSessionFromSandbox(controller, session);
+
+			// The run is restored and floored to at least the Created phase (a
+			// no-op here since step 8 is already well past it); the regular poll
+			// reconciles further once the worker returns and the timeline replays.
+			expect(session.run?.workflowId).toBe('order-7');
+			expect(tour.currentStepIndex).toBe(8);
+		});
+
+		it('floors the tour to at least Created on adopting a run even if timeline replay fails', async () => {
+			const storage = volatileStorage();
+			const tour = new TourState(storage); // fresh — no persisted progress at all
+			const controller = new MockTemporalController();
+			controller.visibilityResult = [runningOrderSummary('order-8')];
+			controller.query = async () => {
+				throw new Error('no worker available');
+			};
+			const session = new SessionState(controller, tour);
+
+			await restoreSessionFromSandbox(controller, session);
+
+			// Without the immediate floor, a fresh tour would sit at step 0
+			// ("Place order") with start-order disabled because a run already
+			// exists — stuck until the worker returns. The floor moves it past
+			// that dead end right away.
+			expect(session.run?.workflowId).toBe('order-8');
+			expect(TOUR[tour.currentStepIndex]?.id).toBe('activities-run');
+		});
+
+		it('floors using the real Visibility OrderStatus, not the always-Created session.phase, when the worker is offline', async () => {
+			// A further-along order (already past signal-accept) reloads while
+			// the worker happens to be down. `session.phase` would read Created
+			// (no timeline entries yet) and floor only to activities-run — far
+			// short of reality — unless the immediate floor uses Visibility's
+			// indexed OrderStatus search attribute instead.
+			const storage = volatileStorage();
+			const tour = new TourState(storage);
+			const controller = new MockTemporalController();
+			controller.visibilityResult = [
+				runningOrderSummary('order-9', {
+					businessSnapshot: { OrderStatus: ORDER_STATUS.Preparing }
+				})
+			];
+			controller.query = async () => {
+				throw new Error('no worker available');
+			};
+			const session = new SessionState(controller, tour);
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run?.workflowId).toBe('order-9');
+			expect(TOUR[tour.currentStepIndex]?.id).toBe('update-with-validator');
+		});
+
+		it('seeds session.phase from Visibility when the worker is offline, not just the tour floor', async () => {
+			// The tour-floor fix above isn't enough on its own: canDo() and every
+			// other phase-gated control read session.phase directly, which stays
+			// at Created (no timeline entries) unless something seeds it too.
+			// Accepting an AwaitingRestaurant order is a signal — server-served,
+			// doesn't need the worker — so it should be usable immediately.
+			const tour = new TourState(volatileStorage());
+			const controller = new MockTemporalController();
+			controller.visibilityResult = [
+				runningOrderSummary('order-10', {
+					businessSnapshot: { OrderStatus: ORDER_STATUS.AwaitingRestaurant }
+				})
+			];
+			controller.query = async () => {
+				throw new Error('no worker available');
+			};
+			const session = new SessionState(controller, tour);
+			session.sandboxUsable = true;
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.phase).toBe(ORDER_STATUS.AwaitingRestaurant);
+			expect(session.canDo('accept-restaurant')).toBe(true);
+		});
+
+		it('prefers the summary matching a persisted workflow id over an arbitrary first match', async () => {
+			const { controller, session } = makeSession();
+			controller.visibilityResult = [
+				runningOrderSummary('order-old'),
+				runningOrderSummary('order-new')
+			];
+
+			await restoreSessionFromSandbox(controller, session, 'order-new');
+
+			expect(session.run?.workflowId).toBe('order-new');
+		});
+
+		it('falls back to the first resumable match when no preferred id is given or found', async () => {
+			const { controller, session } = makeSession();
+			controller.visibilityResult = [
+				runningOrderSummary('order-old'),
+				runningOrderSummary('order-new')
+			];
+
+			await restoreSessionFromSandbox(controller, session, 'order-does-not-exist');
+
+			expect(session.run?.workflowId).toBe('order-old');
+		});
+
+		it('excludes a dismissed workflow id, even when it is the only order running', async () => {
+			// The learner Reset away from order-stale (still running server-side,
+			// since Reset is client-only) and reloaded without placing a new
+			// order. It must not be silently re-adopted.
+			const { controller, session } = makeSession();
+			controller.visibilityResult = [runningOrderSummary('order-stale')];
+
+			await restoreSessionFromSandbox(
+				controller,
+				session,
+				undefined,
+				['order-stale'] /* dismissedWorkflowIds */
+			);
+
+			expect(session.run).toBeNull();
+		});
+
+		it('excludes a dismissed workflow id even while adopting a different one', async () => {
+			const { controller, session } = makeSession();
+			controller.visibilityResult = [
+				runningOrderSummary('order-dismissed'),
+				runningOrderSummary('order-current')
+			];
+
+			await restoreSessionFromSandbox(controller, session, undefined, ['order-dismissed']);
+
+			expect(session.run?.workflowId).toBe('order-current');
+		});
+
+		it('excludes every id in a multi-entry dismissed set (reset A, order B, reset B too)', async () => {
+			const { controller, session } = makeSession();
+			// Both order-A and order-B are still running server-side (Reset is
+			// client-only) — the learner walked away from both in this sandbox.
+			controller.visibilityResult = [
+				runningOrderSummary('order-A'),
+				runningOrderSummary('order-B')
+			];
+
+			await restoreSessionFromSandbox(controller, session, undefined, ['order-A', 'order-B']);
+
+			expect(session.run).toBeNull();
+		});
+
+		it('prefers a still-running order over a finished one when both are present', async () => {
+			const { controller, session } = makeSession();
+			controller.visibilityResult = [
+				runningOrderSummary('order-finished', { status: 'COMPLETED' }),
+				runningOrderSummary('order-running')
+			];
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run?.workflowId).toBe('order-running');
+		});
+
+		it('preserves and reconciles progress against a finished order instead of wiping it', async () => {
+			// The learner completed delivery and reloaded before the final
+			// getTimeline poll ever recorded WorkflowExecutionCompleted — the
+			// workflow is no longer RUNNING, but its history is still real.
+			const storage = volatileStorage();
+			const tour = restoredTour(storage, 6); // mid-tour, well short of complete
+			const controller = new MockTemporalController();
+			controller.visibilityResult = [
+				runningOrderSummary('order-finished', { status: 'COMPLETED' })
+			];
+			controller.queryResults.set('getTimeline', [
+				timelineEntry(0, ORDER_STATUS.Delivered, 'WorkflowExecutionCompleted')
+			]);
+			const session = new SessionState(controller, tour);
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run?.workflowId).toBe('order-finished');
+			expect(session.phase).toBe(ORDER_STATUS.Delivered);
+			// Reconciled against the real (terminal) phase, not reset to step 0.
+			expect(tour.currentStepIndex).toBeGreaterThan(0);
+		});
+	});
+
+	it('ingestTimeline reconciles the tour forward against the live phase', async () => {
+		const { tour, session } = makeSession();
+		await session.placeOrder();
+		expect(TOUR[tour.currentStepIndex]?.id).toBe('activities-run');
+
+		// The learner drives the workflow from the toolbar without following the
+		// tour: the phase jumps ahead of the current step's completing event.
+		session.ingestTimeline([timelineEntry(0, ORDER_STATUS.AwaitingRestaurant, 'TimerStarted')]);
+
+		expect(TOUR[tour.currentStepIndex]?.id).toBe('signal-accept');
 	});
 
 	describe('terminal-state tour deviation', () => {

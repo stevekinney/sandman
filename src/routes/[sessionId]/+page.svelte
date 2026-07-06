@@ -14,6 +14,7 @@
 	 * All surfaces are driven by the real sandbox APIs and degrade gracefully
 	 * while the sandbox is provisioning or unusable.
 	 */
+	import { browser } from '$app/env';
 	import type { PageData } from './$types';
 	import type { ProcessLiveness } from '$lib/contracts/sandbox';
 	import Alert from '@lostgradient/cinder/alert';
@@ -26,6 +27,7 @@
 	import '@lostgradient/cinder/status-dot/styles';
 	import '@lostgradient/cinder/toast-region/styles';
 	import { FetchController } from '$lib/components/control-plane/fetch-controller';
+	import { restoreSessionFromSandbox } from '$lib/components/control-plane/session-restore';
 	import { SessionState } from '../../lib/components/control-plane/session-state.svelte.ts';
 	import {
 		orderStageDot,
@@ -38,6 +40,7 @@
 	import type { CodeReveal } from '$lib/components/editor/execution-pointer';
 	import { TourState } from '$lib/components/explainer';
 	import type { TourExperiment, TourLookAt } from '$lib/content/demo-script';
+	import { localStorageAdapter } from '$lib/content/tour-engine';
 	import type { StorageAdapter, TourProgress } from '$lib/content/tour-engine';
 	import ToastBridge from './toast-bridge.svelte';
 	import SandboxReadinessGate from './sandbox-readiness-gate.svelte';
@@ -53,8 +56,127 @@
 
 	let { data }: { data: PageData } = $props();
 
-	const tourState = new TourState(createVolatileTourStorage());
-	const session = $derived(new SessionState(new FetchController(data.sandboxId), tourState));
+	// Tour progress persists per sandbox, so a reload resumes this sandbox's
+	// journey and a new sandbox starts fresh. Always CONSTRUCT against a
+	// throwaway in-memory adapter — on both SSR and the first client render —
+	// so hydration's first paint matches the server exactly (no localStorage
+	// read before mount to jump the tour ahead of what was server-rendered).
+	// The effect below swaps in the real adapter and fast-forwards to any
+	// persisted progress once mounted, client-side only.
+	const tourState = $derived.by(() => {
+		// Read data.sandboxId to key this derived on it, even though the
+		// constructor below doesn't need the value directly. Without this,
+		// tourState reads nothing reactive and would never recreate — so
+		// navigating client-side between two sandboxes (SvelteKit reuses this
+		// component across the [sessionId] param) would keep the previous
+		// sandbox's tour instance alive. advanceTo is forward-only, so the
+		// stuck-behind tour could never load the new sandbox's saved progress,
+		// and the next persist write would overwrite it with the wrong state.
+		void data.sandboxId;
+		return new TourState(createVolatileTourStorage());
+	});
+	const controller = $derived(new FetchController(data.sandboxId));
+	const session = $derived(new SessionState(controller, tourState));
+
+	/** Where this sandbox's most recently known active workflow id lives. */
+	function activeWorkflowIdKey(sandboxId: string): string {
+		return `sandman:active-workflow:${sandboxId}`;
+	}
+
+	/**
+	 * Where the set of workflow ids the learner has explicitly Reset away from
+	 * lives (JSON-encoded array). Reset is client-only — the workflow keeps
+	 * running server-side — so without this, a reload right after Reset would
+	 * have no `preferredWorkflowId` and the restore fallback (prefer a live
+	 * run, else whatever's there) would silently reattach to the exact run
+	 * the learner just walked away from. A set, not just the most recent id,
+	 * so resetting order A, starting order B, then resetting B too doesn't
+	 * "forget" that A was also dismissed.
+	 */
+	function dismissedWorkflowIdsKey(sandboxId: string): string {
+		return `sandman:dismissed-workflows:${sandboxId}`;
+	}
+
+	/** The workflow id this sandbox was last attached to, if any. */
+	function readPreferredWorkflowId(sandboxId: string): string | undefined {
+		try {
+			return localStorage.getItem(activeWorkflowIdKey(sandboxId)) ?? undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** Every workflow id the learner has explicitly Reset away from in this sandbox. */
+	function readDismissedWorkflowIds(sandboxId: string): string[] {
+		try {
+			const raw = localStorage.getItem(dismissedWorkflowIdsKey(sandboxId));
+			if (!raw) return [];
+			const parsed: unknown = JSON.parse(raw);
+			return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : [];
+		} catch {
+			return [];
+		}
+	}
+
+	/** Add a workflow id to this sandbox's dismissed set. */
+	function addDismissedWorkflowId(sandboxId: string, workflowId: string): void {
+		try {
+			const existing = readDismissedWorkflowIds(sandboxId);
+			if (existing.includes(workflowId)) return;
+			localStorage.setItem(
+				dismissedWorkflowIdsKey(sandboxId),
+				JSON.stringify([...existing, workflowId])
+			);
+		} catch {
+			// Quota exceeded or private-browsing restriction — fail silently.
+		}
+	}
+
+	// Client-only: attach real persistence after the first (SSR-matching)
+	// render, then adopt whatever progress was already saved. Uses hydrate(),
+	// not advanceTo() — advanceTo marks every step it fast-forwards through as
+	// complete, which would wrongly re-mark a step reached via skip() (the
+	// terminal-state deadlock escape hatch) as done instead of skipped.
+	$effect(() => {
+		if (!browser) return;
+		const storage = localStorageAdapter(`sandman:tour:${data.sandboxId}`);
+		const saved = storage.load();
+		if (saved) tourState.hydrate(saved);
+		tourState.replaceStorage(storage);
+	});
+
+	// Track the sandbox's most recently active workflow id so a reload can
+	// disambiguate which run to restore if more than one is running (Reset is
+	// client-only and does not cancel the workflow, so an old run can still be
+	// live when the learner starts a new one). Wired as SessionState.onRunChanged
+	// — called synchronously at every mutation site — rather than a reactive
+	// $effect on `session.run`: an effect flushes a tick later, leaving a
+	// window where a reload could race ahead of the write and read a stale id.
+	$effect(() => {
+		const activeSession = session;
+		const sandboxId = data.sandboxId;
+		activeSession.onRunChanged = (run) => {
+			if (!browser) return;
+			const key = activeWorkflowIdKey(sandboxId);
+			try {
+				if (run) {
+					localStorage.setItem(key, run.workflowId);
+				} else {
+					// run went null via reset() (the only path — see onRunChanged's
+					// doc): remember what's being walked away from, so a reload
+					// doesn't silently reattach to it. Added to the set, never
+					// cleared here — a later order becoming active must not erase
+					// the memory that an earlier one was also explicitly dismissed.
+					const dismissed = localStorage.getItem(key);
+					if (dismissed) addDismissedWorkflowId(sandboxId, dismissed);
+					localStorage.removeItem(key);
+				}
+			} catch {
+				// Quota exceeded or private-browsing restriction — fail silently,
+				// matching localStorageAdapter's own tolerance for this.
+			}
+		};
+	});
 
 	let sandboxStatus = $state<string>('provisioning');
 	let sandboxStatusError = $state<string | null>(null);
@@ -156,6 +278,19 @@
 					if (payload.processes) {
 						activeSession.reconcileLiveness(payload.processes);
 					}
+					// Piggyback the reload restore on this poll's cadence rather than a
+					// separate effect: restoreSessionFromSandbox is a cheap no-op once
+					// it has a run, so this naturally retries a transient Visibility
+					// failure (e.g. a blip that doesn't otherwise change these flags)
+					// without a dedicated timer.
+					if (activeSession.sandboxUsable && activeSession.serverOnline) {
+						void restoreSessionFromSandbox(
+							controller,
+							activeSession,
+							readPreferredWorkflowId(sandboxId),
+							readDismissedWorkflowIds(sandboxId)
+						);
+					}
 				}
 			} catch (err) {
 				if (!cancelled) sandboxStatusError = err instanceof Error ? err.message : String(err);
@@ -197,6 +332,7 @@
 		};
 	});
 
+	/** In-memory StorageAdapter used only for the SSR pass. */
 	function createVolatileTourStorage(): StorageAdapter {
 		let progress: TourProgress | null = null;
 		return {

@@ -164,6 +164,29 @@ export class TourEngine {
 	}
 
 	/**
+	 * Fast-forward the tour to the given step index, marking every skipped
+	 * step complete and persisting the result.
+	 *
+	 * Used to reconcile restored progress against the real workflow phase
+	 * (e.g. an order already in delivery makes the update-validator step
+	 * impossible to complete). Forward-only, like `feed()`: backward or
+	 * same-index targets are ignored, so progress can never regress this way
+	 * either — use `reset()` to start over.
+	 */
+	advanceTo(index: number): void {
+		const target = Math.min(Math.max(index, 0), this._steps.length);
+		if (target <= this._currentStepIndex) return;
+		for (const step of this._steps.slice(this._currentStepIndex, target)) {
+			this._completedStepIds.push(step.id);
+		}
+		this._currentStepIndex = target;
+		this._storage.save({
+			currentStepIndex: this._currentStepIndex,
+			completedStepIds: [...this._completedStepIds]
+		});
+	}
+
+	/**
 	 * Skip the current step WITHOUT marking it complete — for steps whose
 	 * completing event can never arrive anymore (the workflow reached a
 	 * terminal phase first). Persists like a normal advance.
@@ -178,6 +201,35 @@ export class TourEngine {
 			completedStepIds: [...this._completedStepIds]
 		});
 		return true;
+	}
+
+	/**
+	 * Swap the adapter future `feed()`/`advanceTo()`/`skip()`/`reset()` calls
+	 * persist to, without touching current progress or re-reading the new
+	 * adapter.
+	 *
+	 * Used to defer attaching real persistence until after the first render:
+	 * constructing against a throwaway adapter keeps the initial client render
+	 * identical to SSR (no localStorage read before hydration), then this
+	 * swaps in the real adapter once mounted, client-side only.
+	 */
+	replaceStorage(storage: StorageAdapter): void {
+		this._storage = storage;
+	}
+
+	/**
+	 * Adopt a previously-saved progress snapshot verbatim — index and completed
+	 * ids exactly as given, clamped to the tour's length. Unlike `advanceTo`,
+	 * this does NOT mark every step between the current and target index as
+	 * complete: a step reached via `skip()` is deliberately absent from
+	 * `completedStepIds`, and `advanceTo`'s floor semantics would wrongly
+	 * re-mark it complete on reload. Does not persist — the caller (typically
+	 * a post-mount hydration effect) read this snapshot from storage, so
+	 * writing it back is redundant.
+	 */
+	hydrate(progress: TourProgress): void {
+		this._currentStepIndex = Math.min(Math.max(progress.currentStepIndex, 0), this._steps.length);
+		this._completedStepIds = [...progress.completedStepIds];
 	}
 
 	/**

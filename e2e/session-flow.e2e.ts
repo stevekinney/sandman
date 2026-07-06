@@ -365,22 +365,29 @@ test('guided tour can be completed through the visible workflow controls', async
 		});
 	});
 	await page.route(`**/api/sandbox/${sandboxId}/workflow/visibility**`, async (route) => {
+		// Real Temporal Visibility only lists workflows that actually exist —
+		// mirror that here so the page's reload-restoration poll (which queries
+		// this route from the moment the sandbox is ready, before any order is
+		// placed) doesn't mistake the placeholder pre-order state for a
+		// resumable run and disable "Place order".
+		const workflows =
+			orderId === 'order-not-started'
+				? []
+				: [
+						{
+							workflowId: orderId,
+							runId: 'run-guided-tour',
+							type: 'orderFoodWorkflow',
+							status: 'Running',
+							orderStatus: 'IN_DELIVERY',
+							customerTier: 'standard',
+							restaurantId: 'kitchen-44'
+						}
+					];
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
-			body: JSON.stringify({
-				workflows: [
-					{
-						workflowId: orderId,
-						runId: 'run-guided-tour',
-						type: 'orderFoodWorkflow',
-						status: 'Running',
-						orderStatus: 'IN_DELIVERY',
-						customerTier: 'standard',
-						restaurantId: 'kitchen-44'
-					}
-				]
-			})
+			body: JSON.stringify({ workflows })
 		});
 	});
 	await page.route(`**/api/sandbox/${sandboxId}/worker/kill`, async (route) => {

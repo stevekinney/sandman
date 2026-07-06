@@ -66,6 +66,23 @@ export class TourState {
 	}
 
 	/**
+	 * Fast-forward to a later step, marking skipped steps complete — see
+	 * `TourEngine.advanceTo`. Backward or same-index targets are ignored.
+	 */
+	advanceTo(index: number): void {
+		const before = this._engine.currentStepIndex;
+		this._engine.advanceTo(index);
+		// advanceTo is a no-op below/at the current step (see TourEngine.advanceTo);
+		// skip the reassignment then so callers that invoke this on every poll
+		// (ingestTimeline) don't trigger a reactive update for nothing.
+		if (this._engine.currentStepIndex === before) return;
+		this._progress = {
+			currentStepIndex: this._engine.currentStepIndex,
+			completedStepIds: [...this._engine.completedStepIds]
+		};
+	}
+
+	/**
 	 * Skip the current step without marking it complete — for steps whose
 	 * completing event can never arrive anymore. Reactive state is updated.
 	 */
@@ -78,6 +95,28 @@ export class TourState {
 			};
 		}
 		return skipped;
+	}
+
+	/**
+	 * Swap the adapter future writes persist to — see `TourEngine.replaceStorage`.
+	 * Does not re-read or change current progress.
+	 */
+	replaceStorage(storage: StorageAdapter): void {
+		this._engine.replaceStorage(storage);
+	}
+
+	/**
+	 * Adopt a saved progress snapshot verbatim — see `TourEngine.hydrate`.
+	 * Reactive state is updated to match exactly, preserving which steps were
+	 * skipped vs. completed (unlike `advanceTo`, which would mark all of them
+	 * complete).
+	 */
+	hydrate(progress: TourProgress): void {
+		this._engine.hydrate(progress);
+		this._progress = {
+			currentStepIndex: this._engine.currentStepIndex,
+			completedStepIds: [...this._engine.completedStepIds]
+		};
 	}
 
 	/** Reset tour progress and clear storage. Reactive state is updated. */

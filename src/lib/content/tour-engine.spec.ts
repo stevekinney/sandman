@@ -185,6 +185,80 @@ describe('TourEngine', () => {
 		});
 	});
 
+	describe('advanceTo()', () => {
+		it('fast-forwards, marking every skipped step complete, and persists', () => {
+			engine.advanceTo(3);
+			expect(engine.currentStepIndex).toBe(3);
+			expect(engine.completedStepIds).toEqual(TOUR.slice(0, 3).map((step) => step.id));
+			expect(storage.load()).toEqual({
+				currentStepIndex: 3,
+				completedStepIds: TOUR.slice(0, 3).map((step) => step.id)
+			});
+		});
+
+		it('ignores backward and same-index targets', () => {
+			engine.feed(satisfyingEvent(0));
+			engine.feed(satisfyingEvent(1));
+			const completed = [...engine.completedStepIds];
+
+			engine.advanceTo(1);
+			engine.advanceTo(2);
+			expect(engine.currentStepIndex).toBe(2);
+			expect(engine.completedStepIds).toEqual(completed);
+		});
+
+		it('clamps to the end of the tour and reports completion', () => {
+			engine.advanceTo(TOUR.length + 5);
+			expect(engine.currentStepIndex).toBe(TOUR.length);
+			expect(engine.isComplete).toBe(true);
+			expect(engine.completedStepIds).toEqual(TOUR.map((step) => step.id));
+		});
+
+		it('resumes normal event-driven advancement from the new position', () => {
+			engine.advanceTo(3);
+			expect(engine.feed(satisfyingEvent(3))).toBe(true);
+			expect(engine.currentStepIndex).toBe(4);
+		});
+	});
+
+	describe('replaceStorage()', () => {
+		it('persists future writes to the new adapter without touching current progress', () => {
+			engine.advanceTo(2);
+			const otherStorage = makeMemoryStorage();
+
+			engine.replaceStorage(otherStorage);
+			expect(engine.currentStepIndex).toBe(2);
+			expect(otherStorage.load()).toBeNull(); // not re-read on swap
+
+			engine.advanceTo(3);
+			expect(storage.load()?.currentStepIndex).toBe(2); // old adapter untouched
+			expect(otherStorage.load()?.currentStepIndex).toBe(3); // new adapter gets writes
+		});
+	});
+
+	describe('hydrate()', () => {
+		it('adopts a saved snapshot verbatim, without inferring completions in between', () => {
+			// Step 0 was skipped (not completed) on a prior session — a snapshot
+			// this shape is exactly what skip() persists.
+			engine.hydrate({ currentStepIndex: 2, completedStepIds: [TOUR[1].id] });
+			expect(engine.currentStepIndex).toBe(2);
+			expect(engine.completedStepIds).toEqual([TOUR[1].id]);
+			expect(engine.completedStepIds).not.toContain(TOUR[0].id);
+		});
+
+		it('clamps the index but does not persist', () => {
+			engine.hydrate({ currentStepIndex: TOUR.length + 5, completedStepIds: [] });
+			expect(engine.currentStepIndex).toBe(TOUR.length);
+			expect(storage.load()).toBeNull(); // hydrate doesn't write back
+		});
+
+		it('resumes normal event-driven advancement from the hydrated position', () => {
+			engine.hydrate({ currentStepIndex: 3, completedStepIds: TOUR.slice(0, 3).map((s) => s.id) });
+			expect(engine.feed(satisfyingEvent(3))).toBe(true);
+			expect(engine.currentStepIndex).toBe(4);
+		});
+	});
+
 	describe('skip()', () => {
 		it('advances the index without marking the step complete', () => {
 			const skipped = engine.skip();

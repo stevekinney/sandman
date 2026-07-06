@@ -27,6 +27,7 @@ import {
 	nowIso,
 	type SessionPhase
 } from './session-actions.ts';
+import { minimumTourStepIndexForPhase } from './session-restore.ts';
 
 /** Severity of a session notification — mirrors Cinder's toast variants. */
 export type NotifyVariant = 'info' | 'success' | 'warning' | 'danger';
@@ -70,6 +71,15 @@ export class SessionState {
 
 	/** Toast sink — assigned by the page once the toast region is mounted. */
 	notify: (message: string, variant: NotifyVariant) => void = () => {};
+	/**
+	 * Invoked synchronously every time `run` changes — assigned by the page to
+	 * persist the active workflow id for reload restoration's disambiguation
+	 * hint (see session-restore.ts). Deliberately not a `$effect` on `run`:
+	 * an effect flushes on the next microtask, which is fine for a live
+	 * session but leaves a window where a reload could race ahead of the
+	 * write; calling this inline at every mutation site closes that gap.
+	 */
+	onRunChanged: (run: WorkflowRun | null) => void = () => {};
 
 	run = $state<WorkflowRun | null>(null);
 	activeOrder = $state<OrderInput | null>(null);
@@ -90,6 +100,14 @@ export class SessionState {
 	 */
 	sandboxUsable = $state(false);
 	flows = $state<FlowPulse[]>([]);
+	/**
+	 * Bumped by every `reset()`. Lets an in-flight async operation started
+	 * before a reset (e.g. reload restoration's Visibility lookup) detect that
+	 * the learner reset mid-flight and abandon adopting stale state — even in
+	 * the edge case where `run` was already null both before and after, so a
+	 * plain `run !== null` recheck wouldn't reveal that a reset happened.
+	 */
+	resetEpoch = $state(0);
 
 	#nextSyntheticSequence = SYNTHETIC_SEQUENCE_START;
 	#nextFlowId = 1;
@@ -201,6 +219,11 @@ export class SessionState {
 			});
 			this.#lastFedTimelineIndex = entry.index;
 		}
+		// The tour must never sit behind the real phase (e.g. restored progress
+		// parked on the update step once the order is in delivery, where the
+		// validator can never accept). Replayed events advance what they can
+		// above; this floors the rest. Forward-only — mirrors reconcileLiveness.
+		this.tour.advanceTo(minimumTourStepIndexForPhase(this.phase));
 	}
 
 	/**
@@ -214,6 +237,7 @@ export class SessionState {
 	 */
 	reset(): void {
 		this.run = null;
+		this.onRunChanged(null);
 		this.activeOrder = null;
 		this.timelineEntries = [];
 		this.workflowEvents = [];
@@ -227,6 +251,7 @@ export class SessionState {
 		this.#lastFedTimelineIndex = -1;
 		this.#nextSyntheticSequence = SYNTHETIC_SEQUENCE_START;
 		this.tour.reset();
+		this.resetEpoch++;
 	}
 
 	/**
@@ -276,6 +301,7 @@ export class SessionState {
 			const order = buildDemoOrder();
 			const run = await this.#controller.start(order);
 			this.run = run;
+			this.onRunChanged(run);
 			this.activeOrder = order;
 			this.timelineEntries = [];
 			this.workflowEvents = [];
