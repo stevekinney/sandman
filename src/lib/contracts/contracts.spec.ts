@@ -131,7 +131,8 @@ describe('SandboxClient interface', () => {
 			exec: async () => ({ exitCode: 0, stdout: '', stderr: '' }),
 			extendTimeout: async () => {},
 			writeFile: async () => {},
-			terminate: async () => {}
+			terminate: async () => {},
+			terminateById: async () => {}
 		};
 		expect(typeof mockClient.provision).toBe('function');
 		expect(typeof mockClient.bootstrap).toBe('function');
@@ -144,6 +145,7 @@ describe('SandboxClient interface', () => {
 		expect(typeof mockClient.extendTimeout).toBe('function');
 		expect(typeof mockClient.writeFile).toBe('function');
 		expect(typeof mockClient.terminate).toBe('function');
+		expect(typeof mockClient.terminateById).toBe('function');
 	});
 });
 

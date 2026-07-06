@@ -11,11 +11,24 @@
 import type { SandboxClient, SandboxHandle } from '$lib/contracts/sandbox';
 import { createSandboxClient } from './client.ts';
 import { createReaper, type Reaper } from './reaper.ts';
+import { createReconciler, type Reconciler } from './reconciler.ts';
 import { getProductionConfiguration } from '$lib/server/configuration';
 import { getDatabase } from '$lib/server/database/connection';
-import { updateSandboxStatus } from '$lib/server/database/repository';
+import {
+	getExpiredRegisteredSandboxIds,
+	markExpiredSandboxes,
+	markSandboxReclaimed,
+	updateSandboxStatus
+} from '$lib/server/database/repository';
 import { SANDBOX_SESSION_STATUS } from '$lib/server/database/schema';
 import { logError, logInfo } from '$lib/server/logging';
+
+/**
+ * How many expired sandboxes one reconcile pass will terminate. A pass that
+ * hits the cap leaves the remainder for the next pass rather than fanning out
+ * an unbounded number of E2B kill calls at once.
+ */
+const RECONCILE_BATCH_LIMIT = 25;
 
 /** An active sandbox session: its handle + the client that owns it. */
 export type SandboxEntry = {
@@ -31,6 +44,8 @@ type Registry = {
 	handles: Map<string, SandboxHandle>;
 	reaper: Reaper;
 	stopReaper: () => void;
+	reconciler: Reconciler;
+	stopReconciler: () => void;
 };
 
 let _registry: Registry | undefined;
@@ -38,22 +53,68 @@ let _registry: Registry | undefined;
 /**
  * Returns (and lazily creates) the process-lifetime sandbox registry.
  *
- * The `SandboxClient` is constructed once on first call. Subsequent calls
- * return the same registry instance.
+ * The `SandboxClient` is constructed once on first call, and a startup
+ * reconcile pass reclaims sandboxes orphaned by a previous server process
+ * (their VMs are terminated at E2B and their database rows marked Expired).
+ * Subsequent calls return the same registry instance.
  */
 export function getSandboxRegistry(): Registry {
 	if (!_registry) {
 		const configuration = getProductionConfiguration();
+		const client = createSandboxClient({
+			apiKey: configuration.e2bApiKey,
+			templateId: configuration.e2bTemplateId
+		});
+		const handles = new Map<string, SandboxHandle>();
 		const reaper = createReaper(configuration.sessionTtlMs);
+		const reconciler = createReconciler(
+			{
+				getExpiredSandboxIds: async (input) => {
+					const ids = await getExpiredRegisteredSandboxIds(getDatabase(), input);
+					// Exclude sandboxes this process still holds a handle for — e.g.
+					// one whose bootstrap is outlasting the reservation window.
+					// `expiresAt` is set at reservation time and isn't slid until
+					// Ready, so it can lapse mid-bootstrap while the reaper (whose
+					// TTL starts at registerHandle) still correctly treats the VM as
+					// live. Those belong to the reaper, not the reconciler — killing
+					// them here would abort a legitimate in-flight bootstrap.
+					return ids.filter((id) => !handles.has(id));
+				},
+				terminateSandbox: async (sandboxId) => {
+					await client.terminateById(sandboxId);
+					handles.delete(sandboxId);
+					reaper.unregister(sandboxId);
+					logInfo({ event: 'sandbox.reconciler.terminated', sandboxId, status: 'expired' });
+				},
+				markSandboxReclaimed: (input) => markSandboxReclaimed(getDatabase(), input),
+				markExpiredSandboxes: (input) =>
+					// Same exclusion as getExpiredSandboxIds above, and for the same
+					// reason: this bookkeeping sweep must not flip a still-bootstrapping
+					// sandbox's row to Expired just because its reservation expiresAt
+					// has lapsed — its VM is untouched, so an Expired status would be a
+					// lie that later corrupts capacity accounting and the Ready write.
+					markExpiredSandboxes(getDatabase(), {
+						...input,
+						excludeSandboxIds: [...handles.keys()]
+					}),
+				onError: (error, sandboxId) =>
+					logError({ event: 'sandbox.reconciler.failed', sandboxId, status: 'error', error })
+			},
+			{ limit: RECONCILE_BATCH_LIMIT }
+		);
+		const intervalMs = Math.min(configuration.sessionTtlMs, 60_000);
 		_registry = {
-			client: createSandboxClient({
-				apiKey: configuration.e2bApiKey,
-				templateId: configuration.e2bTemplateId
-			}),
-			handles: new Map(),
+			client,
+			handles,
 			reaper,
-			stopReaper: reaper.start(Math.min(configuration.sessionTtlMs, 60_000))
+			stopReaper: reaper.start(intervalMs),
+			reconciler,
+			stopReconciler: reconciler.start(intervalMs)
 		};
+		// Startup reconciliation: sandboxes left Ready/Provisioning/Bootstrapping
+		// by the previous process are invisible to the in-memory reaper, so
+		// reclaim them now instead of waiting for their provider timeout.
+		void reconciler.tick();
 	}
 	return _registry;
 }
@@ -74,7 +135,8 @@ export function registerHandle(sandboxId: string, handle: SandboxHandle): void {
 			await updateSandboxStatus(getDatabase(), {
 				sandboxId,
 				status: SANDBOX_SESSION_STATUS.Expired,
-				now: new Date()
+				now: new Date(),
+				reclaimed: true
 			});
 			logInfo({
 				event: 'sandbox.reaper.terminated',

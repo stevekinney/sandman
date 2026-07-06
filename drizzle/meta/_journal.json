@@ -15,6 +15,13 @@
       "when": 1782822130000,
       "tag": "0001_atomic_sandbox_reservations",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783295503991,
+      "tag": "0002_add_sandbox_reclaimed_at",
+      "breakpoints": true
     }
   ]
 }

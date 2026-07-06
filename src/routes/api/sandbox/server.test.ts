@@ -49,7 +49,8 @@ vi.mock('$lib/server/sandbox/registry', () => ({
 			bootstrap: vi.fn().mockResolvedValue({ ready: true }),
 			killWorker: vi.fn(),
 			extendTimeout: vi.fn(),
-			terminate: vi.fn().mockResolvedValue(undefined)
+			terminate: vi.fn().mockResolvedValue(undefined),
+			terminateById: vi.fn().mockResolvedValue(undefined)
 		}
 	})),
 	registerHandle: vi.fn()
@@ -115,6 +116,7 @@ describe('POST /api/sandbox', () => {
 				startServer: vi.fn(),
 				extendTimeout: vi.fn(),
 				terminate: vi.fn(),
+				terminateById: vi.fn(),
 				writeFile: vi.fn()
 			},
 			handles: new Map(),
@@ -125,7 +127,12 @@ describe('POST /api/sandbox', () => {
 				tick: vi.fn(),
 				start: vi.fn()
 			},
-			stopReaper: vi.fn()
+			stopReaper: vi.fn(),
+			reconciler: {
+				tick: vi.fn(),
+				start: vi.fn()
+			},
+			stopReconciler: vi.fn()
 		};
 		vi.mocked(getSandboxRegistry).mockReturnValueOnce(registry);
 
@@ -161,6 +168,7 @@ describe('POST /api/sandbox', () => {
 				startServer: vi.fn(),
 				extendTimeout: vi.fn(),
 				terminate: vi.fn(),
+				terminateById: vi.fn(),
 				writeFile: vi.fn()
 			},
 			handles: new Map(),
@@ -171,7 +179,12 @@ describe('POST /api/sandbox', () => {
 				tick: vi.fn(),
 				start: vi.fn()
 			},
-			stopReaper: vi.fn()
+			stopReaper: vi.fn(),
+			reconciler: {
+				tick: vi.fn(),
+				start: vi.fn()
+			},
+			stopReconciler: vi.fn()
 		};
 		vi.mocked(getSandboxRegistry).mockReturnValueOnce(registry);
 
@@ -223,6 +236,7 @@ describe('POST /api/sandbox', () => {
 				startServer: vi.fn(),
 				extendTimeout: vi.fn(),
 				terminate: vi.fn().mockResolvedValue(undefined),
+				terminateById: vi.fn().mockResolvedValue(undefined),
 				writeFile: vi.fn()
 			},
 			handles: new Map(),
@@ -233,9 +247,78 @@ describe('POST /api/sandbox', () => {
 				tick: vi.fn(),
 				start: vi.fn()
 			},
-			stopReaper: vi.fn()
+			stopReaper: vi.fn(),
+			reconciler: {
+				tick: vi.fn(),
+				start: vi.fn()
+			},
+			stopReconciler: vi.fn()
 		};
 	}
+
+	it('stamps reclaimed:true when a never-ready sandbox is confirmed terminated', async () => {
+		// A never-ready sandbox's row is about to leave the active-status set —
+		// if reclaimedAt isn't stamped here, the reconciler will later re-select
+		// this row (expired, has a VM, reclaimedAt still null) and overwrite its
+		// Error status to Expired, corrupting the bootstrap-failure metric.
+		const registry = makeReadyRegistryMock();
+		registry.client.bootstrap = vi.fn().mockResolvedValue({ ready: false });
+		vi.mocked(getSandboxRegistry).mockReturnValueOnce(registry);
+
+		await POST(makeEvent());
+
+		await vi.waitFor(() => {
+			expect(updateSandboxStatus).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ sandboxId: 'sandbox-1', status: 'error' })
+			);
+		});
+		const errorCall = vi
+			.mocked(updateSandboxStatus)
+			.mock.calls.find(([, input]) => input.status === 'error');
+		expect(errorCall?.[1].reclaimed).toBe(true);
+		expect(registry.client.terminate).toHaveBeenCalled();
+	});
+
+	it('stamps reclaimed:false when the never-ready sandbox VM fails to terminate', async () => {
+		const registry = makeReadyRegistryMock();
+		registry.client.bootstrap = vi.fn().mockResolvedValue({ ready: false });
+		registry.client.terminate = vi.fn().mockRejectedValue(new Error('E2B API unreachable'));
+		vi.mocked(getSandboxRegistry).mockReturnValueOnce(registry);
+
+		await POST(makeEvent());
+
+		await vi.waitFor(() => {
+			expect(updateSandboxStatus).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ sandboxId: 'sandbox-1', status: 'error' })
+			);
+		});
+		const errorCall = vi
+			.mocked(updateSandboxStatus)
+			.mock.calls.find(([, input]) => input.status === 'error');
+		expect(errorCall?.[1].reclaimed).toBe(false);
+	});
+
+	it('stamps reclaimed:true when bootstrap throws and the VM is confirmed terminated', async () => {
+		const registry = makeReadyRegistryMock();
+		registry.client.bootstrap = vi.fn().mockRejectedValue(new Error('bootstrap exploded'));
+		vi.mocked(getSandboxRegistry).mockReturnValueOnce(registry);
+
+		await POST(makeEvent());
+
+		await vi.waitFor(() => {
+			expect(updateSandboxStatus).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.objectContaining({ sandboxId: 'sandbox-1', status: 'error' })
+			);
+		});
+		const errorCall = vi
+			.mocked(updateSandboxStatus)
+			.mock.calls.find(([, input]) => input.status === 'error');
+		expect(errorCall?.[1].reclaimed).toBe(true);
+		expect(registry.client.terminate).toHaveBeenCalled();
+	});
 
 	it('recovers a ready sandbox by retrying the status write once', async () => {
 		const registry = makeReadyRegistryMock();

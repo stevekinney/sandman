@@ -143,4 +143,12 @@ export type SandboxClient = {
 
 	/** Terminates the sandbox VM and frees all associated resources. */
 	terminate(handle: SandboxHandle): Promise<void>;
+
+	/**
+	 * Terminates a sandbox VM by provider ID, even when this process holds no
+	 * in-memory state for it — e.g. a sandbox provisioned by a previous server
+	 * process before a restart. Resolves without error when the sandbox is
+	 * already gone.
+	 */
+	terminateById(sandboxId: string): Promise<void>;
 };

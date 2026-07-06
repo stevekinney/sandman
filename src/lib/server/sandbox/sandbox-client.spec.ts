@@ -28,7 +28,8 @@ type CallRecord =
 	| { method: 'commands.start'; cmd: string; pid: number }
 	| { method: 'commands.kill'; pid: number }
 	| { method: 'sandbox.setTimeout'; timeoutMs: number }
-	| { method: 'sandbox.kill' };
+	| { method: 'sandbox.kill' }
+	| { method: 'adapter.killById'; sandboxId: string; apiKey: string | undefined };
 
 function createMockAdapter(sandboxId = 'mock-sandbox-id'): {
 	adapter: E2bAdapter;
@@ -107,6 +108,11 @@ function createMockAdapter(sandboxId = 'mock-sandbox-id'): {
 		async create(opts = {}) {
 			calls.push({ method: 'adapter.create', opts });
 			return session;
+		},
+
+		async killById(id, opts = {}) {
+			calls.push({ method: 'adapter.killById', sandboxId: id, apiKey: opts.apiKey });
+			return true;
 		}
 	};
 
@@ -201,6 +207,7 @@ describe('provision()', () => {
 		let capturedOpts: Parameters<E2bAdapter['create']>[0] | undefined;
 		const { adapter: baseAdapter } = createMockAdapter();
 		const adapter: E2bAdapter = {
+			...baseAdapter,
 			async create(opts) {
 				capturedOpts = opts;
 				return baseAdapter.create(opts);
@@ -240,6 +247,7 @@ describe('provision() — templateId wiring', () => {
 		let capturedOpts: Parameters<E2bAdapter['create']>[0] | undefined;
 		const { adapter: baseAdapter } = createMockAdapter();
 		const adapter: E2bAdapter = {
+			...baseAdapter,
 			async create(opts) {
 				capturedOpts = opts;
 				return baseAdapter.create(opts);
@@ -262,6 +270,7 @@ describe('provision() — templateId wiring', () => {
 		let capturedOpts: Parameters<E2bAdapter['create']>[0] | undefined;
 		const { adapter: baseAdapter } = createMockAdapter();
 		const adapter: E2bAdapter = {
+			...baseAdapter,
 			async create(opts) {
 				capturedOpts = opts;
 				return baseAdapter.create(opts);
@@ -284,6 +293,7 @@ describe('provision() — templateId wiring', () => {
 		let capturedOpts: Parameters<E2bAdapter['create']>[0] | undefined;
 		const { adapter: baseAdapter } = createMockAdapter();
 		const adapter: E2bAdapter = {
+			...baseAdapter,
 			async create(opts) {
 				capturedOpts = opts;
 				return baseAdapter.create(opts);
@@ -304,6 +314,7 @@ describe('provision() — templateId wiring', () => {
 		let capturedOpts: Parameters<E2bAdapter['create']>[0] | undefined;
 		const { adapter: baseAdapter } = createMockAdapter();
 		const adapter: E2bAdapter = {
+			...baseAdapter,
 			async create(opts) {
 				capturedOpts = opts;
 				return baseAdapter.create(opts);
@@ -431,25 +442,18 @@ describe('bootstrap()', () => {
 	});
 
 	it('returns ready:false when the Temporal Web UI never responds', async () => {
-		const { adapter } = createMockAdapter('sbx-no-ui');
+		const { adapter, session } = createMockAdapter('sbx-no-ui');
+		// Override the session's run() in place — createMockAdapter always hands
+		// back this same session instance, so no adapter-level override is needed.
+		const originalRun = session.commands.run.bind(session.commands);
+		session.commands.run = async (cmd, opts) => {
+			if (cmd.includes('http://127.0.0.1:8233/')) {
+				return { exitCode: 7, stdout: '', stderr: 'connection refused' };
+			}
+			return originalRun(cmd, opts);
+		};
 		const client = createSandboxClient({
-			adapter: {
-				async create(opts) {
-					const session = await adapter.create(opts);
-					return {
-						...session,
-						commands: {
-							...session.commands,
-							async run(cmd, opts) {
-								if (cmd.includes('http://127.0.0.1:8233/')) {
-									return { exitCode: 7, stdout: '', stderr: 'connection refused' };
-								}
-								return session.commands.run(cmd, opts);
-							}
-						}
-					};
-				}
-			},
+			adapter,
 			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
 			templateFiles: { '/app/worker.ts': '// placeholder worker' },
 			maxReadinessRetries: 1,
@@ -586,6 +590,9 @@ describe('bootstrap() — Temporal CLI install path', () => {
 			adapter: {
 				async create() {
 					return session;
+				},
+				async killById() {
+					return true;
 				}
 			},
 			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
@@ -975,26 +982,20 @@ describe('startServer()', () => {
 	it('throws with the worker stderr when the worker fails to restart during recovery', async () => {
 		// The server comes back, but the worker restart fails (e.g. a compile
 		// error in saved code). startServer must not report the worker recovered.
-		const { adapter } = createMockAdapter('sbx-worker-fail');
+		const { adapter, session } = createMockAdapter('sbx-worker-fail');
 		let failWorkerStart = false;
+		// Override the session's start() in place — createMockAdapter always
+		// hands back this same session instance, so no adapter-level override is
+		// needed at all.
+		const originalStart = session.commands.start.bind(session.commands);
+		session.commands.start = async (cmd, startOpts) => {
+			if (failWorkerStart && cmd.includes('worker') && !cmd.includes('temporal server')) {
+				throw new Error('worker.ts(3,1): compile error');
+			}
+			return originalStart(cmd, startOpts);
+		};
 		const client = createSandboxClient({
-			adapter: {
-				async create(opts) {
-					const session = await adapter.create(opts);
-					return {
-						...session,
-						commands: {
-							...session.commands,
-							async start(cmd, startOpts) {
-								if (failWorkerStart && cmd.includes('worker') && !cmd.includes('temporal server')) {
-									throw new Error('worker.ts(3,1): compile error');
-								}
-								return session.commands.start(cmd, startOpts);
-							}
-						}
-					};
-				}
-			},
+			adapter,
 			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
 			templateFiles: { '/app/worker.ts': '// placeholder worker' },
 			maxReadinessRetries: 1,
@@ -1096,31 +1097,25 @@ describe('concurrent lifecycle operations', () => {
 	it('a restart landing while a slow startServer is mid-flight waits for it', async () => {
 		// Gate the Temporal server spawn so startServer parks mid-operation with
 		// state.temporalPid unset — exactly the window the production restart hit.
-		const { adapter: baseAdapter } = createMockAdapter('sbx-race-midflight');
+		const { adapter, session } = createMockAdapter('sbx-race-midflight');
 		let releaseServerSpawn: (() => void) | undefined;
 		let gateNextServerSpawn = false;
 		const gate = new Promise<void>((resolve) => {
 			releaseServerSpawn = resolve;
 		});
+		// Override the session's start() in place — createMockAdapter always
+		// hands back this same session instance, so no adapter-level override is
+		// needed at all.
+		const originalStart = session.commands.start.bind(session.commands);
+		session.commands.start = async (cmd, startOpts) => {
+			if (gateNextServerSpawn && cmd.includes('temporal server start-dev')) {
+				gateNextServerSpawn = false;
+				await gate;
+			}
+			return originalStart(cmd, startOpts);
+		};
 		const client = createSandboxClient({
-			adapter: {
-				async create(opts) {
-					const session = await baseAdapter.create(opts);
-					return {
-						...session,
-						commands: {
-							...session.commands,
-							async start(cmd, startOpts) {
-								if (gateNextServerSpawn && cmd.includes('temporal server start-dev')) {
-									gateNextServerSpawn = false;
-									await gate;
-								}
-								return session.commands.start(cmd, startOpts);
-							}
-						}
-					};
-				}
-			},
+			adapter,
 			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
 			templateFiles: { '/app/worker.ts': '// placeholder worker' },
 			maxReadinessRetries: 1,
@@ -1157,7 +1152,7 @@ describe('exec()', () => {
 		// Override run to return specific values.
 		session.commands.run = async () => ({ exitCode: 0, stdout: 'hello', stderr: '' });
 		const client = createSandboxClient({
-			adapter: { create: async () => session },
+			adapter: { create: async () => session, killById: async () => true },
 			templateFiles: {},
 			maxReadinessRetries: 1,
 			readinessDelayMs: 0
@@ -1233,6 +1228,96 @@ describe('terminate()', () => {
 
 		const killCount = calls.filter((c) => c.method === 'sandbox.kill').length;
 		expect(killCount).toBe(1); // sandbox killed exactly once
+	});
+
+	it('keeps sandbox state after a failed kill, so a retry actually re-attempts termination', async () => {
+		// Regression: state used to be dropped BEFORE session.kill() resolved, so
+		// a failed kill still looked "already terminated" to the next caller —
+		// the retry silently no-op'd instead of re-attempting the kill, leaving
+		// the VM running with no path to reclaim it.
+		const { adapter, session } = createMockAdapter('sbx-flaky');
+		let killAttempts = 0;
+		// Override the session's kill() in place — createMockAdapter always hands
+		// back this same session instance, so no adapter-level override is needed.
+		const originalKill = session.kill.bind(session);
+		session.kill = async () => {
+			killAttempts++;
+			if (killAttempts === 1) throw new Error('transient E2B error');
+			return originalKill();
+		};
+		const client = createSandboxClient({ adapter, templateFiles: {} });
+		const handle = await client.provision();
+
+		await expect(client.terminate(handle)).rejects.toThrow('transient E2B error');
+		await client.terminate(handle); // retry — must actually re-invoke kill()
+
+		expect(killAttempts).toBe(2);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Tests: terminateById
+// ---------------------------------------------------------------------------
+
+describe('terminateById()', () => {
+	it('kills the session when this process holds in-memory state for the sandbox', async () => {
+		const { client, calls } = makeClient('sbx-live');
+		await client.provision();
+
+		await client.terminateById('sbx-live');
+
+		expect(calls.some((c) => c.method === 'sandbox.kill')).toBe(true);
+		expect(calls.some((c) => c.method === 'adapter.killById')).toBe(false);
+	});
+
+	it('falls back to a provider kill by ID when the sandbox is unknown to this process', async () => {
+		// Models the cross-restart case: the sandbox row exists in the database,
+		// but the process that provisioned the VM is gone, so no in-memory state.
+		const { adapter, calls } = createMockAdapter();
+		const client = createSandboxClient({ adapter, apiKey: 'e2b-local-key', templateFiles: {} });
+
+		await client.terminateById('sbx-orphaned-by-restart');
+
+		expect(calls).toContainEqual({
+			method: 'adapter.killById',
+			sandboxId: 'sbx-orphaned-by-restart',
+			apiKey: 'e2b-local-key'
+		});
+		expect(calls.some((c) => c.method === 'sandbox.kill')).toBe(false);
+	});
+
+	it('never double-kills a session already terminated via terminate()', async () => {
+		const { client, calls } = makeClient('sbx-live');
+		const handle = await client.provision();
+
+		await client.terminate(handle);
+		// State is gone, so this degrades to a provider-side kill by ID — which
+		// E2B treats as a harmless no-op for an already-dead sandbox.
+		await client.terminateById('sbx-live');
+
+		const sessionKills = calls.filter((c) => c.method === 'sandbox.kill').length;
+		expect(sessionKills).toBe(1);
+	});
+
+	it('keeps sandbox state after a failed kill, so the reconciler can retry by ID', async () => {
+		// Same regression as terminate(): a failed terminateById() must not drop
+		// state, or the next reconcile pass's retry would see !state and treat a
+		// still-running VM as already handled.
+		const { adapter, session } = createMockAdapter('sbx-flaky');
+		let killAttempts = 0;
+		const originalKill = session.kill.bind(session);
+		session.kill = async () => {
+			killAttempts++;
+			if (killAttempts === 1) throw new Error('transient E2B error');
+			return originalKill();
+		};
+		const client = createSandboxClient({ adapter, templateFiles: {} });
+		await client.provision();
+
+		await expect(client.terminateById('sbx-flaky')).rejects.toThrow('transient E2B error');
+		await client.terminateById('sbx-flaky'); // retry — must re-invoke kill(), not fall to killById
+
+		expect(killAttempts).toBe(2);
 	});
 });
 

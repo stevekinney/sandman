@@ -676,12 +676,42 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 			// Idempotent — safe to call twice.
 			return;
 		}
-		state.terminated = true;
+		await killTrackedSandbox(state, handle.id);
+	}
+
+	// ------------------------------------------------------------------
+	// terminateById
+	// ------------------------------------------------------------------
+
+	async function terminateById(sandboxId: string): Promise<void> {
+		const state = sandboxes.get(sandboxId);
+		if (state) {
+			if (state.terminated) return;
+			await killTrackedSandbox(state, sandboxId);
+			return;
+		}
+		// No in-memory state — the sandbox was provisioned by a previous server
+		// process. Kill it at the provider by ID; E2B resolves false (not an
+		// error) when the sandbox is already gone.
+		await adapter.killById(sandboxId, { apiKey });
+	}
+
+	/**
+	 * Kills a tracked sandbox's session and only then removes its in-memory
+	 * state. Dropping the state before `session.kill()` resolves would let a
+	 * later terminate() call (e.g. a concurrent reaper callback) see `!state`
+	 * and return as if already terminated — a false success that abandons a
+	 * VM that's still running after a transient kill failure. On failure the
+	 * state (and `terminated` flag) is left untouched so a retry actually
+	 * re-attempts the kill instead of silently no-opping.
+	 */
+	async function killTrackedSandbox(state: InternalSandboxState, id: string): Promise<void> {
 		// Stop supervising the worker so a pending auto-restart can't fire against
-		// a torn-down sandbox.
+		// a torn-down sandbox, even if the kill below fails.
 		state.worker?.dispose();
-		sandboxes.delete(handle.id);
 		await state.session.kill();
+		state.terminated = true;
+		sandboxes.delete(id);
 	}
 
 	// ------------------------------------------------------------------
@@ -723,7 +753,8 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		exec,
 		extendTimeout,
 		writeFile,
-		terminate
+		terminate,
+		terminateById
 	};
 }
 

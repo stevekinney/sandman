@@ -78,7 +78,8 @@ function mockSandboxExec(stdout: string): ReturnType<typeof vi.fn> {
 			exec,
 			extendTimeout: vi.fn(),
 			writeFile,
-			terminate: vi.fn()
+			terminate: vi.fn(),
+			terminateById: vi.fn()
 		},
 		handle: {
 			id: 'sandbox-1',
@@ -116,7 +117,8 @@ describe('POST /api/sandbox/[id]/workflow', () => {
 				exec,
 				extendTimeout: vi.fn(),
 				writeFile,
-				terminate: vi.fn()
+				terminate: vi.fn(),
+				terminateById: vi.fn()
 			},
 			handle: {
 				id: 'sandbox-1',
@@ -287,7 +289,8 @@ describe('GET /api/sandbox/[id]/workflow/visibility', () => {
 				exec,
 				extendTimeout: vi.fn(),
 				writeFile: vi.fn(),
-				terminate: vi.fn()
+				terminate: vi.fn(),
+				terminateById: vi.fn()
 			},
 			handle: {
 				id: 'sandbox-1',
