@@ -66,6 +66,23 @@ function timelineEntry(
 	};
 }
 
+/**
+ * Looks up a mocked query response keyed exactly like `QueryReturnMap`, so
+ * the generic index `responses[name]` type-checks as `QueryReturnMap[N] |
+ * undefined` and narrows to `QueryReturnMap[N]` after the `undefined` check
+ * below — without a cast. (A same-shaped object literal alone can't prove
+ * this to the compiler; indexing a record declared over the same key space
+ * as the return-type map can.)
+ */
+function queryResponseFor<N extends QueryName>(
+	responses: Partial<{ [K in QueryName]: QueryReturnMap[K] }>,
+	name: N
+): QueryReturnMap[N] {
+	const value = responses[name];
+	if (value === undefined) throw new Error(`No mock response configured for query "${name}"`);
+	return value;
+}
+
 describe('SessionState', () => {
 	it('gates every control until the sandbox reports ready', () => {
 		const controller = new MockTemporalController();
@@ -699,10 +716,10 @@ describe('SessionState', () => {
 			// The Visibility lookup resolves fine, but while the getTimeline query
 			// for the restored run is in flight, the learner resets and starts a
 			// brand-new order — a race Bugbot flagged (comment_id=3525759058).
-			controller.query = async <N extends QueryName>(): Promise<QueryReturnMap[N]> => {
+			controller.query = async (_workflowId, name) => {
 				session.reset();
 				await session.placeOrder();
-				return staleEntries as QueryReturnMap[N];
+				return queryResponseFor({ getTimeline: staleEntries }, name);
 			};
 
 			await restoreSessionFromSandbox(controller, session);
