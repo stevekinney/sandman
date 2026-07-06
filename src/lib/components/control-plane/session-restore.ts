@@ -76,11 +76,14 @@ function tourStepIndex(id: string): number {
 
 const KNOWN_ORDER_STATUSES: readonly string[] = Object.values(ORDER_STATUS);
 
+/** Type guard for a valid `OrderStatus` value. */
+function isOrderStatus(value: string): value is OrderStatus {
+	return KNOWN_ORDER_STATUSES.includes(value);
+}
+
 /** Narrow a Visibility summary's indexed OrderStatus search attribute, if present. */
 function knownOrderStatus(value: string | undefined): OrderStatus | undefined {
-	return value !== undefined && KNOWN_ORDER_STATUSES.includes(value)
-		? (value as OrderStatus)
-		: undefined;
+	return value !== undefined && isOrderStatus(value) ? value : undefined;
 }
 
 /**
@@ -159,11 +162,13 @@ const NOT_FOUND_CONFIRMATION_ROUNDS = 3;
  * is client-only and does not cancel the run — then placed another order):
  * the summary matching it wins over an arbitrary first match.
  *
- * `dismissedWorkflowId`, when supplied, excludes that specific workflow from
- * consideration entirely — set to whatever the learner most recently Reset
- * away from, so a reload right after Reset doesn't silently reattach to the
- * exact still-running order the learner just walked away from (Reset is
- * client-only and does not cancel it server-side).
+ * `dismissedWorkflowIds`, when supplied, excludes every workflow id in it from
+ * consideration entirely — the full set of workflows the learner has ever
+ * explicitly Reset away from in this sandbox, so a reload doesn't silently
+ * reattach to a still-running order the learner walked away from (Reset is
+ * client-only and does not cancel it server-side). A set, not just the most
+ * recent one, because resetting order A, starting order B, then resetting B
+ * too must not "forget" that A was also dismissed.
  *
  * When no order workflow is running, stale in-progress tour state is reset so
  * the journey starts cleanly — a finished tour keeps its completed state.
@@ -194,7 +199,7 @@ export async function restoreSessionFromSandbox(
 	controller: TemporalController,
 	session: RestorableSession,
 	preferredWorkflowId?: string,
-	dismissedWorkflowId?: string
+	dismissedWorkflowIds: readonly string[] = []
 ): Promise<void> {
 	if (restoreAttempted.has(session)) return;
 	if (session.run !== null) {
@@ -232,7 +237,7 @@ export async function restoreSessionFromSandbox(
 	// still better to replay than to silently discard.
 	const orderWorkflows = workflows
 		.filter(isOrderWorkflowSummary)
-		.filter((summary) => summary.workflowId !== dismissedWorkflowId);
+		.filter((summary) => !dismissedWorkflowIds.includes(summary.workflowId));
 	const active =
 		orderWorkflows.find((summary) => summary.workflowId === preferredWorkflowId) ??
 		orderWorkflows.find(isResumableOrderWorkflow) ??
@@ -280,7 +285,12 @@ export async function restoreSessionFromSandbox(
 		// it can't be mistaken for real history or duplicate-fed), but
 		// `derivePhase` reads its `status` until the real timeline poll
 		// replaces this array wholesale once the worker recovers.
-		if (knownPhase !== undefined) {
+		//
+		// Same re-check as the success path above: the learner may have Reset
+		// and placed a different order while this query was in flight — only
+		// seed if `run` still belongs to the workflow we're restoring, or the
+		// synthetic entry would corrupt the new run's phase instead.
+		if (knownPhase !== undefined && session.run?.workflowId === active.workflowId) {
 			session.ingestTimeline([
 				{
 					index: -1,

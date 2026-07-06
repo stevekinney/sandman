@@ -84,14 +84,17 @@
 	}
 
 	/**
-	 * Where the workflow id the learner last explicitly Reset lives. Reset is
-	 * client-only — the workflow keeps running server-side — so without this,
-	 * a reload right after Reset would have no `preferredWorkflowId` and the
-	 * restore fallback (prefer a live run, else whatever's there) would
-	 * silently reattach to the exact run the learner just walked away from.
+	 * Where the set of workflow ids the learner has explicitly Reset away from
+	 * lives (JSON-encoded array). Reset is client-only — the workflow keeps
+	 * running server-side — so without this, a reload right after Reset would
+	 * have no `preferredWorkflowId` and the restore fallback (prefer a live
+	 * run, else whatever's there) would silently reattach to the exact run
+	 * the learner just walked away from. A set, not just the most recent id,
+	 * so resetting order A, starting order B, then resetting B too doesn't
+	 * "forget" that A was also dismissed.
 	 */
-	function dismissedWorkflowIdKey(sandboxId: string): string {
-		return `sandman:dismissed-workflow:${sandboxId}`;
+	function dismissedWorkflowIdsKey(sandboxId: string): string {
+		return `sandman:dismissed-workflows:${sandboxId}`;
 	}
 
 	/** The workflow id this sandbox was last attached to, if any. */
@@ -103,12 +106,29 @@
 		}
 	}
 
-	/** The workflow id the learner most recently Reset away from, if any. */
-	function readDismissedWorkflowId(sandboxId: string): string | undefined {
+	/** Every workflow id the learner has explicitly Reset away from in this sandbox. */
+	function readDismissedWorkflowIds(sandboxId: string): string[] {
 		try {
-			return localStorage.getItem(dismissedWorkflowIdKey(sandboxId)) ?? undefined;
+			const raw = localStorage.getItem(dismissedWorkflowIdsKey(sandboxId));
+			if (!raw) return [];
+			const parsed: unknown = JSON.parse(raw);
+			return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : [];
 		} catch {
-			return undefined;
+			return [];
+		}
+	}
+
+	/** Add a workflow id to this sandbox's dismissed set. */
+	function addDismissedWorkflowId(sandboxId: string, workflowId: string): void {
+		try {
+			const existing = readDismissedWorkflowIds(sandboxId);
+			if (existing.includes(workflowId)) return;
+			localStorage.setItem(
+				dismissedWorkflowIdsKey(sandboxId),
+				JSON.stringify([...existing, workflowId])
+			);
+		} catch {
+			// Quota exceeded or private-browsing restriction — fail silently.
 		}
 	}
 
@@ -138,19 +158,17 @@
 		activeSession.onRunChanged = (run) => {
 			if (!browser) return;
 			const key = activeWorkflowIdKey(sandboxId);
-			const dismissedKey = dismissedWorkflowIdKey(sandboxId);
 			try {
 				if (run) {
 					localStorage.setItem(key, run.workflowId);
-					// Any run becoming active — a new order, or restoration itself —
-					// makes a prior dismissal moot for this session going forward.
-					localStorage.removeItem(dismissedKey);
 				} else {
 					// run went null via reset() (the only path — see onRunChanged's
 					// doc): remember what's being walked away from, so a reload
-					// doesn't silently reattach to the exact run just Reset.
+					// doesn't silently reattach to it. Added to the set, never
+					// cleared here — a later order becoming active must not erase
+					// the memory that an earlier one was also explicitly dismissed.
 					const dismissed = localStorage.getItem(key);
-					if (dismissed) localStorage.setItem(dismissedKey, dismissed);
+					if (dismissed) addDismissedWorkflowId(sandboxId, dismissed);
 					localStorage.removeItem(key);
 				}
 			} catch {
@@ -270,7 +288,7 @@
 							controller,
 							activeSession,
 							readPreferredWorkflowId(sandboxId),
-							readDismissedWorkflowId(sandboxId)
+							readDismissedWorkflowIds(sandboxId)
 						);
 					}
 				}

@@ -713,6 +713,29 @@ describe('SessionState', () => {
 			expect(session.phase).toBe(ORDER_STATUS.Created);
 		});
 
+		it('does not seed a stale fallback phase if the learner reset and placed a new order mid-query (offline path)', async () => {
+			const { controller, session } = makeSession();
+			controller.visibilityResult = [
+				runningOrderSummary('order-restored', {
+					businessSnapshot: { OrderStatus: ORDER_STATUS.AwaitingRestaurant }
+				})
+			];
+			// The same race as above, but this time getTimeline REJECTS (worker
+			// offline) instead of resolving — the seeding fallback has its own
+			// re-check, mirroring the success path's.
+			controller.query = async <N extends QueryName>(): Promise<QueryReturnMap[N]> => {
+				session.reset();
+				await session.placeOrder();
+				throw new Error('no worker available');
+			};
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.run).toEqual(controller.startResult);
+			expect(session.timelineEntries).toEqual([]);
+			expect(session.phase).toBe(ORDER_STATUS.Created);
+		});
+
 		it('keeps the run when the timeline query fails (worker offline)', async () => {
 			const storage = volatileStorage();
 			const tour = restoredTour(storage, 8);
@@ -837,7 +860,7 @@ describe('SessionState', () => {
 				controller,
 				session,
 				undefined,
-				'order-stale' /* dismissedWorkflowId */
+				['order-stale'] /* dismissedWorkflowIds */
 			);
 
 			expect(session.run).toBeNull();
@@ -850,9 +873,23 @@ describe('SessionState', () => {
 				runningOrderSummary('order-current')
 			];
 
-			await restoreSessionFromSandbox(controller, session, undefined, 'order-dismissed');
+			await restoreSessionFromSandbox(controller, session, undefined, ['order-dismissed']);
 
 			expect(session.run?.workflowId).toBe('order-current');
+		});
+
+		it('excludes every id in a multi-entry dismissed set (reset A, order B, reset B too)', async () => {
+			const { controller, session } = makeSession();
+			// Both order-A and order-B are still running server-side (Reset is
+			// client-only) — the learner walked away from both in this sandbox.
+			controller.visibilityResult = [
+				runningOrderSummary('order-A'),
+				runningOrderSummary('order-B')
+			];
+
+			await restoreSessionFromSandbox(controller, session, undefined, ['order-A', 'order-B']);
+
+			expect(session.run).toBeNull();
 		});
 
 		it('prefers a still-running order over a finished one when both are present', async () => {
