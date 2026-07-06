@@ -1099,7 +1099,6 @@ describe('terminate()', () => {
 		const killCount = calls.filter((c) => c.method === 'sandbox.kill').length;
 		expect(killCount).toBe(1); // sandbox killed exactly once
 	});
-
 });
 
 // ---------------------------------------------------------------------------
@@ -1145,7 +1144,6 @@ describe('terminateById()', () => {
 		const sessionKills = calls.filter((c) => c.method === 'sandbox.kill').length;
 		expect(sessionKills).toBe(1);
 	});
-
 });
 
 // ---------------------------------------------------------------------------
