@@ -81,7 +81,7 @@ describe('POST /api/sandbox', () => {
 		vi.stubEnv('SANDMAN_SESSION_CREATIONS_PER_TOKEN_PER_HOUR', '5');
 		vi.stubEnv('SANDMAN_MAX_ACTIVE_SANDBOXES', '20');
 		vi.stubEnv('SANDMAN_MAX_ACTIVE_SANDBOXES_PER_SESSION', '1');
-		vi.stubEnv('SANDMAN_SESSION_TTL_MS', '300000');
+		vi.stubEnv('SANDMAN_SESSION_TTL_MS', '900000');
 	});
 
 	afterEach(() => {
@@ -245,7 +245,7 @@ describe('POST /api/sandbox', () => {
 		expect(readyCall).toBeDefined();
 		const readyInput = readyCall?.[1];
 		expect(readyInput?.expiresAt?.getTime()).toBe(
-			readyInput === undefined ? undefined : readyInput.now.getTime() + 300_000
+			readyInput === undefined ? undefined : readyInput.now.getTime() + 900_000
 		);
 	});
 

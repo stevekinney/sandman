@@ -288,7 +288,7 @@
 						<span
 							><svg viewBox="0 0 24 24" class="sd-svg"
 								><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg
-							>Ephemeral · ~5-minute sessions</span
+							>Ephemeral · ~15-minute sessions</span
 						>
 						<span
 							><svg viewBox="0 0 24 24" class="sd-svg"
@@ -528,7 +528,7 @@
 							<li><span>1.</span> Paste the shared invite code.</li>
 							<li><span>2.</span> A Firecracker MicroVM boots with Temporal and a worker.</li>
 							<li>
-								<span>3.</span> Start ordering, then break things — the session self-destructs after ~5
+								<span>3.</span> Start ordering, then break things — the session self-destructs after ~15
 								minutes.
 							</li>
 						</ol>

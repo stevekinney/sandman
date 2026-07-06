@@ -100,11 +100,23 @@ export const POST: RequestHandler = async (event) => {
 		throw error(503, 'Could not start the sandbox. Please try again in a moment.');
 	}
 	if (reservation.status !== 'reserved') {
-		await decrementRateLimitBucket(database, {
-			key: rateLimitKey,
-			windowStart: rateLimitWindowStart,
-			now: new Date()
-		});
+		// Best-effort rollback of the rate-limit increment — a failure here must
+		// not turn the intended 429 into a bare 500 (matches the rollback guard
+		// in the catch above).
+		try {
+			await decrementRateLimitBucket(database, {
+				key: rateLimitKey,
+				windowStart: rateLimitWindowStart,
+				now: new Date()
+			});
+		} catch (rollbackErr) {
+			logError({
+				event: 'sandbox.rate_limit_rollback.failed',
+				sessionId: session.id,
+				status: 'error',
+				error: rollbackErr
+			});
+		}
 		logWarning({
 			event: 'sandbox.provision.blocked',
 			sessionId: session.id,
