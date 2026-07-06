@@ -5,7 +5,7 @@
 	 * a component mounted inside `<ToastRegion>` — the page itself is outside
 	 * that context boundary.
 	 */
-	import { useToast, type ToastApi } from '@lostgradient/cinder/toast-region';
+	import { useToast, type ToastApi } from '@lostgradient/cinder';
 
 	let { register }: { register: (api: ToastApi) => void } = $props();
 
