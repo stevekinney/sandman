@@ -74,4 +74,13 @@ describe('POST /api/session', () => {
 			expect.objectContaining({ httpOnly: true, sameSite: 'lax', path: '/' })
 		);
 	});
+
+	it('returns a friendly 503 (not a bare Internal Error) when the database write fails', async () => {
+		vi.mocked(createDemoSession).mockRejectedValueOnce(new Error('connection refused'));
+
+		await expect(POST(makeEvent({ token: 'demo-token' }))).rejects.toMatchObject({
+			status: 503,
+			body: { message: 'Could not start a session. Please try again in a moment.' }
+		});
+	});
 });

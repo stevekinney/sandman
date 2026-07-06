@@ -103,6 +103,35 @@ describe('POST /api/sandbox', () => {
 		expect(vi.mocked(getSandboxRegistry)).not.toHaveBeenCalled();
 	});
 
+	it('returns a friendly 503 (not a bare Internal Error) when capacity reservation throws', async () => {
+		vi.mocked(reserveSandboxSlot).mockRejectedValueOnce(new Error('Failed query: ...'));
+
+		await expect(POST(makeEvent())).rejects.toMatchObject({
+			status: 503,
+			body: { message: 'Could not start the sandbox. Please try again in a moment.' }
+		});
+		expect(vi.mocked(getSandboxRegistry)).not.toHaveBeenCalled();
+		// The rate-limit bucket was already incremented before the reservation
+		// query threw — roll it back so a transient DB error doesn't burn the
+		// invite code's hourly quota.
+		expect(decrementRateLimitBucket).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ key: 'session-create:token-hash' })
+		);
+	});
+
+	it('does not roll back or mislabel the failure when incrementing the rate limit itself throws', async () => {
+		vi.mocked(incrementRateLimitBucket).mockRejectedValueOnce(new Error('Failed query: ...'));
+
+		await expect(POST(makeEvent())).rejects.toMatchObject({ status: 503 });
+
+		// Nothing was ever incremented, so there is nothing to roll back.
+		expect(decrementRateLimitBucket).not.toHaveBeenCalled();
+		expect(logError).toHaveBeenCalledWith(
+			expect.objectContaining({ event: 'sandbox.rate_limit.failed' })
+		);
+	});
+
 	it('marks the reservation error when E2B provisioning fails', async () => {
 		const registry = {
 			client: {

@@ -10,7 +10,7 @@
  * Response: `{ sandboxId: string; uiUrl: string }`
  */
 
-import { json, error } from '@sveltejs/kit';
+import { json, error, isHttpError } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { deregisterHandle, getSandboxRegistry, registerHandle } from '$lib/server/sandbox/registry';
 import { getProductionConfiguration } from '$lib/server/configuration';
@@ -48,23 +48,57 @@ export const POST: RequestHandler = async (event) => {
 	const now = new Date();
 	const rateLimitKey = `session-create:${session.tokenHash}`;
 	const rateLimitWindowStart = getHourWindowStart(now);
-	const rateLimitCount = await incrementRateLimitBucket(database, {
-		key: rateLimitKey,
-		windowStart: rateLimitWindowStart,
-		now
-	});
-	if (rateLimitCount > configuration.sessionCreationsPerTokenPerHour) {
-		logWarning({ event: 'sandbox.provision.blocked', sessionId: session.id, status: 'rate-limit' });
-		throw error(429, 'This invite code has reached its hourly session creation limit');
-	}
+	let rateLimitIncremented = false;
+	let reservation: Awaited<ReturnType<typeof reserveSandboxSlot>>;
+	try {
+		const rateLimitCount = await incrementRateLimitBucket(database, {
+			key: rateLimitKey,
+			windowStart: rateLimitWindowStart,
+			now
+		});
+		rateLimitIncremented = true;
+		if (rateLimitCount > configuration.sessionCreationsPerTokenPerHour) {
+			logWarning({
+				event: 'sandbox.provision.blocked',
+				sessionId: session.id,
+				status: 'rate-limit'
+			});
+			throw error(429, 'This invite code has reached its hourly session creation limit');
+		}
 
-	const reservation = await reserveSandboxSlot(database, {
-		sessionId: session.id,
-		now,
-		expiresAt: new Date(now.getTime() + configuration.sessionTtlMs),
-		globalLimit: configuration.maxActiveSandboxes,
-		perSessionLimit: configuration.maxActiveSandboxesPerSession
-	});
+		reservation = await reserveSandboxSlot(database, {
+			sessionId: session.id,
+			now,
+			expiresAt: new Date(now.getTime() + configuration.sessionTtlMs),
+			globalLimit: configuration.maxActiveSandboxes,
+			perSessionLimit: configuration.maxActiveSandboxesPerSession
+		});
+	} catch (err) {
+		if (isHttpError(err)) throw err;
+		if (rateLimitIncremented) {
+			try {
+				await decrementRateLimitBucket(database, {
+					key: rateLimitKey,
+					windowStart: rateLimitWindowStart,
+					now: new Date()
+				});
+			} catch (rollbackErr) {
+				logError({
+					event: 'sandbox.rate_limit_rollback.failed',
+					sessionId: session.id,
+					status: 'error',
+					error: rollbackErr
+				});
+			}
+		}
+		logError({
+			event: rateLimitIncremented ? 'sandbox.reservation.failed' : 'sandbox.rate_limit.failed',
+			sessionId: session.id,
+			status: 'error',
+			error: err
+		});
+		throw error(503, 'Could not start the sandbox. Please try again in a moment.');
+	}
 	if (reservation.status !== 'reserved') {
 		await decrementRateLimitBucket(database, {
 			key: rateLimitKey,
