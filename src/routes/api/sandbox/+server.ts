@@ -48,14 +48,15 @@ export const POST: RequestHandler = async (event) => {
 	const now = new Date();
 	const rateLimitKey = `session-create:${session.tokenHash}`;
 	const rateLimitWindowStart = getHourWindowStart(now);
-	let rateLimitCount: number;
+	let rateLimitIncremented = false;
 	let reservation: Awaited<ReturnType<typeof reserveSandboxSlot>>;
 	try {
-		rateLimitCount = await incrementRateLimitBucket(database, {
+		const rateLimitCount = await incrementRateLimitBucket(database, {
 			key: rateLimitKey,
 			windowStart: rateLimitWindowStart,
 			now
 		});
+		rateLimitIncremented = true;
 		if (rateLimitCount > configuration.sessionCreationsPerTokenPerHour) {
 			logWarning({
 				event: 'sandbox.provision.blocked',
@@ -74,8 +75,24 @@ export const POST: RequestHandler = async (event) => {
 		});
 	} catch (err) {
 		if (isHttpError(err)) throw err;
+		if (rateLimitIncremented) {
+			try {
+				await decrementRateLimitBucket(database, {
+					key: rateLimitKey,
+					windowStart: rateLimitWindowStart,
+					now: new Date()
+				});
+			} catch (rollbackErr) {
+				logError({
+					event: 'sandbox.rate_limit_rollback.failed',
+					sessionId: session.id,
+					status: 'error',
+					error: rollbackErr
+				});
+			}
+		}
 		logError({
-			event: 'sandbox.reservation.failed',
+			event: rateLimitIncremented ? 'sandbox.reservation.failed' : 'sandbox.rate_limit.failed',
 			sessionId: session.id,
 			status: 'error',
 			error: err

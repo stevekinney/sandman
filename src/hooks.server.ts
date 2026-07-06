@@ -19,12 +19,12 @@ export const init: ServerInit = () => {
 };
 
 /**
- * Safety net for errors that escape a route handler's own try/catch (e.g. an
- * unexpected DB or dependency failure). Logs the real error server-side and
- * replaces SvelteKit's bare "Internal Error" with a message the browser can
- * show the user without leaking internals.
+ * Logs an unhandled request error and returns the friendly replacement
+ * message. Takes only what it needs from the request event (rather than the
+ * full `RequestEvent`) so it can be exercised directly in tests without
+ * fabricating — or asserting past — SvelteKit's much larger event shape.
  */
-export const handleError: HandleServerError = ({ error: err, event, status }) => {
+export function logUnhandledError(err: unknown, event: { url: URL }, status: number): App.Error {
 	logError({
 		event: 'request.unhandled_error',
 		status: String(status),
@@ -35,4 +35,13 @@ export const handleError: HandleServerError = ({ error: err, event, status }) =>
 	return {
 		message: 'Something went wrong on our end. Please try again in a moment.'
 	};
-};
+}
+
+/**
+ * Safety net for errors that escape a route handler's own try/catch (e.g. an
+ * unexpected DB or dependency failure). Logs the real error server-side and
+ * replaces SvelteKit's bare "Internal Error" with a message the browser can
+ * show the user without leaking internals.
+ */
+export const handleError: HandleServerError = ({ error: err, event, status }) =>
+	logUnhandledError(err, event, status);
