@@ -42,7 +42,10 @@ vi.mock('./client.ts', () => ({
 // Capture the deps passed to createReconciler without running its real timers
 // or overlap logic — this test is only about what registry.ts wires in.
 let capturedReconcilerDeps:
-	| { getExpiredSandboxIds: (input: unknown) => Promise<string[]> }
+	| {
+			getExpiredSandboxIds: (input: unknown) => Promise<string[]>;
+			markExpiredSandboxes: (input: { now: Date }) => Promise<string[]>;
+	  }
 	| undefined;
 vi.mock('./reconciler.ts', () => ({
 	createReconciler: vi.fn((deps) => {
@@ -98,5 +101,31 @@ describe('getSandboxRegistry() — reconciler deps wiring', () => {
 		});
 
 		expect(ids).toEqual(['sbx-orphaned']);
+	});
+
+	it('excludes sandboxes this process still holds a handle for from the bookkeeping sweep', async () => {
+		// The bookkeeping sweep (markExpiredSandboxes) must honor the same
+		// exclusion as termination — otherwise a still-bootstrapping sandbox's row
+		// gets flipped to Expired even though its VM was never touched, which
+		// corrupts capacity accounting and races the bootstrap's later Ready write.
+		const { markExpiredSandboxes } = await import('$lib/server/database/repository');
+		vi.mocked(markExpiredSandboxes).mockResolvedValue([]);
+
+		const { getSandboxRegistry, registerHandle } = await import('./registry.ts');
+		getSandboxRegistry();
+		registerHandle('sbx-bootstrapping', {
+			id: 'sbx-bootstrapping',
+			status: 'Provisioning',
+			host: () => 'localhost',
+			accessToken: ''
+		});
+
+		expect(capturedReconcilerDeps).toBeDefined();
+		await capturedReconcilerDeps!.markExpiredSandboxes({ now: new Date() });
+
+		expect(markExpiredSandboxes).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ excludeSandboxIds: ['sbx-bootstrapping'] })
+		);
 	});
 });

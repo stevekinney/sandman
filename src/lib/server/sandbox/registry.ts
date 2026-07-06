@@ -87,7 +87,16 @@ export function getSandboxRegistry(): Registry {
 					logInfo({ event: 'sandbox.reconciler.terminated', sandboxId, status: 'expired' });
 				},
 				markSandboxReclaimed: (input) => markSandboxReclaimed(getDatabase(), input),
-				markExpiredSandboxes: (input) => markExpiredSandboxes(getDatabase(), input),
+				markExpiredSandboxes: (input) =>
+					// Same exclusion as getExpiredSandboxIds above, and for the same
+					// reason: this bookkeeping sweep must not flip a still-bootstrapping
+					// sandbox's row to Expired just because its reservation expiresAt
+					// has lapsed — its VM is untouched, so an Expired status would be a
+					// lie that later corrupts capacity accounting and the Ready write.
+					markExpiredSandboxes(getDatabase(), {
+						...input,
+						excludeSandboxIds: [...handles.keys()]
+					}),
 				onError: (error, sandboxId) =>
 					logError({ event: 'sandbox.reconciler.failed', sandboxId, status: 'error', error })
 			},

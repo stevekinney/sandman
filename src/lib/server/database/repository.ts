@@ -9,6 +9,7 @@ import {
 	isNotNull,
 	isNull,
 	lt,
+	notInArray,
 	or,
 	sql
 } from 'drizzle-orm';
@@ -428,9 +429,20 @@ export async function decrementRateLimitBucket(
 	return rows[0]?.count ?? 0;
 }
 
+/**
+ * Bulk-flips every expired active row's `status` to Expired for monitoring
+ * bookkeeping. `excludeSandboxIds` must list every sandbox this process still
+ * holds an in-memory handle for (the reconciler's `getExpiredSandboxIds`
+ * excludes the same set from termination) — a bootstrap that outlasts its
+ * reservation `expiresAt` is still legitimately in flight, and flipping its
+ * row to Expired here (without ever touching its VM) would corrupt its
+ * status mid-bootstrap: `reserveSandboxSlot` would then treat the row as
+ * inactive and allow a replacement reservation for the same session, and the
+ * original bootstrap's later Ready write would race it.
+ */
 export async function markExpiredSandboxes(
 	database: Database,
-	input: { now: Date }
+	input: { now: Date; excludeSandboxIds: string[] }
 ): Promise<string[]> {
 	const rows = await database
 		.update(sandboxSession)
@@ -442,7 +454,16 @@ export async function markExpiredSandboxes(
 		.where(
 			and(
 				lt(sandboxSession.expiresAt, input.now),
-				inArray(sandboxSession.status, ACTIVE_SANDBOX_STATUSES)
+				inArray(sandboxSession.status, ACTIVE_SANDBOX_STATUSES),
+				// SQL's NOT IN treats a NULL column as neither true nor false, which
+				// would silently exclude no-VM reservation rows too — those never
+				// need this exclusion, so let them through via an explicit OR.
+				input.excludeSandboxIds.length > 0
+					? or(
+							isNull(sandboxSession.e2bSandboxId),
+							notInArray(sandboxSession.e2bSandboxId, input.excludeSandboxIds)
+						)
+					: undefined
 			)
 		)
 		.returning({ sandboxId: sandboxSession.e2bSandboxId });
