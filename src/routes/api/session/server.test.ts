@@ -63,6 +63,16 @@ describe('POST /api/session', () => {
 		expect(createDemoSession).not.toHaveBeenCalled();
 	});
 
+	it('rejects non-string or blank invite codes', async () => {
+		for (const token of [123, '   ']) {
+			await expect(POST(makeEvent({ token, email: 'test@example.com' }))).rejects.toMatchObject({
+				status: 400,
+				body: { message: 'Request body must include "token"' }
+			});
+		}
+		expect(createDemoSession).not.toHaveBeenCalled();
+	});
+
 	it('rejects non-string or blank emails', async () => {
 		for (const email of [123, '   ']) {
 			await expect(POST(makeEvent({ token: 'demo-token', email }))).rejects.toMatchObject({
@@ -88,7 +98,7 @@ describe('POST /api/session', () => {
 	});
 
 	it('creates a session and sets a signed HttpOnly cookie for a valid token', async () => {
-		const event = makeEvent({ token: 'demo-token', email: '  not an email but useful  ' });
+		const event = makeEvent({ token: '  demo-token  ', email: '  not an email but useful  ' });
 		const response = await POST(event);
 
 		expect(response.status).toBe(201);

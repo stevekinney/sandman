@@ -11,11 +11,9 @@
 	 */
 	import { onMount } from 'svelte';
 	import Alert from '@lostgradient/cinder/alert';
-	import Badge from '@lostgradient/cinder/badge';
 	import Button from '@lostgradient/cinder/button';
 	import Input from '@lostgradient/cinder/input';
 	import '@lostgradient/cinder/alert/styles';
-	import '@lostgradient/cinder/badge/styles';
 	import '@lostgradient/cinder/button/styles';
 	import '@lostgradient/cinder/input/styles';
 	import { SITE_DESCRIPTION, SITE_TITLE } from '$lib/metadata';
@@ -101,12 +99,14 @@
 		event?.preventDefault();
 		provisioning = true;
 		provisionError = null;
+		const trimmedEmail = email.trim();
+		const trimmedToken = demoToken.trim();
 
 		try {
 			const sessionResponse = await fetch('/api/session', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ email, token: demoToken })
+				body: JSON.stringify({ email: trimmedEmail, token: trimmedToken })
 			});
 			if (!sessionResponse.ok) {
 				provisionError = await getUserFacingErrorMessage(
@@ -233,36 +233,63 @@
 				<a href="#faq">FAQ</a>
 			</nav>
 			<div class="sd-nav__actions">
-				<Button
-					iconOnly
-					variant="ghost"
-					size="sm"
-					aria-label="Toggle color theme"
-					title="Toggle theme"
-					onclick={toggleTheme}
-				>
-					{#if isDark}
-						<svg viewBox="0 0 24 24" class="sd-svg"
-							><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path
-								d="m4.93 4.93 1.41 1.41"
-							/><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path
-								d="m6.34 17.66-1.41 1.41"
-							/><path d="m19.07 4.93-1.41 1.41" /></svg
-						>
-					{:else}
+				{#if cinderInputsMounted}
+					<Button
+						iconOnly
+						variant="ghost"
+						size="sm"
+						aria-label="Toggle color theme"
+						title="Toggle theme"
+						onclick={toggleTheme}
+					>
+						{#if isDark}
+							<svg viewBox="0 0 24 24" class="sd-svg"
+								><circle cx="12" cy="12" r="4" /><path d="M12 2v2" /><path d="M12 20v2" /><path
+									d="m4.93 4.93 1.41 1.41"
+								/><path d="m17.66 17.66 1.41 1.41" /><path d="M2 12h2" /><path d="M20 12h2" /><path
+									d="m6.34 17.66-1.41 1.41"
+								/><path d="m19.07 4.93-1.41 1.41" /></svg
+							>
+						{:else}
+							<svg viewBox="0 0 24 24" class="sd-svg"
+								><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" /></svg
+							>
+						{/if}
+					</Button>
+					<Button
+						href="https://github.com/stevekinney/sandman"
+						variant="secondary"
+						size="sm"
+						leadingIcon={githubGlyph}
+						label="GitHub"
+					/>
+					<Button variant="primary" size="sm" onclick={scrollToStart} label="Start a session" />
+				{:else}
+					<button
+						type="button"
+						class="sd-native-button sd-native-button--icon"
+						aria-label="Toggle color theme"
+						title="Toggle theme"
+						onclick={toggleTheme}
+					>
 						<svg viewBox="0 0 24 24" class="sd-svg"
 							><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" /></svg
 						>
-					{/if}
-				</Button>
-				<Button
-					href="https://github.com/stevekinney/sandman"
-					variant="secondary"
-					size="sm"
-					leadingIcon={githubGlyph}
-					label="GitHub"
-				/>
-				<Button variant="primary" size="sm" onclick={scrollToStart} label="Start a session" />
+					</button>
+					<a
+						href="https://github.com/stevekinney/sandman"
+						class="sd-native-button sd-native-button--secondary"
+					>
+						GitHub
+					</a>
+					<button
+						type="button"
+						class="sd-native-button sd-native-button--primary"
+						onclick={scrollToStart}
+					>
+						Start a session
+					</button>
+				{/if}
 			</div>
 		</div>
 	</header>
@@ -285,13 +312,23 @@
 						exactly where it left off.
 					</p>
 					<div class="sd-hero__cta">
-						<Button
-							variant="primary"
-							size="lg"
-							onclick={scrollToStart}
-							trailingIcon={arrowRight}
-							label="Start a session"
-						/>
+						{#if cinderInputsMounted}
+							<Button
+								variant="primary"
+								size="lg"
+								onclick={scrollToStart}
+								trailingIcon={arrowRight}
+								label="Start a session"
+							/>
+						{:else}
+							<button
+								type="button"
+								class="sd-native-button sd-native-button--primary sd-native-button--lg"
+								onclick={scrollToStart}
+							>
+								Start a session
+							</button>
+						{/if}
 					</div>
 					<div class="sd-hero__meta">
 						<span
@@ -434,7 +471,7 @@
 								Holds the full event history — survives every worker restart.
 							</div>
 						</div>
-						<Badge variant="success">State preserved</Badge>
+						<span class="sd-native-badge">State preserved</span>
 					</div>
 
 					<!-- captions -->
@@ -545,7 +582,11 @@
 					<div class="sd-start__card">
 						<form class="sd-start__form" onsubmit={startSession} novalidate>
 							{#if provisionError}
-								<Alert variant="danger">{provisionError}</Alert>
+								{#if cinderInputsMounted}
+									<Alert variant="danger">{provisionError}</Alert>
+								{:else}
+									<div class="sd-native-alert" role="alert">{provisionError}</div>
+								{/if}
 							{/if}
 							{#if cinderInputsMounted}
 								<Input
@@ -590,16 +631,27 @@
 									/>
 								</label>
 							{/if}
-							<Button
-								type="submit"
-								variant="primary"
-								size="lg"
-								fullWidth
-								loading={provisioning}
-								disabled={startDisabled}
-								aria-busy={provisioning}
-								label={provisioning ? 'Provisioning sandbox…' : 'New Session'}
-							/>
+							{#if cinderInputsMounted}
+								<Button
+									type="submit"
+									variant="primary"
+									size="lg"
+									fullWidth
+									loading={provisioning}
+									disabled={startDisabled}
+									aria-busy={provisioning}
+									label={provisioning ? 'Provisioning sandbox…' : 'New Session'}
+								/>
+							{:else}
+								<button
+									type="submit"
+									class="sd-native-button sd-native-button--primary sd-native-button--lg sd-native-button--block"
+									disabled={startDisabled}
+									aria-busy={provisioning}
+								>
+									{provisioning ? 'Provisioning sandbox…' : 'New Session'}
+								</button>
+							{/if}
 							<p class="sd-start__hint">
 								No account is created. Don't have a token? Ask whoever shared Sandman with you.
 							</p>
@@ -633,13 +685,23 @@
 				<p class="sd-final__lede">
 					Boot a sandbox, start an order, and kill the worker mid-flight. It comes back.
 				</p>
-				<Button
-					variant="primary"
-					size="lg"
-					onclick={scrollToStart}
-					trailingIcon={arrowRight}
-					label="Start a session"
-				/>
+				{#if cinderInputsMounted}
+					<Button
+						variant="primary"
+						size="lg"
+						onclick={scrollToStart}
+						trailingIcon={arrowRight}
+						label="Start a session"
+					/>
+				{:else}
+					<button
+						type="button"
+						class="sd-native-button sd-native-button--primary sd-native-button--lg"
+						onclick={scrollToStart}
+					>
+						Start a session
+					</button>
+				{/if}
 			</div>
 		</section>
 	</main>
@@ -756,6 +818,50 @@
 		display: flex;
 		align-items: center;
 		gap: var(--cinder-space-2);
+	}
+	.sd-native-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: var(--cinder-space-2);
+		min-height: 2rem;
+		padding: 0 var(--cinder-space-3);
+		border: 1px solid var(--cinder-border);
+		border-radius: var(--cinder-radius-md);
+		font: inherit;
+		font-size: 0.875rem;
+		font-weight: 650;
+		text-decoration: none;
+		cursor: pointer;
+		transition:
+			background 120ms ease,
+			border-color 120ms ease,
+			color 120ms ease;
+	}
+	.sd-native-button--primary {
+		border-color: var(--cinder-accent);
+		background: var(--cinder-accent);
+		color: var(--cinder-accent-contrast);
+	}
+	.sd-native-button--secondary,
+	.sd-native-button--icon {
+		background: var(--cinder-surface);
+		color: var(--cinder-text);
+	}
+	.sd-native-button--icon {
+		width: 2rem;
+		padding: 0;
+	}
+	.sd-native-button--lg {
+		min-height: 2.75rem;
+		padding-inline: var(--cinder-space-5);
+	}
+	.sd-native-button--block {
+		width: 100%;
+	}
+	.sd-native-button:disabled {
+		opacity: 0.55;
+		cursor: not-allowed;
 	}
 	@media (min-width: 48rem) {
 		.sd-nav__links {
@@ -1109,6 +1215,18 @@
 		font-size: 0.8125rem;
 		color: var(--cinder-text-muted);
 	}
+	.sd-native-badge {
+		display: inline-flex;
+		align-items: center;
+		width: fit-content;
+		border: 1px solid color-mix(in oklch, var(--cinder-success), transparent 55%);
+		border-radius: var(--cinder-radius-full);
+		background: color-mix(in oklch, var(--cinder-success), transparent 88%);
+		color: var(--cinder-success);
+		font-size: 0.75rem;
+		font-weight: 650;
+		padding: 0.125rem 0.5rem;
+	}
 	.sd-phases {
 		margin-top: var(--cinder-space-6);
 		border-top: 1px solid var(--cinder-border-muted);
@@ -1355,6 +1473,14 @@
 	}
 	.sd-native-field input:disabled {
 		opacity: 0.65;
+	}
+	.sd-native-alert {
+		border: 1px solid color-mix(in oklch, var(--cinder-danger), transparent 50%);
+		border-radius: var(--cinder-radius-md);
+		background: color-mix(in oklch, var(--cinder-danger), transparent 90%);
+		color: var(--cinder-danger);
+		padding: var(--cinder-space-3);
+		font-size: 0.875rem;
 	}
 	.sd-start__hint {
 		margin: 0;

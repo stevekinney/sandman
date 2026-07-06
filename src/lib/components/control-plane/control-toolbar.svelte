@@ -132,6 +132,7 @@
 				role="tab"
 				aria-selected={view === 'code'}
 				aria-controls="center-panel-code"
+				tabindex={view === 'code' ? 0 : -1}
 				data-cinder-selected={view === 'code' ? '' : undefined}
 				onclick={() => setView('code')}
 			>
@@ -143,6 +144,7 @@
 				role="tab"
 				aria-selected={view === 'temporal'}
 				aria-controls="center-panel-temporal"
+				tabindex={view === 'temporal' ? 0 : -1}
 				data-cinder-selected={view === 'temporal' ? '' : undefined}
 				onclick={() => setView('temporal')}
 			>

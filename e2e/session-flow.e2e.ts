@@ -65,11 +65,11 @@ test('invite code exchange provisions a sandbox and redirects to the session pag
 	// legibly dark-themed rather than rendering with unstyled light defaults.
 	await page.emulateMedia({ colorScheme: 'dark' });
 	await page.goto('/');
-	await page.getByLabel('Email').fill(DEMO_EMAIL);
+	await page.getByLabel('Email').fill(`  ${DEMO_EMAIL}  `);
 	const tokenInput = page.getByLabel('Invite code');
-	await tokenInput.fill(DEMO_TOKEN);
+	await tokenInput.fill(`  ${DEMO_TOKEN}  `);
 
-	await expect(tokenInput).toHaveValue(DEMO_TOKEN);
+	await expect(tokenInput).toHaveValue(`  ${DEMO_TOKEN}  `);
 	const tokenInputStyles = await tokenInput.evaluate((element) => {
 		const styles = getComputedStyle(element);
 		return {

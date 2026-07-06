@@ -49,6 +49,7 @@
 				class="cinder-segmented-control-option"
 				role="radio"
 				aria-checked={lens === 'events'}
+				tabindex={lens === 'events' ? 0 : -1}
 				data-cinder-selected={lens === 'events' ? '' : undefined}
 				onclick={() => setLens('events')}
 			>
@@ -59,6 +60,7 @@
 				class="cinder-segmented-control-option"
 				role="radio"
 				aria-checked={lens === 'steps'}
+				tabindex={lens === 'steps' ? 0 : -1}
 				data-cinder-selected={lens === 'steps' ? '' : undefined}
 				onclick={() => setLens('steps')}
 			>

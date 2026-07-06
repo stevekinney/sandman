@@ -37,8 +37,8 @@ export const POST: RequestHandler = async (event) => {
 		throw error(400, 'Request body must be valid JSON');
 	}
 
-	const token = getStringField(body, 'token');
-	if (token === null) {
+	const token = getStringField(body, 'token')?.trim();
+	if (!token) {
 		throw error(400, 'Request body must include "token"');
 	}
 

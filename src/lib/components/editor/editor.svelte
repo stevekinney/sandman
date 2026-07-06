@@ -337,6 +337,7 @@
 						type="button"
 						role="tab"
 						aria-selected={activeFile.name === descriptor.name}
+						tabindex={activeFile.name === descriptor.name ? 0 : -1}
 						class={`cinder-tab editor-tab${activeFile.name === descriptor.name ? ' active' : ''}${
 							descriptor.readOnly ? ' readonly' : ''
 						}`}
