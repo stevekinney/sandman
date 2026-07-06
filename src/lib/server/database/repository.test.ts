@@ -41,7 +41,9 @@ describe('reserveSandboxSlot', () => {
 		// expression is of type text" — surfacing to users as a bare
 		// "Internal Error" with sandboxes never provisioning.
 		const now = new Date('2026-07-03T12:00:00.000Z');
-		const execute = vi.fn().mockResolvedValue({ rows: [{ status: 'reserved', reservation_id: 'r-1' }] });
+		const execute = vi
+			.fn()
+			.mockResolvedValue({ rows: [{ status: 'reserved', reservation_id: 'r-1' }] });
 		const database = { execute } as unknown as Parameters<typeof reserveSandboxSlot>[0];
 
 		await reserveSandboxSlot(database, {
