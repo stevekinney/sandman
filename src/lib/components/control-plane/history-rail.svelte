@@ -8,7 +8,6 @@
 	 * Temporal Web UI in the center view.
 	 */
 	import EmptyState from '@lostgradient/cinder/empty-state';
-	import { Tabs } from '@lostgradient/cinder/tabs';
 	import type { EventStreamState } from '@lostgradient/cinder/event-stream-viewer';
 	import EventRail from './event-rail.svelte';
 	import OrderTimeline from './order-timeline.svelte';
@@ -26,28 +25,97 @@
 	const eventStreamState = $derived<EventStreamState>(
 		!session.workerOnline ? 'disconnected' : session.workerRestarting ? 'connecting' : 'connected'
 	);
+
+	function historyTabId(nextLens: 'events' | 'steps'): string {
+		return `history-lens-${nextLens}-tab`;
+	}
+
+	function focusHistoryTab(nextLens: 'events' | 'steps'): void {
+		const element = document.getElementById(historyTabId(nextLens));
+		if (element instanceof HTMLButtonElement) element.focus();
+	}
+
+	function selectHistoryLens(nextLens: 'events' | 'steps'): void {
+		lens = nextLens;
+		focusHistoryTab(nextLens);
+	}
+
+	function handleHistoryTabKeydown(event: KeyboardEvent): void {
+		const nextLens =
+			event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === 'End'
+				? 'steps'
+				: event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'Home'
+					? 'events'
+					: null;
+		if (nextLens === null) return;
+		event.preventDefault();
+		selectHistoryLens(nextLens);
+	}
 </script>
 
 <aside class="history" aria-label="Workflow history">
 	<div class="history__header">
 		<h2 class="history__title">Workflow history</h2>
-		<Tabs bind:value={lens} class="history__tabs" fill>
-			<Tabs.List label="History lens">
-				<Tabs.Trigger value="events">Events</Tabs.Trigger>
-				<Tabs.Trigger value="steps">Steps</Tabs.Trigger>
-			</Tabs.List>
-		</Tabs>
+		<div class="history__tabs">
+			<div role="tablist" aria-label="History lens" class="cinder-tab-list">
+				<button
+					type="button"
+					role="tab"
+					id={historyTabId('events')}
+					class="cinder-tab"
+					data-cinder-active={lens === 'events' ? '' : undefined}
+					data-cinder-value="events"
+					data-variant="horizontal"
+					aria-selected={lens === 'events'}
+					aria-controls="history-lens-events-panel"
+					tabindex={lens === 'events' ? 0 : -1}
+					onclick={() => selectHistoryLens('events')}
+					onkeydown={handleHistoryTabKeydown}
+				>
+					Events
+				</button>
+				<button
+					type="button"
+					role="tab"
+					id={historyTabId('steps')}
+					class="cinder-tab"
+					data-cinder-active={lens === 'steps' ? '' : undefined}
+					data-cinder-value="steps"
+					data-variant="horizontal"
+					aria-selected={lens === 'steps'}
+					aria-controls="history-lens-steps-panel"
+					tabindex={lens === 'steps' ? 0 : -1}
+					onclick={() => selectHistoryLens('steps')}
+					onkeydown={handleHistoryTabKeydown}
+				>
+					Steps
+				</button>
+			</div>
+		</div>
 	</div>
 
 	{#if lens === 'events'}
-		<p class="history__hint">
-			Everything the worker and workflow do as it happens — retries, signals, timers, recoveries.
-		</p>
-		<div class="history__stream">
-			<EventRail events={session.workflowEvents} connectionState={eventStreamState} />
+		<div
+			id="history-lens-events-panel"
+			role="tabpanel"
+			tabindex="0"
+			aria-labelledby={historyTabId('events')}
+		>
+			<p class="history__hint">
+				Everything the worker and workflow do as it happens — retries, signals, timers, recoveries.
+			</p>
+			<div class="history__stream">
+				<EventRail events={session.workflowEvents} connectionState={eventStreamState} />
+			</div>
 		</div>
 	{:else}
-		<div class="history__steps">
+		<div
+			id="history-lens-steps-panel"
+			role="tabpanel"
+			tabindex="0"
+			aria-labelledby={historyTabId('steps')}
+			class="history__steps"
+		>
 			<p class="history__hint history__hint--flush">
 				A plain-language view of the run — the same durable history, as friendly steps.
 			</p>

@@ -51,7 +51,12 @@ describe('TemporalUiFrame', () => {
 			}
 		});
 
-		await expect.element(page.getByText('Starting Temporal services')).toBeInTheDocument();
+		await expect
+			.element(page.getByRole('heading', { name: 'Starting Temporal services' }))
+			.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('status', { name: 'Starting Temporal services' }))
+			.toBeInTheDocument();
 		await expect
 			.element(page.getByText('Temporal server, worker, and Web UI', { exact: false }))
 			.toBeInTheDocument();
@@ -63,7 +68,12 @@ describe('TemporalUiFrame', () => {
 			props: { sandboxId: 'sbx-test-123', sandboxStatus: 'ready', probe: disconnectedProbe() }
 		});
 
-		await expect.element(page.getByText('Connecting to Temporal UI')).toBeInTheDocument();
+		await expect
+			.element(page.getByRole('heading', { name: 'Connecting to Temporal UI' }))
+			.toBeInTheDocument();
+		await expect
+			.element(page.getByRole('status', { name: 'Connecting to Temporal UI' }))
+			.toBeInTheDocument();
 		await expect.element(page.getByTitle('Temporal Web UI')).not.toBeInTheDocument();
 	});
 

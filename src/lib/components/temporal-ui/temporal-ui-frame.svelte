@@ -149,7 +149,7 @@
 		{/key}
 	{:else}
 		<div class="temporal-ui-frame__startup" aria-live="polite">
-			<Spinner size="lg" label="Temporal services are starting" />
+			<Spinner size="lg" label={startupTitle} />
 			<div>
 				<h2>{startupTitle}</h2>
 				<p>{startupDetail}</p>

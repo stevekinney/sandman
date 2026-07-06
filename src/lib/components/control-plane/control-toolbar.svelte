@@ -62,6 +62,28 @@
 		if (!session.workerOnline) return 'Restart the worker (topology strip) to use this.';
 		return 'Not available at this point in the order yet.';
 	}
+
+	function focusWorkbenchTab(nextView: CenterView): void {
+		const element = document.getElementById(`center-view-${nextView}-tab`);
+		if (element instanceof HTMLButtonElement) element.focus();
+	}
+
+	function selectWorkbenchView(nextView: CenterView): void {
+		view = nextView;
+		focusWorkbenchTab(nextView);
+	}
+
+	function handleWorkbenchTabKeydown(event: KeyboardEvent): void {
+		const nextView =
+			event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === 'End'
+				? 'temporal'
+				: event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'Home'
+					? 'code'
+					: null;
+		if (nextView === null) return;
+		event.preventDefault();
+		selectWorkbenchView(nextView);
+	}
 </script>
 
 <div class="toolbar-shell">
@@ -123,7 +145,8 @@
 				aria-selected={view === 'code'}
 				aria-controls="center-panel-code"
 				tabindex={view === 'code' ? 0 : -1}
-				onclick={() => (view = 'code')}
+				onclick={() => selectWorkbenchView('code')}
+				onkeydown={handleWorkbenchTabKeydown}
 			>
 				Code
 			</button>
@@ -138,7 +161,8 @@
 				aria-selected={view === 'temporal'}
 				aria-controls="center-panel-temporal"
 				tabindex={view === 'temporal' ? 0 : -1}
-				onclick={() => (view = 'temporal')}
+				onclick={() => selectWorkbenchView('temporal')}
+				onkeydown={handleWorkbenchTabKeydown}
 			>
 				Temporal UI
 			</button>
