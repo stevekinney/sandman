@@ -56,12 +56,28 @@ describe('reserveSandboxSlot', () => {
 
 		const query = execute.mock.calls[0][0];
 		const chunks: unknown[] = query.queryChunks;
-		const precedingChunkIndex = chunks.findIndex(
-			(chunk) =>
-				Array.isArray((chunk as { value?: unknown[] })?.value) &&
-				(chunk as { value: string[] }).value.join('').includes('reclaimed_at =')
+		const isStringChunk = (chunk: unknown): chunk is { value: string[] } =>
+			Array.isArray((chunk as { value?: unknown[] })?.value);
+
+		const anchorIndex = chunks.findIndex(
+			(chunk) => isStringChunk(chunk) && chunk.value.join('').includes('reclaimed_at =')
 		);
-		const castChunk = chunks[precedingChunkIndex + 2] as { value: string[] };
-		expect(castChunk.value.join('')).toMatch(/^::timestamptz/);
+		expect(
+			anchorIndex,
+			'expected to find the "reclaimed_at =" chunk in the generated query'
+		).not.toBe(-1);
+
+		// Search a small window after the anchor for the cast, rather than
+		// assuming a fixed offset — the exact chunk layout is a Drizzle
+		// implementation detail that could shift without the underlying SQL
+		// changing.
+		const window = chunks.slice(anchorIndex + 1, anchorIndex + 4);
+		const castChunk = window.find(
+			(chunk) => isStringChunk(chunk) && chunk.value.join('').startsWith('::timestamptz')
+		);
+		expect(
+			castChunk,
+			'expected a "::timestamptz" cast shortly after "reclaimed_at ="'
+		).toBeDefined();
 	});
 });
