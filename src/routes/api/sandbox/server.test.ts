@@ -103,6 +103,16 @@ describe('POST /api/sandbox', () => {
 		expect(vi.mocked(getSandboxRegistry)).not.toHaveBeenCalled();
 	});
 
+	it('returns a friendly 503 (not a bare Internal Error) when capacity reservation throws', async () => {
+		vi.mocked(reserveSandboxSlot).mockRejectedValueOnce(new Error('Failed query: ...'));
+
+		await expect(POST(makeEvent())).rejects.toMatchObject({
+			status: 503,
+			body: { message: 'Could not start the sandbox. Please try again in a moment.' }
+		});
+		expect(vi.mocked(getSandboxRegistry)).not.toHaveBeenCalled();
+	});
+
 	it('marks the reservation error when E2B provisioning fails', async () => {
 		const registry = {
 			client: {

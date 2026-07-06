@@ -11,7 +11,7 @@ import {
 	validateDemoToken
 } from '$lib/server/security/session';
 import { assertSameOrigin } from '$lib/server/security/origin';
-import { logInfo, logWarning } from '$lib/server/logging';
+import { logError, logInfo, logWarning } from '$lib/server/logging';
 
 type SessionRequestBody = {
 	token: string;
@@ -54,11 +54,16 @@ export const POST: RequestHandler = async (event) => {
 
 	const now = new Date();
 	const sessionId = crypto.randomUUID();
-	await createDemoSession(getDatabase(configuration.databaseUrl), {
-		sessionId,
-		tokenHash: hashDemoToken(body.token),
-		now
-	});
+	try {
+		await createDemoSession(getDatabase(configuration.databaseUrl), {
+			sessionId,
+			tokenHash: hashDemoToken(body.token),
+			now
+		});
+	} catch (err) {
+		logError({ event: 'demo_session.create_failed', sessionId, status: 'error', error: err });
+		throw error(503, 'Could not start a session. Please try again in a moment.');
+	}
 
 	event.cookies.set(
 		SESSION_COOKIE_NAME,

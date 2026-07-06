@@ -1,9 +1,10 @@
 /**
- * hooks.server.ts — process-startup hooks.
+ * hooks.server.ts — process-startup and error-handling hooks.
  */
 
-import type { ServerInit } from '@sveltejs/kit';
+import type { HandleServerError, ServerInit } from '@sveltejs/kit';
 import { getSandboxRegistry } from '$lib/server/sandbox/registry';
+import { logError } from '$lib/server/logging';
 
 /**
  * Eagerly initializes the sandbox registry (and its startup reconcile pass)
@@ -15,4 +16,23 @@ import { getSandboxRegistry } from '$lib/server/sandbox/registry';
  */
 export const init: ServerInit = () => {
 	getSandboxRegistry();
+};
+
+/**
+ * Safety net for errors that escape a route handler's own try/catch (e.g. an
+ * unexpected DB or dependency failure). Logs the real error server-side and
+ * replaces SvelteKit's bare "Internal Error" with a message the browser can
+ * show the user without leaking internals.
+ */
+export const handleError: HandleServerError = ({ error: err, event, status }) => {
+	logError({
+		event: 'request.unhandled_error',
+		status: String(status),
+		path: event.url.pathname,
+		error: err
+	});
+
+	return {
+		message: 'Something went wrong on our end. Please try again in a moment.'
+	};
 };
