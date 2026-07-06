@@ -103,6 +103,11 @@ jobs:
           project_id: ${{ vars.NEON_PROJECT_ID }}
           # Unique per run+attempt so concurrent PRs never share a branch.
           branch_name: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          # This project's database/role are `sandman`/`sandman_owner`; without
+          # these the action defaults to `neondb`/`neondb_owner` and 404s while
+          # resolving the connection string (the DB doesn't exist here).
+          database: sandman
+          role: sandman_owner
           expires_at: ${{ steps.expiry.outputs.at }}
           api_key: ${{ secrets.NEON_API_KEY }}
 
