@@ -8,12 +8,7 @@
 	 *
 	 * Monaco is loaded lazily in the browser only.
 	 */
-	import Tab from '@lostgradient/cinder/tab';
-	import TabList from '@lostgradient/cinder/tab-list';
-	import Tabs from '@lostgradient/cinder/tabs';
-	import '@lostgradient/cinder/tab/styles';
-	import '@lostgradient/cinder/tab-list/styles';
-	import '@lostgradient/cinder/tabs/styles';
+	import { Tabs } from '@lostgradient/cinder/tabs';
 	import { FILE_DESCRIPTORS } from '$lib/components/editor/file-descriptors';
 	import { getDeterminismMarkers } from '$lib/components/editor/determinism-guard';
 	import { createDebounce } from '$lib/components/editor/debounce';
@@ -32,7 +27,6 @@
 	import WorkerStatusStrip from '$lib/components/editor/worker-status-strip.svelte';
 	import type { WorkerStatus } from '$lib/contracts/sandbox';
 	import type * as Monaco from 'monaco-editor';
-	import { onMount } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 
 	type Props = {
@@ -56,7 +50,6 @@
 	);
 	let workerStatus = $state<WorkerStatus | null>(null);
 	let isLoading = $state(false);
-	let isMounted = $state(false);
 	let editorContainer = $state<HTMLDivElement | undefined>();
 	/** Bumped when Monaco finishes loading so pointer effects re-run. */
 	let monacoReady = $state(false);
@@ -125,17 +118,6 @@
 			markers.map((m) => ({ ...m, source: 'Temporal determinism guard' }))
 		);
 	}
-
-	// ---------------------------------------------------------------------------
-	// Client mount guard — the cinder <Tabs> are browser-only, so we render an
-	// SSR placeholder and swap them in after hydration. onMount runs once on the
-	// client after hydration completes, which keeps the server and initial-client
-	// render identical (no hydration mismatch).
-	// ---------------------------------------------------------------------------
-
-	onMount(() => {
-		isMounted = true;
-	});
 
 	$effect(() => {
 		// Use a native browser check rather than $app/environment (a SvelteKit virtual
@@ -328,27 +310,23 @@
 </script>
 
 <div class="sandman-editor">
-	{#if isMounted}
-		<Tabs bind:value={activeFileName} class="editor-tabs">
-			<TabList label="Editor files" class="editor-tab-list">
-				{#each FILE_DESCRIPTORS as descriptor (descriptor.name)}
-					<Tab
-						value={descriptor.name}
-						class={`editor-tab${activeFile.name === descriptor.name ? ' active' : ''}${
-							descriptor.readOnly ? ' readonly' : ''
-						}`}
-					>
-						{descriptor.name}
-						{#if descriptor.readOnly}
-							<span class="readonly-badge" aria-hidden="true">read-only</span>
-						{/if}
-					</Tab>
-				{/each}
-			</TabList>
-		</Tabs>
-	{:else}
-		<div class="editor-tabs-placeholder" aria-hidden="true"></div>
-	{/if}
+	<Tabs bind:value={activeFileName} class="editor-tabs">
+		<Tabs.List label="Editor files" class="editor-tab-list">
+			{#each FILE_DESCRIPTORS as descriptor (descriptor.name)}
+				<Tabs.Trigger
+					value={descriptor.name}
+					class={`editor-tab${activeFile.name === descriptor.name ? ' active' : ''}${
+						descriptor.readOnly ? ' readonly' : ''
+					}`}
+				>
+					{descriptor.name}
+					{#if descriptor.readOnly}
+						<span class="readonly-badge" aria-hidden="true">read-only</span>
+					{/if}
+				</Tabs.Trigger>
+			{/each}
+		</Tabs.List>
+	</Tabs>
 
 	{#if isLoading}
 		<div class="editor-saving" aria-live="polite" aria-label="Saving file">Saving…</div>
@@ -384,12 +362,6 @@
 	.sandman-editor :global(.editor-tabs) {
 		flex-shrink: 0;
 		gap: 0;
-	}
-
-	.editor-tabs-placeholder {
-		min-height: 2.5rem;
-		flex-shrink: 0;
-		border-bottom: 1px solid var(--cinder-border-muted, #1f2937);
 	}
 
 	.sandman-editor :global(.editor-tab-list) {

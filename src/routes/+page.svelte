@@ -13,10 +13,6 @@
 	import Badge from '@lostgradient/cinder/badge';
 	import Button from '@lostgradient/cinder/button';
 	import Input from '@lostgradient/cinder/input';
-	import '@lostgradient/cinder/alert/styles';
-	import '@lostgradient/cinder/badge/styles';
-	import '@lostgradient/cinder/button/styles';
-	import '@lostgradient/cinder/input/styles';
 	import { SITE_DESCRIPTION, SITE_TITLE } from '$lib/metadata';
 	import { concepts, faqs, phases, surfaces, tour, type IconPart } from './splash-content';
 
@@ -71,7 +67,7 @@
 		}
 	}
 
-	function scrollToStart(event?: Event): void {
+	function scrollToStart(event: Event | undefined = undefined): void {
 		event?.preventDefault();
 		// Honor reduced-motion here — the CSS scroll-behavior fallback does not
 		// apply to programmatic scrollIntoView({ behavior: 'smooth' }).
@@ -88,7 +84,7 @@
 		if (tokenField instanceof HTMLElement) tokenField.focus({ preventScroll: true });
 	}
 
-	async function startSession(event?: SubmitEvent): Promise<void> {
+	async function startSession(event: SubmitEvent | undefined = undefined): Promise<void> {
 		event?.preventDefault();
 		provisioning = true;
 		provisionError = null;

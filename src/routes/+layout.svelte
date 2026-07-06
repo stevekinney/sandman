@@ -1,8 +1,6 @@
 <script lang="ts">
-	// Global Cinder styles — loaded here so all routes get the design tokens.
-	// Individual component /styles sub-paths are not used because svelte-check
-	// cannot resolve them; the root styles import covers all components.
-	import '@lostgradient/cinder/styles';
+	// Load Cinder's base tokens plus every component stylesheet once at the app root.
+	import '@lostgradient/cinder/styles/all';
 	import { page } from '$app/state';
 	import { OG_IMAGE, SITE_NAME } from '$lib/metadata';
 

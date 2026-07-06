@@ -44,7 +44,7 @@
 		"playwright": "^1.60.0",
 		"prettier": "^3.8.3",
 		"prettier-plugin-svelte": "^4.1.0",
-		"svelte": "^5.56.1",
+		"svelte": "5.55.0",
 		"svelte-check": "^4.6.0",
 		"typescript": "^6.0.3",
 		"typescript-eslint": "^8.60.1",
@@ -53,7 +53,7 @@
 		"vitest-browser-svelte": "^2.1.1"
 	},
 	"dependencies": {
-		"@lostgradient/cinder": "0.4.1",
+		"@lostgradient/cinder": "0.6.0",
 		"@neondatabase/serverless": "^1.1.0",
 		"@temporalio/activity": "^1.18.1",
 		"@temporalio/client": "^1.18.1",
@@ -63,6 +63,7 @@
 		"@temporalio/workflow": "^1.18.1",
 		"drizzle-orm": "^0.45.2",
 		"e2b": "^2.31.0",
+		"lucide-svelte": "0.577.0",
 		"monaco-editor": "^0.55.1"
 	},
 	"trustedDependencies": [
