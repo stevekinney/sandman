@@ -156,7 +156,7 @@ export async function reserveSandboxSlot(
 				status = ${SANDBOX_SESSION_STATUS.Expired},
 				updated_at = ${input.now},
 				terminated_at = ${input.now},
-				reclaimed_at = case when e2b_sandbox_id is null then ${input.now} else null end
+				reclaimed_at = case when e2b_sandbox_id is null then ${input.now}::timestamptz else null end
 			where
 				expires_at < ${input.now}
 				and status in (${SANDBOX_SESSION_STATUS.Provisioning}, ${SANDBOX_SESSION_STATUS.Bootstrapping}, ${SANDBOX_SESSION_STATUS.Ready})
