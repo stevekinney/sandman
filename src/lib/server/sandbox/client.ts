@@ -79,6 +79,21 @@ const DEFAULT_READINESS_DELAY_MS = 2_000;
 /** Default sandbox lifetime (10 minutes). */
 const DEFAULT_SANDBOX_TIMEOUT_MS = 10 * 60 * 1_000;
 
+/**
+ * Timeout for the worker's long-running background command. Deliberately
+ * decoupled from the (sliding) session TTL and pinned to E2B's maximum sandbox
+ * lifetime (24 hours). E2B's `commands.start` timeout is a fixed wall-clock
+ * deadline set once at worker start and cannot be extended, whereas the VM's
+ * own timeout slides forward on every user interaction. If the worker command
+ * timeout tracked the session TTL, an actively-used session slid past that
+ * window would have its worker hard-killed by E2B while the VM lived on —
+ * surfacing as a spurious crash + auto-restart (a "worker offline" flicker)
+ * every TTL interval. The VM's sliding timeout (and E2B's own 24h cap) is the
+ * real lifetime bound, so the worker command simply needs a ceiling it can
+ * never realistically hit before the VM is reaped.
+ */
+const WORKER_COMMAND_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
+
 /** Cap on a single file write into the sandbox before we give up. */
 const DEFAULT_WRITE_FILE_TIMEOUT_MS = 30_000;
 
@@ -423,9 +438,13 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 			session,
 			command: WORKER_CMD,
 			logPath: WORKER_LOG_PATH,
-			// Let E2B keep the worker alive for the sandbox's whole lifetime rather
-			// than its 60s command default (which would kill the worker mid-demo).
-			commandTimeoutMs: sandboxTimeoutMs,
+			// Keep the worker alive for the sandbox's whole (sliding) lifetime.
+			// Decoupled from `sandboxTimeoutMs` on purpose: that value slides with
+			// activity via `session.setTimeout`, but a command's timeout is fixed at
+			// start and cannot be extended, so tracking the TTL here would let E2B
+			// kill the worker mid-demo once a session is slid past its window. See
+			// WORKER_COMMAND_TIMEOUT_MS.
+			commandTimeoutMs: WORKER_COMMAND_TIMEOUT_MS,
 			maxRestarts: opts.workerMaxRestarts,
 			restartDelayMs: opts.workerRestartDelayMs,
 			schedule: opts.workerSchedule,

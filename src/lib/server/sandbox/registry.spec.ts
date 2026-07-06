@@ -103,6 +103,19 @@ describe('getSandboxRegistry() — reconciler deps wiring', () => {
 		expect(ids).toEqual(['sbx-orphaned']);
 	});
 
+	it('threads the configured session TTL into the sandbox client as its VM timeout', async () => {
+		const { createSandboxClient } = await import('./client.ts');
+		const { getSandboxRegistry } = await import('./registry.ts');
+		getSandboxRegistry();
+
+		// The VM's provider-side timeout must track the session TTL, or a freshly
+		// provisioned sandbox would be killed at the client's built-in default
+		// (10 min) before a longer configured TTL elapses.
+		expect(createSandboxClient).toHaveBeenCalledWith(
+			expect.objectContaining({ sandboxTimeoutMs: 300_000 })
+		);
+	});
+
 	it('excludes sandboxes this process still holds a handle for from the bookkeeping sweep', async () => {
 		// The bookkeeping sweep (markExpiredSandboxes) must honor the same
 		// exclusion as termination — otherwise a still-bootstrapping sandbox's row
