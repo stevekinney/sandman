@@ -1,4 +1,17 @@
-import { and, count, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm';
+import {
+	and,
+	count,
+	desc,
+	eq,
+	gt,
+	gte,
+	inArray,
+	isNotNull,
+	isNull,
+	lt,
+	or,
+	sql
+} from 'drizzle-orm';
 import type { Database } from './connection.ts';
 import {
 	DEMO_SESSION_STATUS,
@@ -212,7 +225,14 @@ export async function attachSandboxToReservation(
 		.update(sandboxSession)
 		.set({
 			e2bSandboxId: input.sandboxId,
-			updatedAt: input.now
+			updatedAt: input.now,
+			// The capacity sweep in reserveSandboxSlot can expire this exact row
+			// before provisioning finished — since it had no VM yet at that
+			// instant, the sweep correctly stamped reclaimedAt (nothing to
+			// reclaim). Now that it DOES have a VM, that stamp is stale and would
+			// hide a real VM from the reconciler forever. Reset it so the row is
+			// reclaimable again if this VM later needs cleanup.
+			reclaimedAt: null
 		})
 		.where(eq(sandboxSession.id, input.reservationId));
 }
@@ -458,12 +478,17 @@ export async function getMonitoringSnapshot(
 }
 
 /**
- * Sandboxes whose VM has not yet been confirmed terminated: expired, has an
- * E2B sandbox ID, and `reclaimedAt` is still NULL. Deliberately status-agnostic
- * — `reserveSandboxSlot`'s capacity sweep flips `status` to Expired immediately
- * on expiry (required to avoid colliding with the active-session unique index),
- * independent of whether the VM has actually been killed yet. `reclaimedAt` is
- * the only signal for that, so this is what the reconciler must query on.
+ * Sandboxes whose VM has not yet been confirmed terminated: has an E2B sandbox
+ * ID and `reclaimedAt` is still NULL, and is either already expired OR already
+ * in a terminal `Error` status. Deliberately status-agnostic on the "expired"
+ * branch — `reserveSandboxSlot`'s capacity sweep flips `status` to Expired
+ * immediately on expiry (required to avoid colliding with the active-session
+ * unique index), independent of whether the VM has actually been killed yet,
+ * so `reclaimedAt` is the only signal for that. The `Error` branch exists
+ * because a bootstrap-failure row's `expiresAt` is still whatever was set at
+ * reservation time — often minutes in the future — so without it, a VM whose
+ * cleanup termination failed would sit unreclaimed until that far-future
+ * expiry instead of being retried on the very next reconcile pass.
  */
 export async function getExpiredRegisteredSandboxIds(
 	database: Database,
@@ -474,9 +499,12 @@ export async function getExpiredRegisteredSandboxIds(
 		.from(sandboxSession)
 		.where(
 			and(
-				lt(sandboxSession.expiresAt, input.now),
 				isNotNull(sandboxSession.e2bSandboxId),
-				isNull(sandboxSession.reclaimedAt)
+				isNull(sandboxSession.reclaimedAt),
+				or(
+					lt(sandboxSession.expiresAt, input.now),
+					eq(sandboxSession.status, SANDBOX_SESSION_STATUS.Error)
+				)
 			)
 		)
 		.orderBy(desc(sandboxSession.expiresAt))
@@ -486,21 +514,27 @@ export async function getExpiredRegisteredSandboxIds(
 
 /**
  * Stamps `reclaimedAt` for a single sandbox whose VM has just been confirmed
- * terminated by the reconciler. Also flips `status` to Expired defensively —
- * normally already done by the capacity sweep, but a sandbox that expired
- * with no session ever re-POSTing would still be sitting in an active status
- * otherwise.
+ * terminated by the reconciler. Preserves an existing `Error` status instead
+ * of always flipping to Expired — otherwise a bootstrap-failure row whose
+ * cleanup termination initially failed (and is only now being reclaimed by
+ * the reconciler's retry) would silently vanish from
+ * `getMonitoringSnapshot()`'s `recentBootstrapFailures` count. Any other
+ * status flips to Expired, matching the capacity sweep's normal behavior for
+ * a sandbox that expired with no session ever re-POSTing.
  */
 export async function markSandboxReclaimed(
 	database: Database,
 	input: { sandboxId: string; now: Date }
 ): Promise<void> {
-	await updateSandboxStatus(database, {
-		sandboxId: input.sandboxId,
-		status: SANDBOX_SESSION_STATUS.Expired,
-		now: input.now,
-		reclaimed: true
-	});
+	await database
+		.update(sandboxSession)
+		.set({
+			status: sql`case when ${sandboxSession.status} = ${SANDBOX_SESSION_STATUS.Error} then ${sandboxSession.status} else ${SANDBOX_SESSION_STATUS.Expired} end`,
+			updatedAt: input.now,
+			terminatedAt: input.now,
+			reclaimedAt: input.now
+		})
+		.where(eq(sandboxSession.e2bSandboxId, input.sandboxId));
 }
 
 function isSandboxSessionStatus(value: string): value is SandboxSessionStatus {

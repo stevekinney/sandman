@@ -1097,31 +1097,25 @@ describe('concurrent lifecycle operations', () => {
 	it('a restart landing while a slow startServer is mid-flight waits for it', async () => {
 		// Gate the Temporal server spawn so startServer parks mid-operation with
 		// state.temporalPid unset — exactly the window the production restart hit.
-		const { adapter: baseAdapter } = createMockAdapter('sbx-race-midflight');
+		const { adapter, session } = createMockAdapter('sbx-race-midflight');
 		let releaseServerSpawn: (() => void) | undefined;
 		let gateNextServerSpawn = false;
 		const gate = new Promise<void>((resolve) => {
 			releaseServerSpawn = resolve;
 		});
+		// Override the session's start() in place — createMockAdapter always
+		// hands back this same session instance, so no adapter-level override is
+		// needed at all.
+		const originalStart = session.commands.start.bind(session.commands);
+		session.commands.start = async (cmd, startOpts) => {
+			if (gateNextServerSpawn && cmd.includes('temporal server start-dev')) {
+				gateNextServerSpawn = false;
+				await gate;
+			}
+			return originalStart(cmd, startOpts);
+		};
 		const client = createSandboxClient({
-			adapter: {
-				async create(opts) {
-					const session = await baseAdapter.create(opts);
-					return {
-						...session,
-						commands: {
-							...session.commands,
-							async start(cmd, startOpts) {
-								if (gateNextServerSpawn && cmd.includes('temporal server start-dev')) {
-									gateNextServerSpawn = false;
-									await gate;
-								}
-								return session.commands.start(cmd, startOpts);
-							}
-						}
-					};
-				}
-			},
+			adapter,
 			publicUiFetch: async () => new Response('<!doctype html><title>Temporal</title>'),
 			templateFiles: { '/app/worker.ts': '// placeholder worker' },
 			maxReadinessRetries: 1,
