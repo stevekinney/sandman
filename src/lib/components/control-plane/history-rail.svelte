@@ -8,10 +8,7 @@
 	 * Temporal Web UI in the center view.
 	 */
 	import EmptyState from '@lostgradient/cinder/empty-state';
-	import Segment from '@lostgradient/cinder/segment';
-	import SegmentedControl from '@lostgradient/cinder/segmented-control';
-	import '@lostgradient/cinder/empty-state/styles';
-	import '@lostgradient/cinder/segmented-control/styles';
+	import { Tabs } from '@lostgradient/cinder/tabs';
 	import type { EventStreamState } from '@lostgradient/cinder/event-stream-viewer';
 	import EventRail from './event-rail.svelte';
 	import OrderTimeline from './order-timeline.svelte';
@@ -34,18 +31,12 @@
 <aside class="history" aria-label="Workflow history">
 	<div class="history__header">
 		<h2 class="history__title">Workflow history</h2>
-		<SegmentedControl
-			id="history-lens"
-			label="History lens"
-			hideLabel
-			size="sm"
-			fullWidth
-			value={lens}
-			onchange={(next) => (lens = next as 'events' | 'steps')}
-		>
-			<Segment value="events">Events</Segment>
-			<Segment value="steps">Steps</Segment>
-		</SegmentedControl>
+		<Tabs bind:value={lens} class="history__tabs" fill>
+			<Tabs.List label="History lens">
+				<Tabs.Trigger value="events">Events</Tabs.Trigger>
+				<Tabs.Trigger value="steps">Steps</Tabs.Trigger>
+			</Tabs.List>
+		</Tabs>
 	</div>
 
 	{#if lens === 'events'}

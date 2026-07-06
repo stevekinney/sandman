@@ -7,13 +7,12 @@
 	 * by a control), plus the full ordered step list beneath it. Progress is
 	 * event-driven: the parent advances `progress` as workflow events arrive.
 	 *
-	 * Uses a plain accessible ordered list instead of the Cinder Steps component
-	 * to avoid SVG/template initialization issues in vitest browser tests.
+	 * Uses a plain accessible ordered list because the tour can skip past steps
+	 * that should not be announced or styled as completed. Cinder tracking:
+	 * https://github.com/stevekinney/cinder/issues/655
 	 */
 	import Button from '@lostgradient/cinder/button';
 	import Spinner from '@lostgradient/cinder/spinner';
-	import '@lostgradient/cinder/button/styles';
-	import '@lostgradient/cinder/spinner/styles';
 	import MarkdownText from './markdown-text.svelte';
 	import type { TourProgress } from '$lib/content/tour-engine';
 	import { TOUR } from '$lib/content/demo-script';

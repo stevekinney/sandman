@@ -5,15 +5,13 @@ involved so it can be picked up cold.
 
 ## Low
 
-### 1. Remove the remaining Cinder dep-optimizer workaround
+### 1. Remove the temporary Svelte pin after Cinder's 5.56 runtime issue is fixed
 
-`vite.config.ts` still carries `optimizeDeps.exclude: ['@lostgradient/cinder']` because
-the `browser` export condition in `@lostgradient/cinder@0.4.1` still resolves to
-`./src/index.ts` (uncompiled TypeScript source), so Rolldown's pre-bundler hits
-`js_parse_error` on type-only statements in `.svelte.ts` files. Confirmed still broken
-in 0.4.1 (the SSR sibling, cinder#533, _is_ fixed in 0.4.1).
+`package.json` pins `svelte` to `5.55.0` because `@lostgradient/cinder@0.6.0`
+components fail under `svelte@5.56.4` with `TypeError: target.exclude.has is not a
+function` during browser rendering. The failure reproduces with a bare Cinder `Badge`
+render, so it is tracked upstream as
+[stevekinney/cinder#656](https://github.com/stevekinney/cinder/issues/656).
 
-Remove the exclusion from `vite.config.ts` once
-[stevekinney/cinder#534](https://github.com/stevekinney/cinder/issues/534) (reopened with
-a 0.4.1 repro) ships a fix that routes the browser-context optimizer to compiled output
-(e.g. `dist/index.js`). Re-verify all gates after removing the workaround.
+Once Cinder publishes output compatible with its Svelte peer range, remove the pin,
+restore the normal Svelte range, and re-run the full validation suite.

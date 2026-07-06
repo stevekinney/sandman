@@ -13,11 +13,7 @@
 	 */
 	import Button from '@lostgradient/cinder/button';
 	import Toolbar from '@lostgradient/cinder/toolbar';
-	import SegmentedControl from '@lostgradient/cinder/segmented-control';
-	import Segment from '@lostgradient/cinder/segment';
-	import '@lostgradient/cinder/button/styles';
-	import '@lostgradient/cinder/toolbar/styles';
-	import '@lostgradient/cinder/segmented-control/styles';
+	import { Tabs } from '@lostgradient/cinder/tabs';
 	import type { ControlId } from '$lib/contracts/workflow-api';
 	import type { SessionState } from './session-state.svelte.ts';
 	import type { CenterView } from './session-actions.ts';
@@ -116,18 +112,12 @@
 	</Toolbar>
 
 	<div class="toolbar-shell__view">
-		<SegmentedControl
-			id="center-view"
-			label="Workbench view"
-			hideLabel
-			density="toolbar"
-			variant="tablist"
-			value={view}
-			onchange={(next) => (view = next as CenterView)}
-		>
-			<Segment value="code" controls="center-panel-code">Code</Segment>
-			<Segment value="temporal" controls="center-panel-temporal">Temporal UI</Segment>
-		</SegmentedControl>
+		<Tabs bind:value={view} class="toolbar-shell__tabs">
+			<Tabs.List label="Workbench view">
+				<Tabs.Trigger value="code">Code</Tabs.Trigger>
+				<Tabs.Trigger value="temporal">Temporal UI</Tabs.Trigger>
+			</Tabs.List>
+		</Tabs>
 	</div>
 </div>
 
@@ -147,13 +137,21 @@
 	   widths overflowing — allow its groups to wrap so buttons never collide.
 	   Workaround for stevekinney/cinder#613. */
 	.toolbar-shell :global(.cinder-toolbar) {
-		flex: 1 1 auto;
+		flex: 1 1 100%;
 		flex-wrap: wrap;
+		min-width: 0;
 		row-gap: 0.5rem;
 	}
 
 	.toolbar-shell__view {
+		flex: 0 0 11rem;
+		inline-size: 11rem;
 		margin-inline-start: auto;
+	}
+
+	.toolbar-shell__view :global(.toolbar-shell__tabs),
+	.toolbar-shell__view :global(.cinder-tab-list) {
+		inline-size: 100%;
 	}
 
 	.toolbar-shell :global(.toolbar-button--recommended) {

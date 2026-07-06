@@ -3,8 +3,6 @@
 	import StatusDot from '@lostgradient/cinder/status-dot';
 	import Badge from '@lostgradient/cinder/badge';
 	import CodeBlock from '@lostgradient/cinder/code-block';
-	// Component CSS is expected to be loaded via @lostgradient/cinder/styles/all
-	// at the app entry (src/routes/+layout.svelte) — owned by the integration pass.
 
 	type Props = {
 		/** Current worker lifecycle state, or null before the first restart. */
@@ -26,7 +24,7 @@
 			<StatusDot status="danger" label="Compile error" />
 			<Badge variant="danger">Compile Error</Badge>
 			{#if workerStatus.stderr}
-				<CodeBlock code={workerStatus.stderr} language="text" />
+				<CodeBlock code={workerStatus.stderr} language="text" highlight={false} />
 			{/if}
 		{/if}
 	</div>

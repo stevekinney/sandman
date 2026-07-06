@@ -22,10 +22,6 @@
 	import SkipLink from '@lostgradient/cinder/skip-link';
 	import StatusDot from '@lostgradient/cinder/status-dot';
 	import ToastRegion from '@lostgradient/cinder/toast-region';
-	import '@lostgradient/cinder/alert/styles';
-	import '@lostgradient/cinder/button/styles';
-	import '@lostgradient/cinder/status-dot/styles';
-	import '@lostgradient/cinder/toast-region/styles';
 	import { FetchController } from '$lib/components/control-plane/fetch-controller';
 	import { restoreSessionFromSandbox } from '$lib/components/control-plane/session-restore';
 	import { SessionState } from '../../lib/components/control-plane/session-state.svelte.ts';

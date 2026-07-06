@@ -13,6 +13,7 @@ import TemporalUiFrame from './temporal-ui-frame.svelte';
 const connectedProbe = () => vi.fn(async () => true);
 const disconnectedProbe = () => vi.fn(async () => false);
 const inertFrameSource = 'about:blank';
+const temporalUiStatus = () => page.getByRole('status').first();
 
 describe('TemporalUiFrame', () => {
 	afterEach(() => vi.restoreAllMocks());
@@ -31,7 +32,7 @@ describe('TemporalUiFrame', () => {
 			props: { sandboxId: 'sbx-test-123', probe: connectedProbe(), frameSource: inertFrameSource }
 		});
 		// StatusDot with connectionState renders role="status" for live-region semantics.
-		await expect.element(page.getByRole('status')).toBeInTheDocument();
+		await expect.element(temporalUiStatus()).toHaveAttribute('role', 'status');
 	});
 
 	it('shows "Temporal UI" label text', async () => {
@@ -92,9 +93,7 @@ describe('TemporalUiFrame', () => {
 			props: { sandboxId: 'sbx-test-123', probe: connectedProbe(), frameSource: inertFrameSource }
 		});
 		// Wait for the $effect probe to resolve and StatusDot to update.
-		await expect
-			.element(page.getByRole('status'))
-			.toHaveAttribute('data-cinder-state', 'connected');
+		await expect.element(temporalUiStatus()).toHaveAttribute('data-cinder-state', 'connected');
 	});
 
 	it('passes the proxied URL and abort signal to the reachability probe', async () => {
@@ -103,18 +102,14 @@ describe('TemporalUiFrame', () => {
 			props: { sandboxId: 'sbx-test-123', probe, frameSource: inertFrameSource }
 		});
 
-		await expect
-			.element(page.getByRole('status'))
-			.toHaveAttribute('data-cinder-state', 'connected');
+		await expect.element(temporalUiStatus()).toHaveAttribute('data-cinder-state', 'connected');
 		expect(probe).toHaveBeenCalledWith('/sbx/sbx-test-123/ui/', expect.any(AbortSignal));
 	});
 
 	it('shows disconnected state when the probe returns 502', async () => {
 		render(TemporalUiFrame, { props: { sandboxId: 'sbx-test-123', probe: disconnectedProbe() } });
 		// A 502 from our proxy route means the sandbox is unreachable.
-		await expect
-			.element(page.getByRole('status'))
-			.toHaveAttribute('data-cinder-state', 'disconnected');
+		await expect.element(temporalUiStatus()).toHaveAttribute('data-cinder-state', 'disconnected');
 	});
 
 	it('shows disconnected state when the probe throws a network error', async () => {
@@ -123,8 +118,6 @@ describe('TemporalUiFrame', () => {
 		});
 		render(TemporalUiFrame, { props: { sandboxId: 'sbx-test-123', probe } });
 		// Network-level failures (no connection) also show disconnected.
-		await expect
-			.element(page.getByRole('status'))
-			.toHaveAttribute('data-cinder-state', 'disconnected');
+		await expect.element(temporalUiStatus()).toHaveAttribute('data-cinder-state', 'disconnected');
 	});
 });
