@@ -157,21 +157,32 @@ export const POST: RequestHandler = async (event) => {
 			const result = await registry.client.bootstrap(handle);
 			sandboxReady = result.ready;
 			const completedAt = new Date();
-			await updateSandboxStatus(database, {
-				sandboxId: handle.id,
-				status: result.ready ? SANDBOX_SESSION_STATUS.Ready : SANDBOX_SESSION_STATUS.Error,
-				now: completedAt,
-				expiresAt: result.ready
-					? new Date(completedAt.getTime() + configuration.sessionTtlMs)
-					: undefined,
-				errorMessage: result.ready ? undefined : 'Temporal server did not become ready'
-			});
-			// A sandbox that never became ready is unusable, and its DB row just
-			// left the active-status set — so nothing else will ever reclaim the
-			// running E2B VM. Terminate it now, or it leaks (billed) until its own
-			// provider-side timeout, while the per-session slot frees immediately.
-			if (!result.ready) {
-				await reclaimSandbox(() => registry.client.terminate(handle), handle.id, session.id);
+			if (result.ready) {
+				await updateSandboxStatus(database, {
+					sandboxId: handle.id,
+					status: SANDBOX_SESSION_STATUS.Ready,
+					now: completedAt,
+					expiresAt: new Date(completedAt.getTime() + configuration.sessionTtlMs)
+				});
+			} else {
+				// A sandbox that never became ready is unusable, and its DB row is
+				// about to leave the active-status set — so nothing else will ever
+				// reclaim the running E2B VM unless we do it now, before it leaks
+				// (billed) until its own provider-side timeout. Reclaim FIRST, then
+				// stamp whether it actually succeeded — reclaimed must reflect a
+				// confirmed kill, or the reconciler can never retry a failed one.
+				const reclaimed = await reclaimSandbox(
+					() => registry.client.terminate(handle),
+					handle.id,
+					session.id
+				);
+				await updateSandboxStatus(database, {
+					sandboxId: handle.id,
+					status: SANDBOX_SESSION_STATUS.Error,
+					now: completedAt,
+					errorMessage: 'Temporal server did not become ready',
+					reclaimed
+				});
 			}
 			logInfo({
 				event: 'sandbox.bootstrap.completed',
@@ -218,13 +229,20 @@ export const POST: RequestHandler = async (event) => {
 			}
 			// Bootstrap itself failed. Reclaim the VM FIRST — it's the billed
 			// resource — before the fallible DB write, so a database outage right
-			// after provisioning can't leak it.
-			await reclaimSandbox(() => registry.client.terminate(handle), handle.id, session.id);
+			// after provisioning can't leak it. reclaimed reflects whether that
+			// kill actually succeeded, so a failed one is left for the reconciler
+			// to retry instead of being marked as done.
+			const reclaimed = await reclaimSandbox(
+				() => registry.client.terminate(handle),
+				handle.id,
+				session.id
+			);
 			await updateSandboxStatus(database, {
 				sandboxId: handle.id,
 				status: SANDBOX_SESSION_STATUS.Error,
 				now: new Date(),
-				errorMessage: err instanceof Error ? err.message : String(err)
+				errorMessage: err instanceof Error ? err.message : String(err),
+				reclaimed
 			});
 			logError({
 				event: 'sandbox.bootstrap.failed',
@@ -244,14 +262,20 @@ export const POST: RequestHandler = async (event) => {
  * Terminate a sandbox VM and drop it from the in-process registry, logging (but
  * not throwing) if termination fails. Used to reclaim a sandbox that failed to
  * bootstrap so its E2B VM doesn't leak past the session's active-slot lifetime.
+ *
+ * @returns whether the VM was actually confirmed terminated — callers must
+ *   pass this as `reclaimed` to `updateSandboxStatus`, never assume success:
+ *   a row stamped reclaimed for a VM that's still running can never be
+ *   retried by the reconciler.
  */
 async function reclaimSandbox(
 	terminate: () => Promise<void>,
 	sandboxId: string,
 	sessionId: string
-): Promise<void> {
+): Promise<boolean> {
 	try {
 		await terminate();
+		return true;
 	} catch (terminationError) {
 		logError({
 			event: 'sandbox.bootstrap_cleanup.failed',
@@ -260,6 +284,7 @@ async function reclaimSandbox(
 			status: 'error',
 			error: terminationError
 		});
+		return false;
 	} finally {
 		// Deregister even if terminate() threw: a sandbox we failed to tear down is
 		// not one we should keep handing out from the registry, and the E2B VM will
