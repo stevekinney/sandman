@@ -16,11 +16,11 @@ import type { RequestHandler } from './$types';
 import { assertSameOrigin } from '$lib/server/security/origin';
 import { touchSessionHeartbeat } from '$lib/server/security/guards';
 
-type HeartbeatRequestBody = { sandboxId?: unknown };
-
-function readOptionalSandboxId(value: unknown): string | undefined {
-	if (typeof value !== 'object' || value === null) return undefined;
-	const sandboxId = (value as HeartbeatRequestBody).sandboxId;
+function readOptionalSandboxId(body: unknown): string | undefined {
+	if (typeof body !== 'object' || body === null || !('sandboxId' in body)) {
+		return undefined;
+	}
+	const { sandboxId } = body;
 	return typeof sandboxId === 'string' && sandboxId.length > 0 ? sandboxId : undefined;
 }
 

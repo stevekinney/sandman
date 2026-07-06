@@ -64,13 +64,14 @@ export function getSandboxRegistry(): Registry {
 		const client = createSandboxClient({
 			apiKey: configuration.e2bApiKey,
 			templateId: configuration.e2bTemplateId,
-			// Pin the E2B VM's provider-side timeout AND the in-sandbox worker's
-			// command timeout to the configured session TTL, instead of letting
-			// client.ts fall back to its own DEFAULT_SANDBOX_TIMEOUT_MS. Without
-			// this, a session TTL longer than that default (e.g. the 15-minute TTL
-			// vs. the 10-minute client default) would let E2B kill a
-			// provisioned-but-untouched sandbox's VM before its DB row, the
-			// in-memory reaper, and the UI countdown agree it has expired.
+			// Pin the E2B VM's provider-side timeout to the configured session TTL,
+			// instead of letting client.ts fall back to its own
+			// DEFAULT_SANDBOX_TIMEOUT_MS. Without this, a session TTL longer than
+			// that default (e.g. the 15-minute TTL vs. the 10-minute client default)
+			// would let E2B kill a provisioned-but-untouched sandbox's VM before its
+			// DB row, the in-memory reaper, and the UI countdown agree it has
+			// expired. (The worker's own command timeout is deliberately NOT tied to
+			// this — see WORKER_COMMAND_TIMEOUT_MS in client.ts.)
 			sandboxTimeoutMs: configuration.sessionTtlMs
 		});
 		const handles = new Map<string, SandboxHandle>();

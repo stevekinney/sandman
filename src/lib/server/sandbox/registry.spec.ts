@@ -13,7 +13,7 @@ vi.mock('$lib/server/configuration', () => ({
 	getProductionConfiguration: vi.fn(() => ({
 		e2bApiKey: 'test-key',
 		e2bTemplateId: undefined,
-		sessionTtlMs: 300_000
+		sessionTtlMs: 900_000
 	}))
 }));
 
@@ -112,7 +112,7 @@ describe('getSandboxRegistry() — reconciler deps wiring', () => {
 		// provisioned sandbox would be killed at the client's built-in default
 		// (10 min) before a longer configured TTL elapses.
 		expect(createSandboxClient).toHaveBeenCalledWith(
-			expect.objectContaining({ sandboxTimeoutMs: 300_000 })
+			expect.objectContaining({ sandboxTimeoutMs: 900_000 })
 		);
 	});
 

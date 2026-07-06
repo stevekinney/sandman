@@ -479,6 +479,7 @@
 					bind:historyLens
 					onShowExperimentCode={showExperimentCode}
 					onNavigateToLookAt={navigateToLookAt}
+					onActivity={recordActivity}
 				/>
 			</div>
 			<SandboxReadinessGate
