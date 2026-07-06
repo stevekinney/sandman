@@ -94,41 +94,42 @@
 		</div>
 	</div>
 
-	{#if lens === 'events'}
-		<div
-			id="history-lens-events-panel"
-			role="tabpanel"
-			tabindex="0"
-			aria-labelledby={historyTabId('events')}
-		>
-			<p class="history__hint">
-				Everything the worker and workflow do as it happens — retries, signals, timers, recoveries.
-			</p>
-			<div class="history__stream">
-				<EventRail events={session.workflowEvents} connectionState={eventStreamState} />
-			</div>
+	<div
+		id="history-lens-events-panel"
+		role="tabpanel"
+		tabindex="0"
+		aria-labelledby={historyTabId('events')}
+		class="history__panel"
+		hidden={lens !== 'events'}
+	>
+		<p class="history__hint">
+			Everything the worker and workflow do as it happens — retries, signals, timers, recoveries.
+		</p>
+		<div class="history__stream">
+			<EventRail events={session.workflowEvents} connectionState={eventStreamState} />
 		</div>
-	{:else}
-		<div
-			id="history-lens-steps-panel"
-			role="tabpanel"
-			tabindex="0"
-			aria-labelledby={historyTabId('steps')}
-			class="history__steps"
-		>
-			<p class="history__hint history__hint--flush">
-				A plain-language view of the run — the same durable history, as friendly steps.
-			</p>
-			{#if session.timelineEntries.length > 0}
-				<OrderTimeline entries={session.timelineEntries} />
-			{:else}
-				<EmptyState
-					title="No run yet"
-					description="Place an order to watch its durable history here."
-				/>
-			{/if}
-		</div>
-	{/if}
+	</div>
+
+	<div
+		id="history-lens-steps-panel"
+		role="tabpanel"
+		tabindex="0"
+		aria-labelledby={historyTabId('steps')}
+		class="history__panel history__steps"
+		hidden={lens !== 'steps'}
+	>
+		<p class="history__hint history__hint--flush">
+			A plain-language view of the run — the same durable history, as friendly steps.
+		</p>
+		{#if session.timelineEntries.length > 0}
+			<OrderTimeline entries={session.timelineEntries} />
+		{:else}
+			<EmptyState
+				title="No run yet"
+				description="Place an order to watch its durable history here."
+			/>
+		{/if}
+	</div>
 </aside>
 
 <style>
@@ -167,6 +168,17 @@
 		padding: 0 0 0.75rem;
 	}
 
+	.history__panel {
+		display: flex;
+		flex: 1;
+		min-height: 0;
+		flex-direction: column;
+	}
+
+	.history__panel[hidden] {
+		display: none;
+	}
+
 	.history__stream {
 		flex: 1;
 		min-height: 0;
@@ -175,8 +187,6 @@
 	}
 
 	.history__steps {
-		flex: 1;
-		min-height: 0;
 		overflow-y: auto;
 		padding: 0.875rem;
 	}
