@@ -39,7 +39,9 @@ describe('POST /api/session', () => {
 	});
 
 	it('rejects invalid invite codes', async () => {
-		await expect(POST(makeEvent({ token: 'wrong-token', email: 'test@example.com' }))).rejects.toMatchObject({
+		await expect(
+			POST(makeEvent({ token: 'wrong-token', email: 'test@example.com' }))
+		).rejects.toMatchObject({
 			status: 401
 		});
 		expect(createDemoSession).not.toHaveBeenCalled();
@@ -74,7 +76,9 @@ describe('POST /api/session', () => {
 	it('rejects invalid database configuration before creating a session', async () => {
 		vi.stubEnv('DATABASE_URL', 'postgres://example');
 
-		await expect(POST(makeEvent({ token: 'demo-token', email: 'test@example.com' }))).rejects.toMatchObject({
+		await expect(
+			POST(makeEvent({ token: 'demo-token', email: 'test@example.com' }))
+		).rejects.toMatchObject({
 			status: 503,
 			body: {
 				message: 'DATABASE_URL is not a valid Postgres connection string'
@@ -105,7 +109,9 @@ describe('POST /api/session', () => {
 	it('returns a friendly 503 (not a bare Internal Error) when the database write fails', async () => {
 		vi.mocked(createDemoSession).mockRejectedValueOnce(new Error('connection refused'));
 
-		await expect(POST(makeEvent({ token: 'demo-token', email: 'test@example.com' }))).rejects.toMatchObject({
+		await expect(
+			POST(makeEvent({ token: 'demo-token', email: 'test@example.com' }))
+		).rejects.toMatchObject({
 			status: 503,
 			body: { message: 'Could not start a session. Please try again in a moment.' }
 		});
