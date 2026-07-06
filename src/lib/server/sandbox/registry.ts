@@ -69,7 +69,17 @@ export function getSandboxRegistry(): Registry {
 		const reaper = createReaper(configuration.sessionTtlMs);
 		const reconciler = createReconciler(
 			{
-				getExpiredSandboxIds: (input) => getExpiredRegisteredSandboxIds(getDatabase(), input),
+				getExpiredSandboxIds: async (input) => {
+					const ids = await getExpiredRegisteredSandboxIds(getDatabase(), input);
+					// Exclude sandboxes this process still holds a handle for — e.g.
+					// one whose bootstrap is outlasting the reservation window.
+					// `expiresAt` is set at reservation time and isn't slid until
+					// Ready, so it can lapse mid-bootstrap while the reaper (whose
+					// TTL starts at registerHandle) still correctly treats the VM as
+					// live. Those belong to the reaper, not the reconciler — killing
+					// them here would abort a legitimate in-flight bootstrap.
+					return ids.filter((id) => !handles.has(id));
+				},
 				terminateSandbox: async (sandboxId) => {
 					await client.terminateById(sandboxId);
 					handles.delete(sandboxId);

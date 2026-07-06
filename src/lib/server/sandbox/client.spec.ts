@@ -442,24 +442,15 @@ describe('bootstrap()', () => {
 	});
 
 	it('returns ready:false when the Temporal Web UI never responds', async () => {
-		const { adapter: baseAdapter } = createMockAdapter('sbx-no-ui');
-		const adapter: E2bAdapter = {
-			...baseAdapter,
-			async create(opts) {
-				const session = await baseAdapter.create(opts);
-				return {
-					...session,
-					commands: {
-						...session.commands,
-						async run(cmd, opts) {
-							if (cmd.includes('http://127.0.0.1:8233/')) {
-								return { exitCode: 7, stdout: '', stderr: 'connection refused' };
-							}
-							return session.commands.run(cmd, opts);
-						}
-					}
-				};
+		const { adapter, session } = createMockAdapter('sbx-no-ui');
+		// Override the session's run() in place — createMockAdapter always hands
+		// back this same session instance, so no adapter-level override is needed.
+		const originalRun = session.commands.run.bind(session.commands);
+		session.commands.run = async (cmd, opts) => {
+			if (cmd.includes('http://127.0.0.1:8233/')) {
+				return { exitCode: 7, stdout: '', stderr: 'connection refused' };
 			}
+			return originalRun(cmd, opts);
 		};
 		const client = createSandboxClient({
 			adapter,
@@ -991,25 +982,17 @@ describe('startServer()', () => {
 	it('throws with the worker stderr when the worker fails to restart during recovery', async () => {
 		// The server comes back, but the worker restart fails (e.g. a compile
 		// error in saved code). startServer must not report the worker recovered.
-		const { adapter: baseAdapter } = createMockAdapter('sbx-worker-fail');
+		const { adapter, session } = createMockAdapter('sbx-worker-fail');
 		let failWorkerStart = false;
-		const adapter: E2bAdapter = {
-			...baseAdapter,
-			async create(opts) {
-				const session = await baseAdapter.create(opts);
-				return {
-					...session,
-					commands: {
-						...session.commands,
-						async start(cmd, startOpts) {
-							if (failWorkerStart && cmd.includes('worker') && !cmd.includes('temporal server')) {
-								throw new Error('worker.ts(3,1): compile error');
-							}
-							return session.commands.start(cmd, startOpts);
-						}
-					}
-				};
+		// Override the session's start() in place — createMockAdapter always
+		// hands back this same session instance, so no adapter-level override is
+		// needed at all.
+		const originalStart = session.commands.start.bind(session.commands);
+		session.commands.start = async (cmd, startOpts) => {
+			if (failWorkerStart && cmd.includes('worker') && !cmd.includes('temporal server')) {
+				throw new Error('worker.ts(3,1): compile error');
 			}
+			return originalStart(cmd, startOpts);
 		};
 		const client = createSandboxClient({
 			adapter,
