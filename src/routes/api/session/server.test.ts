@@ -39,21 +39,42 @@ describe('POST /api/session', () => {
 	});
 
 	it('rejects invalid invite codes', async () => {
-		await expect(POST(makeEvent({ token: 'wrong-token' }))).rejects.toMatchObject({ status: 401 });
+		await expect(POST(makeEvent({ token: 'wrong-token', email: 'test@example.com' }))).rejects.toMatchObject({
+			status: 401
+		});
+		expect(createDemoSession).not.toHaveBeenCalled();
 	});
 
 	it('rejects mismatched origins', async () => {
 		await expect(
-			POST(makeEvent({ token: 'demo-token' }, 'https://evil.example'))
+			POST(makeEvent({ token: 'demo-token', email: 'test@example.com' }, 'https://evil.example'))
 		).rejects.toMatchObject({
 			status: 403
 		});
 	});
 
+	it('rejects requests without an email', async () => {
+		await expect(POST(makeEvent({ token: 'demo-token' }))).rejects.toMatchObject({
+			status: 400,
+			body: { message: 'Request body must include "email"' }
+		});
+		expect(createDemoSession).not.toHaveBeenCalled();
+	});
+
+	it('rejects non-string or blank emails', async () => {
+		for (const email of [123, '   ']) {
+			await expect(POST(makeEvent({ token: 'demo-token', email }))).rejects.toMatchObject({
+				status: 400,
+				body: { message: 'Request body must include "email"' }
+			});
+		}
+		expect(createDemoSession).not.toHaveBeenCalled();
+	});
+
 	it('rejects invalid database configuration before creating a session', async () => {
 		vi.stubEnv('DATABASE_URL', 'postgres://example');
 
-		await expect(POST(makeEvent({ token: 'demo-token' }))).rejects.toMatchObject({
+		await expect(POST(makeEvent({ token: 'demo-token', email: 'test@example.com' }))).rejects.toMatchObject({
 			status: 503,
 			body: {
 				message: 'DATABASE_URL is not a valid Postgres connection string'
@@ -63,11 +84,17 @@ describe('POST /api/session', () => {
 	});
 
 	it('creates a session and sets a signed HttpOnly cookie for a valid token', async () => {
-		const event = makeEvent({ token: 'demo-token' });
+		const event = makeEvent({ token: 'demo-token', email: '  not an email but useful  ' });
 		const response = await POST(event);
 
 		expect(response.status).toBe(201);
-		expect(createDemoSession).toHaveBeenCalledOnce();
+		expect(createDemoSession).toHaveBeenCalledWith(
+			{},
+			expect.objectContaining({
+				email: 'not an email but useful',
+				tokenHash: hashDemoToken('demo-token')
+			})
+		);
 		expect(event.cookies.set).toHaveBeenCalledWith(
 			SESSION_COOKIE_NAME,
 			expect.any(String),
@@ -78,7 +105,7 @@ describe('POST /api/session', () => {
 	it('returns a friendly 503 (not a bare Internal Error) when the database write fails', async () => {
 		vi.mocked(createDemoSession).mockRejectedValueOnce(new Error('connection refused'));
 
-		await expect(POST(makeEvent({ token: 'demo-token' }))).rejects.toMatchObject({
+		await expect(POST(makeEvent({ token: 'demo-token', email: 'test@example.com' }))).rejects.toMatchObject({
 			status: 503,
 			body: { message: 'Could not start a session. Please try again in a moment.' }
 		});

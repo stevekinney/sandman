@@ -9,6 +9,7 @@
 	 * Server-side configuration failures are shown as generic availability
 	 * errors so the browser never exposes deployment internals.
 	 */
+	import { onMount } from 'svelte';
 	import Alert from '@lostgradient/cinder/alert';
 	import Badge from '@lostgradient/cinder/badge';
 	import Button from '@lostgradient/cinder/button';
@@ -20,7 +21,9 @@
 	import { SITE_DESCRIPTION, SITE_TITLE } from '$lib/metadata';
 	import { concepts, faqs, phases, surfaces, tour, type IconPart } from './splash-content';
 
+	let email = $state('');
 	let demoToken = $state('');
+	let cinderInputsMounted = $state(false);
 	let provisioning = $state(false);
 	let provisionError = $state<string | null>(null);
 
@@ -29,7 +32,13 @@
 	// effect resolves it from the stored preference or the OS setting.
 	let theme = $state<'light' | 'dark' | undefined>(undefined);
 	const isDark = $derived(theme === 'dark');
-	const startDisabled = $derived(provisioning || demoToken.trim().length === 0);
+	const startDisabled = $derived(
+		provisioning || email.trim().length === 0 || demoToken.trim().length === 0
+	);
+
+	onMount(() => {
+		cinderInputsMounted = true;
+	});
 
 	$effect(() => {
 		// Runs once after mount — reads only non-reactive sources, so it never re-runs.
@@ -71,7 +80,7 @@
 		}
 	}
 
-	function scrollToStart(event?: Event): void {
+	function scrollToStart(event: Event | undefined = undefined): void {
 		event?.preventDefault();
 		// Honor reduced-motion here — the CSS scroll-behavior fallback does not
 		// apply to programmatic scrollIntoView({ behavior: 'smooth' }).
@@ -81,14 +90,14 @@
 			behavior: prefersReducedMotion ? 'auto' : 'smooth',
 			block: 'start'
 		});
-		// Move keyboard focus into the form so the next Tab lands in the token
+		// Move keyboard focus into the form so the next Tab lands inside the first
 		// field rather than the off-screen CTA. preventScroll keeps the smooth
 		// scroll above from being overridden by the focus jump.
 		const tokenField = document.querySelector('#get-started input');
 		if (tokenField instanceof HTMLElement) tokenField.focus({ preventScroll: true });
 	}
 
-	async function startSession(event?: SubmitEvent): Promise<void> {
+	async function startSession(event: SubmitEvent | undefined = undefined): Promise<void> {
 		event?.preventDefault();
 		provisioning = true;
 		provisionError = null;
@@ -97,7 +106,7 @@
 			const sessionResponse = await fetch('/api/session', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ token: demoToken })
+				body: JSON.stringify({ email, token: demoToken })
 			});
 			if (!sessionResponse.ok) {
 				provisionError = await getUserFacingErrorMessage(
@@ -523,9 +532,9 @@
 				<div class="sd-start__grid">
 					<div>
 						<div class="sd-kicker">Get started</div>
-						<h2 class="sd-h2 sd-h2--tight">Enter your invite code to boot a sandbox.</h2>
+						<h2 class="sd-h2 sd-h2--tight">Enter your email and invite code to boot a sandbox.</h2>
 						<ol class="sd-steps-list">
-							<li><span>1.</span> Paste the shared invite code.</li>
+							<li><span>1.</span> Share your email and paste the invite code.</li>
 							<li><span>2.</span> A Firecracker MicroVM boots with Temporal and a worker.</li>
 							<li>
 								<span>3.</span> Start ordering, then break things — the session self-destructs after ~15
@@ -534,19 +543,53 @@
 						</ol>
 					</div>
 					<div class="sd-start__card">
-						<form class="sd-start__form" onsubmit={startSession}>
+						<form class="sd-start__form" onsubmit={startSession} novalidate>
 							{#if provisionError}
 								<Alert variant="danger">{provisionError}</Alert>
 							{/if}
-							<Input
-								id="invite-code"
-								label="Invite code"
-								type="password"
-								autocomplete="off"
-								bind:value={demoToken}
-								disabled={provisioning}
-								placeholder="Enter invite code"
-							/>
+							{#if cinderInputsMounted}
+								<Input
+									id="email"
+									label="Email"
+									type="email"
+									autocomplete="email"
+									bind:value={email}
+									disabled={provisioning}
+									placeholder="you@example.com"
+								/>
+								<Input
+									id="invite-code"
+									label="Invite code"
+									type="password"
+									autocomplete="off"
+									bind:value={demoToken}
+									disabled={provisioning}
+									placeholder="Enter invite code"
+								/>
+							{:else}
+								<label class="sd-native-field" for="email">
+									<span>Email</span>
+									<input
+										id="email"
+										type="email"
+										autocomplete="email"
+										bind:value={email}
+										disabled={provisioning}
+										placeholder="you@example.com"
+									/>
+								</label>
+								<label class="sd-native-field" for="invite-code">
+									<span>Invite code</span>
+									<input
+										id="invite-code"
+										type="password"
+										autocomplete="off"
+										bind:value={demoToken}
+										disabled={provisioning}
+										placeholder="Enter invite code"
+									/>
+								</label>
+							{/if}
 							<Button
 								type="submit"
 								variant="primary"
@@ -558,7 +601,7 @@
 								label={provisioning ? 'Provisioning sandbox…' : 'New Session'}
 							/>
 							<p class="sd-start__hint">
-								No account needed. Don't have a token? Ask whoever shared Sandman with you.
+								No account is created. Don't have a token? Ask whoever shared Sandman with you.
 							</p>
 						</form>
 					</div>
@@ -1291,6 +1334,27 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--cinder-space-4);
+	}
+	.sd-native-field {
+		display: flex;
+		flex-direction: column;
+		gap: var(--cinder-space-1-5);
+		font-size: 0.875rem;
+		font-weight: 500;
+		color: var(--cinder-text);
+	}
+	.sd-native-field input {
+		width: 100%;
+		box-sizing: border-box;
+		border: 1px solid var(--cinder-border);
+		border-radius: var(--cinder-radius-md);
+		background: var(--cinder-surface);
+		color: var(--cinder-text);
+		padding: var(--cinder-space-2-5) var(--cinder-space-3);
+		font: inherit;
+	}
+	.sd-native-field input:disabled {
+		opacity: 0.65;
 	}
 	.sd-start__hint {
 		margin: 0;

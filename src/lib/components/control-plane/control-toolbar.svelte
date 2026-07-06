@@ -13,8 +13,6 @@
 	 */
 	import Button from '@lostgradient/cinder/button';
 	import Toolbar from '@lostgradient/cinder/toolbar';
-	import SegmentedControl from '@lostgradient/cinder/segmented-control';
-	import Segment from '@lostgradient/cinder/segment';
 	import '@lostgradient/cinder/button/styles';
 	import '@lostgradient/cinder/toolbar/styles';
 	import '@lostgradient/cinder/segmented-control/styles';
@@ -67,6 +65,10 @@
 		if (!session.workerOnline) return 'Restart the worker (topology strip) to use this.';
 		return 'Not available at this point in the order yet.';
 	}
+
+	function setView(nextView: CenterView): void {
+		view = nextView;
+	}
 </script>
 
 <div class="toolbar-shell">
@@ -116,18 +118,37 @@
 	</Toolbar>
 
 	<div class="toolbar-shell__view">
-		<SegmentedControl
+		<div
 			id="center-view"
-			label="Workbench view"
-			hideLabel
-			density="toolbar"
-			variant="tablist"
-			value={view}
-			onchange={(next) => (view = next as CenterView)}
+			class="cinder-segmented-control"
+			role="tablist"
+			aria-label="Workbench view"
+			data-cinder-density="toolbar"
+			data-cinder-variant="tablist"
 		>
-			<Segment value="code" controls="center-panel-code">Code</Segment>
-			<Segment value="temporal" controls="center-panel-temporal">Temporal UI</Segment>
-		</SegmentedControl>
+			<button
+				type="button"
+				class="cinder-segmented-control-option"
+				role="tab"
+				aria-selected={view === 'code'}
+				aria-controls="center-panel-code"
+				data-cinder-selected={view === 'code' ? '' : undefined}
+				onclick={() => setView('code')}
+			>
+				Code
+			</button>
+			<button
+				type="button"
+				class="cinder-segmented-control-option"
+				role="tab"
+				aria-selected={view === 'temporal'}
+				aria-controls="center-panel-temporal"
+				data-cinder-selected={view === 'temporal' ? '' : undefined}
+				onclick={() => setView('temporal')}
+			>
+				Temporal UI
+			</button>
+		</div>
 	</div>
 </div>
 

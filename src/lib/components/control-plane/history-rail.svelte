@@ -8,8 +8,6 @@
 	 * Temporal Web UI in the center view.
 	 */
 	import EmptyState from '@lostgradient/cinder/empty-state';
-	import Segment from '@lostgradient/cinder/segment';
-	import SegmentedControl from '@lostgradient/cinder/segmented-control';
 	import '@lostgradient/cinder/empty-state/styles';
 	import '@lostgradient/cinder/segmented-control/styles';
 	import type { EventStreamState } from '@lostgradient/cinder/event-stream-viewer';
@@ -29,23 +27,44 @@
 	const eventStreamState = $derived<EventStreamState>(
 		!session.workerOnline ? 'disconnected' : session.workerRestarting ? 'connecting' : 'connected'
 	);
+
+	function setLens(nextLens: 'events' | 'steps'): void {
+		lens = nextLens;
+	}
 </script>
 
 <aside class="history" aria-label="Workflow history">
 	<div class="history__header">
 		<h2 class="history__title">Workflow history</h2>
-		<SegmentedControl
+		<div
 			id="history-lens"
-			label="History lens"
-			hideLabel
-			size="sm"
-			fullWidth
-			value={lens}
-			onchange={(next) => (lens = next as 'events' | 'steps')}
+			class="cinder-segmented-control"
+			role="radiogroup"
+			aria-label="History lens"
+			data-cinder-size="sm"
+			data-cinder-full-width=""
 		>
-			<Segment value="events">Events</Segment>
-			<Segment value="steps">Steps</Segment>
-		</SegmentedControl>
+			<button
+				type="button"
+				class="cinder-segmented-control-option"
+				role="radio"
+				aria-checked={lens === 'events'}
+				data-cinder-selected={lens === 'events' ? '' : undefined}
+				onclick={() => setLens('events')}
+			>
+				Events
+			</button>
+			<button
+				type="button"
+				class="cinder-segmented-control-option"
+				role="radio"
+				aria-checked={lens === 'steps'}
+				data-cinder-selected={lens === 'steps' ? '' : undefined}
+				onclick={() => setLens('steps')}
+			>
+				Steps
+			</button>
+		</div>
 	</div>
 
 	{#if lens === 'events'}

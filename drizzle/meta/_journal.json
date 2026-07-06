@@ -22,6 +22,13 @@
       "when": 1783295503991,
       "tag": "0002_add_sandbox_reclaimed_at",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783374248416,
+      "tag": "0003_eager_hydra",
+      "breakpoints": true
     }
   ]
 }

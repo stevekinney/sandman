@@ -1,0 +1,1 @@
+ALTER TABLE "demo_session" ADD COLUMN "email" text;

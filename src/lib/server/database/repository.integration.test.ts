@@ -30,7 +30,12 @@ describe.skipIf(!integrationDatabaseUrl)('repository (live Postgres integration)
 
 	beforeAll(async () => {
 		database = createDatabase(integrationDatabaseUrl as string);
-		await createDemoSession(database, { sessionId, tokenHash: `hash-${suffix}`, now });
+		await createDemoSession(database, {
+			sessionId,
+			tokenHash: `hash-${suffix}`,
+			email: `integration-${suffix}@example.com`,
+			now
+		});
 	});
 
 	afterAll(async () => {

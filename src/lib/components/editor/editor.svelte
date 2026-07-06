@@ -8,9 +8,6 @@
 	 *
 	 * Monaco is loaded lazily in the browser only.
 	 */
-	import Tab from '@lostgradient/cinder/tab';
-	import TabList from '@lostgradient/cinder/tab-list';
-	import Tabs from '@lostgradient/cinder/tabs';
 	import '@lostgradient/cinder/tab/styles';
 	import '@lostgradient/cinder/tab-list/styles';
 	import '@lostgradient/cinder/tabs/styles';
@@ -232,6 +229,10 @@
 	// File switching — reacts to activeFile tab selection
 	// ---------------------------------------------------------------------------
 
+	function selectFile(fileName: string): void {
+		activeFileName = fileName;
+	}
+
 	$effect(() => {
 		const file = activeFile; // tracked dependency
 		if (!_editor || !_monaco) return;
@@ -329,23 +330,26 @@
 
 <div class="sandman-editor">
 	{#if isMounted}
-		<Tabs bind:value={activeFileName} class="editor-tabs">
-			<TabList label="Editor files" class="editor-tab-list">
+		<div class="cinder-tabs editor-tabs">
+			<div role="tablist" aria-label="Editor files" class="cinder-tab-list editor-tab-list">
 				{#each FILE_DESCRIPTORS as descriptor (descriptor.name)}
-					<Tab
-						value={descriptor.name}
-						class={`editor-tab${activeFile.name === descriptor.name ? ' active' : ''}${
+					<button
+						type="button"
+						role="tab"
+						aria-selected={activeFile.name === descriptor.name}
+						class={`cinder-tab editor-tab${activeFile.name === descriptor.name ? ' active' : ''}${
 							descriptor.readOnly ? ' readonly' : ''
 						}`}
+						onclick={() => selectFile(descriptor.name)}
 					>
 						{descriptor.name}
 						{#if descriptor.readOnly}
 							<span class="readonly-badge" aria-hidden="true">read-only</span>
 						{/if}
-					</Tab>
+					</button>
 				{/each}
-			</TabList>
-		</Tabs>
+			</div>
+		</div>
 	{:else}
 		<div class="editor-tabs-placeholder" aria-hidden="true"></div>
 	{/if}
