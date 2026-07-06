@@ -83,6 +83,17 @@
 		return `sandman:active-workflow:${sandboxId}`;
 	}
 
+	/**
+	 * Where the workflow id the learner last explicitly Reset lives. Reset is
+	 * client-only — the workflow keeps running server-side — so without this,
+	 * a reload right after Reset would have no `preferredWorkflowId` and the
+	 * restore fallback (prefer a live run, else whatever's there) would
+	 * silently reattach to the exact run the learner just walked away from.
+	 */
+	function dismissedWorkflowIdKey(sandboxId: string): string {
+		return `sandman:dismissed-workflow:${sandboxId}`;
+	}
+
 	/** The workflow id this sandbox was last attached to, if any. */
 	function readPreferredWorkflowId(sandboxId: string): string | undefined {
 		try {
@@ -92,13 +103,25 @@
 		}
 	}
 
+	/** The workflow id the learner most recently Reset away from, if any. */
+	function readDismissedWorkflowId(sandboxId: string): string | undefined {
+		try {
+			return localStorage.getItem(dismissedWorkflowIdKey(sandboxId)) ?? undefined;
+		} catch {
+			return undefined;
+		}
+	}
+
 	// Client-only: attach real persistence after the first (SSR-matching)
-	// render, then fast-forward to whatever progress was already saved.
+	// render, then adopt whatever progress was already saved. Uses hydrate(),
+	// not advanceTo() — advanceTo marks every step it fast-forwards through as
+	// complete, which would wrongly re-mark a step reached via skip() (the
+	// terminal-state deadlock escape hatch) as done instead of skipped.
 	$effect(() => {
 		if (!browser) return;
 		const storage = localStorageAdapter(`sandman:tour:${data.sandboxId}`);
 		const saved = storage.load();
-		if (saved) tourState.advanceTo(saved.currentStepIndex);
+		if (saved) tourState.hydrate(saved);
 		tourState.replaceStorage(storage);
 	});
 
@@ -115,9 +138,21 @@
 		activeSession.onRunChanged = (run) => {
 			if (!browser) return;
 			const key = activeWorkflowIdKey(sandboxId);
+			const dismissedKey = dismissedWorkflowIdKey(sandboxId);
 			try {
-				if (run) localStorage.setItem(key, run.workflowId);
-				else localStorage.removeItem(key);
+				if (run) {
+					localStorage.setItem(key, run.workflowId);
+					// Any run becoming active — a new order, or restoration itself —
+					// makes a prior dismissal moot for this session going forward.
+					localStorage.removeItem(dismissedKey);
+				} else {
+					// run went null via reset() (the only path — see onRunChanged's
+					// doc): remember what's being walked away from, so a reload
+					// doesn't silently reattach to the exact run just Reset.
+					const dismissed = localStorage.getItem(key);
+					if (dismissed) localStorage.setItem(dismissedKey, dismissed);
+					localStorage.removeItem(key);
+				}
 			} catch {
 				// Quota exceeded or private-browsing restriction — fail silently,
 				// matching localStorageAdapter's own tolerance for this.
@@ -234,7 +269,8 @@
 						void restoreSessionFromSandbox(
 							controller,
 							activeSession,
-							readPreferredWorkflowId(sandboxId)
+							readPreferredWorkflowId(sandboxId),
+							readDismissedWorkflowId(sandboxId)
 						);
 					}
 				}

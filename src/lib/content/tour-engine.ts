@@ -218,6 +218,21 @@ export class TourEngine {
 	}
 
 	/**
+	 * Adopt a previously-saved progress snapshot verbatim — index and completed
+	 * ids exactly as given, clamped to the tour's length. Unlike `advanceTo`,
+	 * this does NOT mark every step between the current and target index as
+	 * complete: a step reached via `skip()` is deliberately absent from
+	 * `completedStepIds`, and `advanceTo`'s floor semantics would wrongly
+	 * re-mark it complete on reload. Does not persist — the caller (typically
+	 * a post-mount hydration effect) read this snapshot from storage, so
+	 * writing it back is redundant.
+	 */
+	hydrate(progress: TourProgress): void {
+		this._currentStepIndex = Math.min(Math.max(progress.currentStepIndex, 0), this._steps.length);
+		this._completedStepIds = [...progress.completedStepIds];
+	}
+
+	/**
 	 * Reset tour progress to the beginning and clear the storage adapter.
 	 */
 	reset(): void {

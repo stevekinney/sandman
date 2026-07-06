@@ -751,6 +751,31 @@ describe('SessionState', () => {
 			expect(TOUR[tour.currentStepIndex]?.id).toBe('update-with-validator');
 		});
 
+		it('seeds session.phase from Visibility when the worker is offline, not just the tour floor', async () => {
+			// The tour-floor fix above isn't enough on its own: canDo() and every
+			// other phase-gated control read session.phase directly, which stays
+			// at Created (no timeline entries) unless something seeds it too.
+			// Accepting an AwaitingRestaurant order is a signal — server-served,
+			// doesn't need the worker — so it should be usable immediately.
+			const tour = new TourState(volatileStorage());
+			const controller = new MockTemporalController();
+			controller.visibilityResult = [
+				runningOrderSummary('order-10', {
+					businessSnapshot: { OrderStatus: ORDER_STATUS.AwaitingRestaurant }
+				})
+			];
+			controller.query = async () => {
+				throw new Error('no worker available');
+			};
+			const session = new SessionState(controller, tour);
+			session.sandboxUsable = true;
+
+			await restoreSessionFromSandbox(controller, session);
+
+			expect(session.phase).toBe(ORDER_STATUS.AwaitingRestaurant);
+			expect(session.canDo('accept-restaurant')).toBe(true);
+		});
+
 		it('prefers the summary matching a persisted workflow id over an arbitrary first match', async () => {
 			const { controller, session } = makeSession();
 			controller.visibilityResult = [
@@ -773,6 +798,35 @@ describe('SessionState', () => {
 			await restoreSessionFromSandbox(controller, session, 'order-does-not-exist');
 
 			expect(session.run?.workflowId).toBe('order-old');
+		});
+
+		it('excludes a dismissed workflow id, even when it is the only order running', async () => {
+			// The learner Reset away from order-stale (still running server-side,
+			// since Reset is client-only) and reloaded without placing a new
+			// order. It must not be silently re-adopted.
+			const { controller, session } = makeSession();
+			controller.visibilityResult = [runningOrderSummary('order-stale')];
+
+			await restoreSessionFromSandbox(
+				controller,
+				session,
+				undefined,
+				'order-stale' /* dismissedWorkflowId */
+			);
+
+			expect(session.run).toBeNull();
+		});
+
+		it('excludes a dismissed workflow id even while adopting a different one', async () => {
+			const { controller, session } = makeSession();
+			controller.visibilityResult = [
+				runningOrderSummary('order-dismissed'),
+				runningOrderSummary('order-current')
+			];
+
+			await restoreSessionFromSandbox(controller, session, undefined, 'order-dismissed');
+
+			expect(session.run?.workflowId).toBe('order-current');
 		});
 
 		it('prefers a still-running order over a finished one when both are present', async () => {

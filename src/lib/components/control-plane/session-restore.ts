@@ -159,6 +159,12 @@ const NOT_FOUND_CONFIRMATION_ROUNDS = 3;
  * is client-only and does not cancel the run — then placed another order):
  * the summary matching it wins over an arbitrary first match.
  *
+ * `dismissedWorkflowId`, when supplied, excludes that specific workflow from
+ * consideration entirely — set to whatever the learner most recently Reset
+ * away from, so a reload right after Reset doesn't silently reattach to the
+ * exact still-running order the learner just walked away from (Reset is
+ * client-only and does not cancel it server-side).
+ *
  * When no order workflow is running, stale in-progress tour state is reset so
  * the journey starts cleanly — a finished tour keeps its completed state.
  * Because Visibility is eventually consistent, "not found" is only treated as
@@ -187,7 +193,8 @@ const NOT_FOUND_CONFIRMATION_ROUNDS = 3;
 export async function restoreSessionFromSandbox(
 	controller: TemporalController,
 	session: RestorableSession,
-	preferredWorkflowId?: string
+	preferredWorkflowId?: string,
+	dismissedWorkflowId?: string
 ): Promise<void> {
 	if (restoreAttempted.has(session)) return;
 	if (session.run !== null) {
@@ -212,10 +219,13 @@ export async function restoreSessionFromSandbox(
 		return;
 	}
 
-	// Any order workflow (running or finished) is worth reconciling against;
-	// prefer an exact match, then a live run, then whatever's left — a stale
-	// finished order is still better to replay than to silently discard.
-	const orderWorkflows = workflows.filter(isOrderWorkflowSummary);
+	// Any order workflow (running or finished) is worth reconciling against,
+	// except the one the learner explicitly Reset away from; prefer an exact
+	// match, then a live run, then whatever's left — a stale finished order is
+	// still better to replay than to silently discard.
+	const orderWorkflows = workflows
+		.filter(isOrderWorkflowSummary)
+		.filter((summary) => summary.workflowId !== dismissedWorkflowId);
 	const active =
 		orderWorkflows.find((summary) => summary.workflowId === preferredWorkflowId) ??
 		orderWorkflows.find(isResumableOrderWorkflow) ??
@@ -237,16 +247,14 @@ export async function restoreSessionFromSandbox(
 	session.run = { workflowId: active.workflowId, runId: active.runId };
 	session.onRunChanged(session.run);
 	session.activeOrder = buildDemoOrder(active.workflowId);
-	// Floor the tour immediately using Visibility's indexed OrderStatus search
-	// attribute — real and available even with the worker down — rather than
-	// `session.phase`, which reads Created until getTimeline supplies real
-	// entries below. Using `session.phase` here would floor a further-along
-	// order (e.g. AwaitingRestaurant) as if it had only just started, leaving
-	// a persisted later step un-reconciled for as long as the worker stays
-	// offline. Falls back to `session.phase` if the attribute is unavailable
-	// (Search Attributes weren't registered for that run).
-	const knownPhase = knownOrderStatus(active.businessSnapshot.OrderStatus) ?? session.phase;
-	session.tour.advanceTo(minimumTourStepIndexForPhase(knownPhase));
+	// Visibility's indexed OrderStatus search attribute is real and available
+	// even with the worker down — unlike `session.phase`, which reads Created
+	// until getTimeline supplies real entries. Floor the tour with it right
+	// away so a further-along order (e.g. AwaitingRestaurant) isn't floored as
+	// if it had only just started. Falls back to `session.phase` if the
+	// attribute is unavailable (Search Attributes weren't registered).
+	const knownPhase = knownOrderStatus(active.businessSnapshot.OrderStatus);
+	session.tour.advanceTo(minimumTourStepIndexForPhase(knownPhase ?? session.phase));
 	try {
 		const entries = await controller.query(active.workflowId, 'getTimeline');
 		// The learner may have Reset and placed a different order while this
@@ -256,6 +264,24 @@ export async function restoreSessionFromSandbox(
 			session.ingestTimeline(entries);
 		}
 	} catch {
-		// Worker offline — the timeline poll replays history after it restarts.
+		// Worker offline. The tour floor above already accounts for the real
+		// phase, but `session.phase` itself (which every `canDo()` gate reads —
+		// e.g. accepting an AwaitingRestaurant order is a signal that doesn't
+		// need the worker) would otherwise stay stuck at Created until the
+		// worker returns. Seed it from the same known phase via a synthetic,
+		// eventType-less entry: `ingestTimeline` never feeds it as an event (so
+		// it can't be mistaken for real history or duplicate-fed), but
+		// `derivePhase` reads its `status` until the real timeline poll
+		// replaces this array wholesale once the worker recovers.
+		if (knownPhase !== undefined) {
+			session.ingestTimeline([
+				{
+					index: -1,
+					timestamp: new Date(0).toISOString(),
+					description: 'Seeded from Visibility while the worker is offline.',
+					status: knownPhase
+				}
+			]);
+		}
 	}
 }

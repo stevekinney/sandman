@@ -47,6 +47,21 @@ describe('TourState.advanceTo', () => {
 	});
 });
 
+describe('TourState.hydrate', () => {
+	it('adopts a saved snapshot verbatim, preserving which steps were skipped', () => {
+		const tour = new TourState(volatileStorage());
+		// This is the exact shape a reload's storage.load() would hand back
+		// after a learner used the terminal-state skip escape hatch on step 0.
+		tour.hydrate({ currentStepIndex: 2, completedStepIds: [TOUR[1].id] });
+
+		expect(tour.currentStepIndex).toBe(2);
+		expect(tour.completedStepIds).toEqual([TOUR[1].id]);
+		// Regression: advanceTo would have marked TOUR[0] complete too, putting
+		// a checkmark on a step the learner explicitly skipped, not finished.
+		expect(tour.completedStepIds).not.toContain(TOUR[0].id);
+	});
+});
+
 describe('TourState.replaceStorage', () => {
 	it('redirects future persistence without re-reading or touching current progress', () => {
 		const original = volatileStorage();

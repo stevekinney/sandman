@@ -236,6 +236,29 @@ describe('TourEngine', () => {
 		});
 	});
 
+	describe('hydrate()', () => {
+		it('adopts a saved snapshot verbatim, without inferring completions in between', () => {
+			// Step 0 was skipped (not completed) on a prior session — a snapshot
+			// this shape is exactly what skip() persists.
+			engine.hydrate({ currentStepIndex: 2, completedStepIds: [TOUR[1].id] });
+			expect(engine.currentStepIndex).toBe(2);
+			expect(engine.completedStepIds).toEqual([TOUR[1].id]);
+			expect(engine.completedStepIds).not.toContain(TOUR[0].id);
+		});
+
+		it('clamps the index but does not persist', () => {
+			engine.hydrate({ currentStepIndex: TOUR.length + 5, completedStepIds: [] });
+			expect(engine.currentStepIndex).toBe(TOUR.length);
+			expect(storage.load()).toBeNull(); // hydrate doesn't write back
+		});
+
+		it('resumes normal event-driven advancement from the hydrated position', () => {
+			engine.hydrate({ currentStepIndex: 3, completedStepIds: TOUR.slice(0, 3).map((s) => s.id) });
+			expect(engine.feed(satisfyingEvent(3))).toBe(true);
+			expect(engine.currentStepIndex).toBe(4);
+		});
+	});
+
 	describe('skip()', () => {
 		it('advances the index without marking the step complete', () => {
 			const skipped = engine.skip();

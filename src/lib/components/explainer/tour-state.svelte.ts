@@ -105,6 +105,20 @@ export class TourState {
 		this._engine.replaceStorage(storage);
 	}
 
+	/**
+	 * Adopt a saved progress snapshot verbatim — see `TourEngine.hydrate`.
+	 * Reactive state is updated to match exactly, preserving which steps were
+	 * skipped vs. completed (unlike `advanceTo`, which would mark all of them
+	 * complete).
+	 */
+	hydrate(progress: TourProgress): void {
+		this._engine.hydrate(progress);
+		this._progress = {
+			currentStepIndex: this._engine.currentStepIndex,
+			completedStepIds: [...this._engine.completedStepIds]
+		};
+	}
+
 	/** Reset tour progress and clear storage. Reactive state is updated. */
 	reset(): void {
 		this._engine.reset();
