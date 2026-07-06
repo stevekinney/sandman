@@ -551,7 +551,10 @@ export async function markSandboxReclaimed(
 		.update(sandboxSession)
 		.set({
 			status: sql`case when ${sandboxSession.status} = ${SANDBOX_SESSION_STATUS.Error} then ${sandboxSession.status} else ${SANDBOX_SESSION_STATUS.Expired} end`,
-			updatedAt: input.now,
+			// Leave updatedAt untouched when the row is already Error — reclaiming
+			// its VM later must not disturb the original failure timestamp that
+			// getMonitoringSnapshot()'s one-hour window keys off of.
+			updatedAt: sql`case when ${sandboxSession.status} = ${SANDBOX_SESSION_STATUS.Error} then ${sandboxSession.updatedAt} else ${input.now} end`,
 			terminatedAt: input.now,
 			reclaimedAt: input.now
 		})
