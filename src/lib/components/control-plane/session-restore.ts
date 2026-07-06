@@ -209,6 +209,13 @@ export async function restoreSessionFromSandbox(
 		workflows = await controller.visibility({});
 	} catch {
 		restoreAttempted.delete(session);
+		// An error is not an observation — it must not silently count towards
+		// (or survive alongside) a run of confirmed-empty results. Without
+		// this, two empty results followed by a transient error followed by
+		// one more empty result would hit NOT_FOUND_CONFIRMATION_ROUNDS on
+		// that third empty result, even though the sequence was interrupted
+		// and nothing was actually confirmed for certain in between.
+		notFoundStreak.delete(session);
 		return;
 	}
 	// The learner may have placed a new order, or hit Reset (which doesn't

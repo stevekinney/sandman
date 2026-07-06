@@ -568,6 +568,32 @@ describe('SessionState', () => {
 			expect(tour.currentStepIndex).toBe(3);
 		});
 
+		it('does not let an empty result after a Visibility error count towards confirmation', async () => {
+			const storage = volatileStorage();
+			const tour = restoredTour(storage, 3);
+			const controller = new MockTemporalController();
+			const session = new SessionState(controller, tour);
+
+			// Two empty results build a streak of 2 (one short of confirmation).
+			controller.visibilityResult = [];
+			await restoreSessionFromSandbox(controller, session);
+			await restoreSessionFromSandbox(controller, session);
+			expect(tour.currentStepIndex).toBe(3);
+
+			// A transient error interrupts the sequence — it isn't an
+			// observation and must not let the streak survive to combine with
+			// the next empty result.
+			controller.visibilityError = new Error('temporal exploded');
+			await restoreSessionFromSandbox(controller, session);
+			controller.visibilityError = null;
+
+			// Without clearing the streak on error, this would be the "third"
+			// confirmed-empty result and would wipe progress.
+			await restoreSessionFromSandbox(controller, session);
+			expect(session.run).toBeNull();
+			expect(tour.currentStepIndex).toBe(3);
+		});
+
 		it('keeps a finished tour finished when the workflow has since completed', async () => {
 			const storage = volatileStorage();
 			const tour = restoredTour(storage, TOUR.length);
