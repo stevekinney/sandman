@@ -398,6 +398,100 @@ describe('SessionState', () => {
 		expect(session.canDo('start-order')).toBe(false);
 	});
 
+	describe('terminal-state tour deviation', () => {
+		/** Walk the tour forward by feeding the events its next steps expect. */
+		function walkTour(tour: TourState, eventTypes: string[]): void {
+			eventTypes.forEach((type, i) => {
+				tour.feed({ sequence: 1000 + i, type, timestamp: new Date(i).toISOString() });
+			});
+		}
+
+		it('is not stuck while the workflow is still running', async () => {
+			const { session } = makeSession();
+			expect(session.tourStepStuck).toBe(false); // idle
+
+			await session.placeOrder();
+			session.ingestTimeline([timelineEntry(0, ORDER_STATUS.Preparing)]);
+			expect(session.tourStepStuck).toBe(false);
+		});
+
+		it('cancelling the order to watch saga compensation strands the current step', async () => {
+			const { tour, session } = makeSession();
+			await session.placeOrder();
+			// Walk to the signal-accept step, then deviate: cancel instead of accepting.
+			walkTour(tour, ['ActivityTaskCompleted', 'TimerStarted']);
+			expect(tour.currentStep?.id).toBe('signal-accept');
+
+			session.ingestTimeline([
+				timelineEntry(0, ORDER_STATUS.Cancelled),
+				timelineEntry(1, ORDER_STATUS.Refunded)
+			]);
+
+			// The workflow is terminal; a restaurant-accepted signal can never arrive.
+			expect(session.tourStepStuck).toBe(true);
+			// Skipping unsticks the tour one step at a time without faking completion.
+			tour.skip();
+			expect(tour.currentStep?.id).toBe('update-with-validator');
+			expect(tour.completedStepIds).not.toContain('signal-accept');
+			expect(session.tourStepStuck).toBe(true); // update step is also stranded
+		});
+
+		it('query-driven steps stay live after a terminal phase — queries read closed workflows', async () => {
+			const { tour, session } = makeSession();
+			await session.placeOrder();
+			walkTour(tour, [
+				'ActivityTaskCompleted',
+				'TimerStarted',
+				'WorkflowExecutionSignaled',
+				'WorkflowExecutionUpdateAccepted',
+				'ChildWorkflowExecutionStarted'
+			]);
+			expect(tour.currentStep?.id).toBe('queryable-business-snapshot');
+
+			session.ingestTimeline([timelineEntry(0, ORDER_STATUS.Delivered)]);
+			expect(session.tourStepStuck).toBe(false);
+		});
+
+		it('durable-recovery strands only while the worker is online once the run is over', async () => {
+			const { tour, session } = makeSession();
+			await session.placeOrder();
+			walkTour(tour, [
+				'ActivityTaskCompleted',
+				'TimerStarted',
+				'WorkflowExecutionSignaled',
+				'WorkflowExecutionUpdateAccepted',
+				'ChildWorkflowExecutionStarted',
+				'QueryCompleted',
+				'QueryCompleted'
+			]);
+			expect(tour.currentStep?.id).toBe('durable-recovery');
+
+			// Delivered before the worker was ever killed: kill-worker is gated off
+			// for a finished run, so WorkerRestarted can never fire.
+			session.ingestTimeline([timelineEntry(0, ORDER_STATUS.Delivered)]);
+			expect(session.tourStepStuck).toBe(true);
+
+			// But a worker that is already down can still be restarted, which
+			// completes the step even post-terminal — not stuck.
+			session.workerOnline = false;
+			expect(session.tourStepStuck).toBe(false);
+		});
+
+		it('reset() clears the deviation and returns the tour to a startable state', async () => {
+			const { tour, session } = makeSession();
+			await session.placeOrder();
+			walkTour(tour, ['ActivityTaskCompleted', 'TimerStarted']);
+			session.ingestTimeline([timelineEntry(0, ORDER_STATUS.Refunded)]);
+			expect(session.tourStepStuck).toBe(true);
+
+			session.reset();
+			expect(session.tourStepStuck).toBe(false);
+			expect(session.phase).toBe('idle');
+			expect(tour.currentStepIndex).toBe(0);
+			expect(session.canDo('start-order')).toBe(true);
+		});
+	});
+
 	describe('reconcileLiveness', () => {
 		it('adopts backend liveness while idle', () => {
 			const { session } = makeSession();
