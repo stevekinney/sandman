@@ -38,7 +38,7 @@ code in Fly, GitHub, Neon, source files, or logs.
 
 Runtime non-secret defaults in `deployment/fly/web.toml`:
 
-- `SANDMAN_SESSION_TTL_MS=300000`
+- `SANDMAN_SESSION_TTL_MS=900000`
 - `SANDMAN_MAX_ACTIVE_SANDBOXES=20`
 - `SANDMAN_MAX_ACTIVE_SANDBOXES_PER_SESSION=1`
 - `SANDMAN_SESSION_CREATIONS_PER_TOKEN_PER_HOUR=5`

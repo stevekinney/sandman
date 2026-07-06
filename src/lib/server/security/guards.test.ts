@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	getActiveDemoSession,
+	sandboxBelongsToSession,
 	touchActiveDemoSession,
 	touchSandboxSession
 } from '$lib/server/database/repository';
@@ -11,7 +12,11 @@ import {
 	readSignedSessionCookieValue,
 	SESSION_COOKIE_NAME
 } from './session.ts';
-import { requireAuthenticatedDemoSession, touchSessionActivity } from './guards.ts';
+import {
+	requireAuthenticatedDemoSession,
+	touchSessionActivity,
+	touchSessionHeartbeat
+} from './guards.ts';
 
 vi.mock('$lib/server/database/connection', () => ({
 	getDatabase: vi.fn(() => ({}))
@@ -52,7 +57,7 @@ describe('requireAuthenticatedDemoSession', () => {
 	beforeEach(() => {
 		vi.stubEnv('DATABASE_URL', 'postgresql://user:password@example.com/sandman');
 		vi.stubEnv('SANDMAN_SESSION_SECRET', 'session-secret');
-		vi.stubEnv('SANDMAN_SESSION_TTL_MS', '300000');
+		vi.stubEnv('SANDMAN_SESSION_TTL_MS', '900000');
 	});
 
 	afterEach(() => {
@@ -80,7 +85,7 @@ describe('requireAuthenticatedDemoSession', () => {
 describe('touchSessionActivity', () => {
 	beforeEach(() => {
 		vi.stubEnv('SANDMAN_SESSION_SECRET', 'session-secret');
-		vi.stubEnv('SANDMAN_SESSION_TTL_MS', '300000');
+		vi.stubEnv('SANDMAN_SESSION_TTL_MS', '900000');
 	});
 
 	afterEach(() => {
@@ -100,9 +105,9 @@ describe('touchSessionActivity', () => {
 		);
 		expect(touchSandboxSession).toHaveBeenCalledWith(
 			expect.anything(),
-			expect.objectContaining({ sandboxId: 'sandbox-1', ttlMs: 300_000 })
+			expect.objectContaining({ sandboxId: 'sandbox-1', ttlMs: 900_000 })
 		);
-		expect(extendHandleTimeout).toHaveBeenCalledWith('sandbox-1', 300_000);
+		expect(extendHandleTimeout).toHaveBeenCalledWith('sandbox-1', 900_000);
 		expect(touchHandle).toHaveBeenCalledWith('sandbox-1');
 		expect(vi.mocked(touchSandboxSession).mock.invocationCallOrder[0]).toBeGreaterThan(
 			vi.mocked(touchActiveDemoSession).mock.invocationCallOrder[0] ?? 0
@@ -114,7 +119,7 @@ describe('touchSessionActivity', () => {
 		expect(event.cookies.set).toHaveBeenCalledWith(
 			SESSION_COOKIE_NAME,
 			expect.any(String),
-			expect.objectContaining({ maxAge: 300 })
+			expect.objectContaining({ maxAge: 900 })
 		);
 		const refreshedValue = event.cookies.set.mock.calls[0]?.[1];
 		expect(readSignedSessionCookieValue(refreshedValue, 'session-secret')).toBe('session-1');
@@ -169,7 +174,7 @@ describe('touchSessionActivity', () => {
 
 		expect(event.cookies.set).toHaveBeenCalledOnce();
 		expect(touchHandle).toHaveBeenCalledWith('sandbox-1');
-		expect(extendHandleTimeout).toHaveBeenCalledWith('sandbox-1', 300_000);
+		expect(extendHandleTimeout).toHaveBeenCalledWith('sandbox-1', 900_000);
 		expect(vi.mocked(extendHandleTimeout).mock.invocationCallOrder[0]).toBeGreaterThan(
 			vi.mocked(touchHandle).mock.invocationCallOrder[0] ?? 0
 		);
@@ -198,5 +203,172 @@ describe('touchSessionActivity', () => {
 
 		expect(logError).not.toHaveBeenCalled();
 		expect(event.cookies.set).not.toHaveBeenCalled();
+	});
+});
+
+describe('touchSessionHeartbeat', () => {
+	beforeEach(() => {
+		vi.stubEnv('DATABASE_URL', 'postgresql://user:password@example.com/sandman');
+		vi.stubEnv('SANDMAN_SESSION_SECRET', 'session-secret');
+		vi.stubEnv('SANDMAN_SESSION_TTL_MS', '900000');
+	});
+
+	afterEach(() => {
+		vi.unstubAllEnvs();
+		vi.clearAllMocks();
+	});
+
+	function validEvent() {
+		return makeEvent(createSignedSessionCookieValue('session-1', 'session-secret'));
+	}
+
+	it('throws 401 when the session cookie is missing', async () => {
+		await expect(touchSessionHeartbeat(makeEvent(undefined), 'sandbox-1')).rejects.toMatchObject({
+			status: 401
+		});
+		expect(touchActiveDemoSession).not.toHaveBeenCalled();
+	});
+
+	it('throws 401 when the session cookie signature is invalid', async () => {
+		await expect(
+			touchSessionHeartbeat(makeEvent('tampered.signature.value'), 'sandbox-1')
+		).rejects.toMatchObject({ status: 401 });
+		expect(touchActiveDemoSession).not.toHaveBeenCalled();
+	});
+
+	it('throws 503 when SANDMAN_SESSION_SECRET is not configured', async () => {
+		vi.stubEnv('SANDMAN_SESSION_SECRET', '');
+		await expect(touchSessionHeartbeat(validEvent(), 'sandbox-1')).rejects.toMatchObject({
+			status: 503
+		});
+	});
+
+	it('throws 503 when DATABASE_URL is not configured', async () => {
+		vi.stubEnv('DATABASE_URL', '');
+		await expect(touchSessionHeartbeat(validEvent(), 'sandbox-1')).rejects.toMatchObject({
+			status: 503
+		});
+	});
+
+	it('throws 401 and does not refresh the cookie when the demo session is no longer active', async () => {
+		vi.mocked(touchActiveDemoSession).mockResolvedValueOnce(false);
+		const event = validEvent();
+
+		await expect(touchSessionHeartbeat(event, 'sandbox-1')).rejects.toMatchObject({ status: 401 });
+
+		expect(event.cookies.set).not.toHaveBeenCalled();
+		expect(sandboxBelongsToSession).not.toHaveBeenCalled();
+	});
+
+	it('throws 503 and logs when the demo-session touch throws, without refreshing the cookie', async () => {
+		vi.mocked(touchActiveDemoSession).mockRejectedValueOnce(new Error('connection refused'));
+		const event = validEvent();
+
+		await expect(touchSessionHeartbeat(event, 'sandbox-1')).rejects.toMatchObject({ status: 503 });
+
+		expect(logError).toHaveBeenCalledWith(
+			expect.objectContaining({ event: 'session.heartbeat.failed' })
+		);
+		expect(event.cookies.set).not.toHaveBeenCalled();
+	});
+
+	it('slides the demo session and refreshes the cookie with a fresh maxAge when no sandboxId is given', async () => {
+		const event = validEvent();
+
+		await expect(touchSessionHeartbeat(event, undefined)).resolves.toEqual({
+			sandboxTouched: false
+		});
+
+		expect(event.cookies.set).toHaveBeenCalledWith(
+			SESSION_COOKIE_NAME,
+			expect.any(String),
+			expect.objectContaining({ maxAge: 900 })
+		);
+		expect(sandboxBelongsToSession).not.toHaveBeenCalled();
+		expect(touchSandboxSession).not.toHaveBeenCalled();
+		expect(touchHandle).not.toHaveBeenCalled();
+		expect(extendHandleTimeout).not.toHaveBeenCalled();
+	});
+
+	it('throws 404 when the sandbox is not owned, but refreshes the cookie first', async () => {
+		vi.mocked(sandboxBelongsToSession).mockResolvedValueOnce(false);
+		const event = validEvent();
+
+		await expect(touchSessionHeartbeat(event, 'sandbox-1')).rejects.toMatchObject({ status: 404 });
+
+		// The demo session itself is valid — only the sandbox claim is bogus — so
+		// the cookie refresh already happened and is intentionally kept.
+		expect(event.cookies.set).toHaveBeenCalledOnce();
+		expect(touchSandboxSession).not.toHaveBeenCalled();
+	});
+
+	it('slides the sandbox and returns sandboxTouched:true when owned and active', async () => {
+		vi.mocked(sandboxBelongsToSession).mockResolvedValueOnce(true);
+		vi.mocked(touchSandboxSession).mockResolvedValueOnce(true);
+		const event = validEvent();
+
+		await expect(touchSessionHeartbeat(event, 'sandbox-1')).resolves.toEqual({
+			sandboxTouched: true
+		});
+
+		expect(touchSandboxSession).toHaveBeenCalledWith(
+			expect.anything(),
+			expect.objectContaining({ sandboxId: 'sandbox-1', ttlMs: 900_000 })
+		);
+		expect(touchHandle).toHaveBeenCalledWith('sandbox-1');
+		expect(extendHandleTimeout).toHaveBeenCalledWith('sandbox-1', 900_000);
+	});
+
+	it('returns sandboxTouched:false without hard-failing when the owned sandbox is already expired', async () => {
+		vi.mocked(sandboxBelongsToSession).mockResolvedValueOnce(true);
+		vi.mocked(touchSandboxSession).mockResolvedValueOnce(false);
+		const event = validEvent();
+
+		await expect(touchSessionHeartbeat(event, 'sandbox-1')).resolves.toEqual({
+			sandboxTouched: false
+		});
+		expect(extendHandleTimeout).not.toHaveBeenCalled();
+	});
+
+	it('still returns sandboxTouched:true and logs when the E2B timeout extension fails', async () => {
+		vi.mocked(sandboxBelongsToSession).mockResolvedValueOnce(true);
+		vi.mocked(touchSandboxSession).mockResolvedValueOnce(true);
+		vi.mocked(extendHandleTimeout).mockRejectedValueOnce(new Error('provider timeout failed'));
+		const event = validEvent();
+
+		await expect(touchSessionHeartbeat(event, 'sandbox-1')).resolves.toEqual({
+			sandboxTouched: true
+		});
+		expect(logError).toHaveBeenCalledWith(
+			expect.objectContaining({ event: 'session.heartbeat.extend_failed', sandboxId: 'sandbox-1' })
+		);
+	});
+
+	it('degrades to sandboxTouched:false and logs when the sandbox touch throws, keeping the demo-session slide', async () => {
+		vi.mocked(sandboxBelongsToSession).mockResolvedValueOnce(true);
+		vi.mocked(touchSandboxSession).mockRejectedValueOnce(new Error('database exploded'));
+		const event = validEvent();
+
+		await expect(touchSessionHeartbeat(event, 'sandbox-1')).resolves.toEqual({
+			sandboxTouched: false
+		});
+		expect(logError).toHaveBeenCalledWith(
+			expect.objectContaining({ event: 'session.heartbeat.sandbox_failed', sandboxId: 'sandbox-1' })
+		);
+		// The demo-session cookie refresh happened before the sandbox work and is
+		// not rolled back by the sandbox-side failure.
+		expect(event.cookies.set).toHaveBeenCalledOnce();
+	});
+
+	it('refreshes the cookie before performing any sandbox-side work', async () => {
+		vi.mocked(sandboxBelongsToSession).mockResolvedValueOnce(true);
+		vi.mocked(touchSandboxSession).mockResolvedValueOnce(true);
+		const event = validEvent();
+
+		await touchSessionHeartbeat(event, 'sandbox-1');
+
+		expect(event.cookies.set.mock.invocationCallOrder[0]).toBeLessThan(
+			vi.mocked(sandboxBelongsToSession).mock.invocationCallOrder[0] ?? Infinity
+		);
 	});
 });

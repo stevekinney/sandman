@@ -259,7 +259,7 @@ export const faqs: Faq[] = [
 	},
 	{
 		q: 'How long does a session last?',
-		a: 'Sessions are ephemeral and self-destruct after roughly five minutes. It’s a playground, not persistent storage — boot a fresh one whenever you like.'
+		a: 'Sessions are ephemeral and self-destruct after roughly fifteen minutes. It’s a playground, not persistent storage — boot a fresh one whenever you like.'
 	},
 	{
 		q: 'Why a food-ordering workflow?',

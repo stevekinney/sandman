@@ -5,6 +5,7 @@ import svelte from 'eslint-plugin-svelte';
 import { defineConfig, includeIgnoreFile } from 'eslint/config';
 import globals from 'globals';
 import ts from 'typescript-eslint';
+import noUnguardedDbCall from './eslint-rules/no-unguarded-db-call.js';
 
 const gitignorePath = path.resolve(import.meta.dirname, '.gitignore');
 
@@ -32,6 +33,13 @@ export default defineConfig(
 				parser: ts.parser
 			}
 		}
+	},
+	{
+		// Encode the incident fix as a lint rule: a database call in a route
+		// handler must be wrapped in try/catch (see the rule for rationale).
+		files: ['src/routes/**/+server.ts'],
+		plugins: { local: { rules: { 'no-unguarded-db-call': noUnguardedDbCall } } },
+		rules: { 'local/no-unguarded-db-call': 'error' }
 	},
 	{
 		rules: {

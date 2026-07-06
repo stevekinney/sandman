@@ -53,6 +53,7 @@
 		isSandboxStarting,
 		isSandboxUnusable
 	} from './session-status';
+	import { ACTIVITY_HEARTBEAT_THROTTLE_MS, createActivityThrottle } from './activity-heartbeat.ts';
 
 	let { data }: { data: PageData } = $props();
 
@@ -186,7 +187,7 @@
 	let historyLens = $state<'events' | 'steps'>('events');
 	let codeReveal = $state<CodeReveal | null>(null);
 
-	// The session self-destructs after its TTL (default ~5 min), and that window
+	// The session self-destructs after its TTL (default ~15 min), and that window
 	// slides forward on activity. Surface it as a live countdown so a presenter
 	// can pace a demo instead of being cut off mid-sentence.
 	const sessionRemainingMs = $derived(
@@ -332,6 +333,53 @@
 		};
 	});
 
+	// Sliding-idle-timeout heartbeat: any genuine user gesture (click/keydown,
+	// or the tab becoming visible again) resets the 15-minute session TTL via a
+	// lightweight touch endpoint. Throttled so a burst of keystrokes doesn't
+	// spam the server — 60s leaves ample margin under the 15-minute TTL. This is
+	// intentionally driven only by real DOM gestures on window/document: the
+	// poll loops above (status, timeline) call `fetch` directly and never
+	// dispatch pointerdown/keydown/visibilitychange, so they can't trip this
+	// throttle and keep a billed sandbox alive on an abandoned tab.
+	const activityThrottle = createActivityThrottle(ACTIVITY_HEARTBEAT_THROTTLE_MS);
+
+	function recordActivity(): void {
+		if (!activityThrottle.attempt()) return;
+		// Read `data.sandboxId` at call time: SvelteKit reuses this component
+		// across [sessionId] navigations, so a captured snapshot could point at
+		// the previous sandbox.
+		void sendActivityHeartbeat(data.sandboxId);
+	}
+
+	function onVisibilityChange(): void {
+		if (document.visibilityState === 'visible') recordActivity();
+	}
+
+	/**
+	 * POST the touch endpoint; swallow every failure. The 2s status poll is the
+	 * sole owner of surfacing auth loss (it sets `authentication-required` on a
+	 * 401), so the heartbeat must never become a second writer of that state.
+	 */
+	async function sendActivityHeartbeat(sandboxId: string): Promise<void> {
+		try {
+			const response = await fetch('/api/session/heartbeat', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				credentials: 'same-origin',
+				body: JSON.stringify({ sandboxId })
+			});
+			// A lost or rejected heartbeat must not consume the throttle window —
+			// reopen it so the next gesture retries instead of being swallowed until
+			// the window elapses (which, near the end of the TTL, could end an
+			// actively-resumed session).
+			if (!response.ok) activityThrottle.reset();
+		} catch {
+			// Offline/transient network failure — reopen the window so the next
+			// gesture retries immediately.
+			activityThrottle.reset();
+		}
+	}
+
 	/** In-memory StorageAdapter used only for the SSR pass. */
 	function createVolatileTourStorage(): StorageAdapter {
 		let progress: TourProgress | null = null;
@@ -361,6 +409,9 @@
 	<meta name="twitter:title" content={SESSION_TITLE} />
 	<meta name="twitter:description" content={SESSION_DESCRIPTION} />
 </svelte:head>
+
+<svelte:window onpointerdown={recordActivity} onkeydown={recordActivity} />
+<svelte:document onvisibilitychange={onVisibilityChange} />
 
 <SkipLink target="guided-journey">Skip to guided journey</SkipLink>
 
@@ -435,6 +486,7 @@
 					bind:historyLens
 					onShowExperimentCode={showExperimentCode}
 					onNavigateToLookAt={navigateToLookAt}
+					onActivity={recordActivity}
 				/>
 			</div>
 			<SandboxReadinessGate

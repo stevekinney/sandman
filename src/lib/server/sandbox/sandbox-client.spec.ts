@@ -25,7 +25,7 @@ type CallRecord =
 	| { method: 'adapter.create'; opts: E2bCreateOpts }
 	| { method: 'files.write'; path: string; data: string }
 	| { method: 'commands.run'; cmd: string }
-	| { method: 'commands.start'; cmd: string; pid: number }
+	| { method: 'commands.start'; cmd: string; pid: number; timeoutMs?: number }
 	| { method: 'commands.kill'; pid: number }
 	| { method: 'sandbox.setTimeout'; timeoutMs: number }
 	| { method: 'sandbox.kill' }
@@ -63,9 +63,9 @@ function createMockAdapter(sandboxId = 'mock-sandbox-id'): {
 				return { exitCode: 0, stdout: '', stderr: '' };
 			},
 
-			async start(cmd) {
+			async start(cmd, opts) {
 				const pid = pidCounter++;
-				calls.push({ method: 'commands.start', cmd, pid });
+				calls.push({ method: 'commands.start', cmd, pid, timeoutMs: opts?.timeoutMs });
 				const waitPromise = new Promise<SandboxCommandResult>((resolve) => {
 					pendingWaits.set(pid, resolve);
 				});
@@ -669,6 +669,27 @@ describe('restartWorker()', () => {
 		);
 		expect(killIdx).toBeGreaterThanOrEqual(0);
 		expect(startIdx).toBeGreaterThan(killIdx);
+	});
+
+	it("pins long-running background commands (worker + Temporal server) to E2B's 24h max, decoupled from the session TTL", async () => {
+		const { client, calls } = makeClient();
+		await provisionAndBootstrap(client);
+
+		const backgroundStarts = calls.filter(
+			(c) =>
+				c.method === 'commands.start' &&
+				(c.cmd.includes('worker') || c.cmd.includes('temporal server start-dev'))
+		) as Extract<CallRecord, { method: 'commands.start' }>[];
+
+		// Both the worker and the Temporal dev server must be present and pinned.
+		expect(backgroundStarts.length).toBeGreaterThanOrEqual(2);
+		// Regression guard: an E2B command timeout is fixed at start and cannot be
+		// extended, while the VM timeout slides on activity. Coupling any of these
+		// to the session TTL would let a slid session outlive the command, so E2B
+		// would kill the Temporal server / worker mid-demo.
+		for (const start of backgroundStarts) {
+			expect(start.timeoutMs).toBe(24 * 60 * 60 * 1_000);
+		}
 	});
 
 	it('does NOT re-issue the Temporal server start command', async () => {

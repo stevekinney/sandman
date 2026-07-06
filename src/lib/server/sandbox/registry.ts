@@ -63,7 +63,17 @@ export function getSandboxRegistry(): Registry {
 		const configuration = getProductionConfiguration();
 		const client = createSandboxClient({
 			apiKey: configuration.e2bApiKey,
-			templateId: configuration.e2bTemplateId
+			templateId: configuration.e2bTemplateId,
+			// Pin the E2B VM's provider-side timeout to the configured session TTL,
+			// instead of letting client.ts fall back to its own
+			// DEFAULT_SANDBOX_TIMEOUT_MS. Without this, a session TTL longer than
+			// that default (e.g. the 15-minute TTL vs. the 10-minute client default)
+			// would let E2B kill a provisioned-but-untouched sandbox's VM before its
+			// DB row, the in-memory reaper, and the UI countdown agree it has
+			// expired. (The long-running background commands' own timeouts are
+			// deliberately NOT tied to this — see BACKGROUND_COMMAND_TIMEOUT_MS in
+			// client.ts.)
+			sandboxTimeoutMs: configuration.sessionTtlMs
 		});
 		const handles = new Map<string, SandboxHandle>();
 		const reaper = createReaper(configuration.sessionTtlMs);

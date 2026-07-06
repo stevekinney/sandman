@@ -70,4 +70,4 @@ import the matching styles (`@lostgradient/cinder/badge/styles`).
 - No `as` assertions — prefer type guard functions using `is`.
 - `import type` for type-only imports (verbatimModuleSyntax).
 - Kebab-case filenames (`user-profile.ts`, not `userProfile.ts`).
-- `.ts` and `.tsx` extensions only — no `.js`, `.mjs`, `.cjs`, `.jsx`.
+- `.ts` and `.tsx` extensions only — no `.js`, `.mjs`, `.cjs`, `.jsx`. **Exception:** ESLint's flat config (`eslint.config.js`) and its local rule modules (`eslint-rules/*.js`) stay `.js` — ESLint loads them itself, outside the TypeScript build/type-check pipeline, and a `.ts` config would require adding a `jiti` runtime loader and would break plain node-based ESLint (e.g. IDE integrations).

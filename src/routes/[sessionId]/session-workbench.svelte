@@ -28,6 +28,8 @@
 		historyLens?: HistoryLens;
 		onShowExperimentCode: (experiment: TourExperiment) => void;
 		onNavigateToLookAt: (lookAt: TourLookAt) => void;
+		/** Bridges gestures inside the same-origin Temporal UI iframe to the activity heartbeat. */
+		onActivity?: () => void;
 	};
 
 	let {
@@ -39,7 +41,8 @@
 		centerView = $bindable('code'),
 		historyLens = $bindable('events'),
 		onShowExperimentCode,
-		onNavigateToLookAt
+		onNavigateToLookAt,
+		onActivity
 	}: Props = $props();
 
 	const tourProgress = $derived<TourProgress>({
@@ -124,7 +127,7 @@
 				</div>
 			{:else}
 				{#key `${session.run?.workflowId ?? 'no-run'}:${session.serverOnline}`}
-					<TemporalUiFrame {sandboxId} {sandboxStatus} />
+					<TemporalUiFrame {sandboxId} {sandboxStatus} {onActivity} />
 				{/key}
 			{/if}
 		</div>

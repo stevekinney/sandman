@@ -61,3 +61,79 @@ jobs:
 
       - name: End-to-end tests
         run: bun run test:e2e
+
+  # Runs the raw-SQL repository functions (reserveSandboxSlot,
+  # markSandboxReclaimed) against a real, throwaway Neon branch so a Postgres
+  # type-inference bug like the reclaimed_at incident fails here at PR time
+  # instead of in production — the unit suite only ever mocks the driver.
+  #
+  # Setup required (one-time, by a maintainer — only they can add secrets):
+  #   - repository VARIABLE  NEON_PROJECT_ID  (e.g. soft-mountain-25188629)
+  #   - repository SECRET    NEON_API_KEY
+  # Until NEON_PROJECT_ID is set this job is SKIPPED (visible as "skipped" on the
+  # PR, not silently green); once set it runs on every push and same-repo PR.
+  postgres-integration:
+    name: Postgres Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Gate on the project-id variable (secrets can't be read in `if:`), and skip
+    # fork PRs, which cannot read NEON_API_KEY.
+    if: ${{ vars.NEON_PROJECT_ID != '' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Compute branch expiry
+        id: expiry
+        # Backstop against leaked branches if the runner is cancelled
+        # (concurrency: cancel-in-progress) before the delete step runs.
+        run: echo "at=$(date -u -d '+2 hours' +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Create Neon branch
+        id: create-branch
+        uses: neondatabase/create-branch-action@72ed4f69a12b6be9c16aebfad893f6a21e9aba8b # v6.4.0
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          # Unique per run+attempt so concurrent PRs never share a branch.
+          branch_name: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          # This project's database/role are `sandman`/`sandman_owner`; without
+          # these the action defaults to `neondb`/`neondb_owner` and 404s while
+          # resolving the connection string (the DB doesn't exist here).
+          database: sandman
+          role: sandman_owner
+          expires_at: ${{ steps.expiry.outputs.at }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+
+      - name: Validate branch connection string
+        env:
+          DB_URL: ${{ steps.create-branch.outputs.db_url }}
+        run: |
+          if [ -z "${DB_URL:-}" ]; then
+            echo "::error::create-branch-action returned an empty db_url; failing loudly instead of silently skipping the integration suite"
+            exit 1
+          fi
+
+      - name: Run migrations against the ephemeral branch
+        env:
+          MIGRATION_DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
+        run: bun run db:migrate
+
+      - name: Postgres integration tests
+        env:
+          INTEGRATION_DATABASE_URL: ${{ steps.create-branch.outputs.db_url }}
+        run: bunx vitest run --project server src/lib/server/database/repository.integration.test.ts
+
+      - name: Delete Neon branch
+        if: ${{ always() && steps.create-branch.outputs.branch_id }}
+        uses: neondatabase/delete-branch-action@4468d825d5a88ef4012f1705a82f02ec3072f776 # v3.2.1
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: ${{ steps.create-branch.outputs.branch_id }}
+          api_key: ${{ secrets.NEON_API_KEY }}
