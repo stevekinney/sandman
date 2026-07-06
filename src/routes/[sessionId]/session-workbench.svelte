@@ -1,6 +1,5 @@
 <script lang="ts">
 	import EmptyState from '@lostgradient/cinder/empty-state';
-	import '@lostgradient/cinder/empty-state/styles';
 	import Editor from '$lib/components/editor/editor.svelte';
 	import TemporalUiFrame from '$lib/components/temporal-ui/temporal-ui-frame.svelte';
 	import ControlToolbar from '$lib/components/control-plane/control-toolbar.svelte';

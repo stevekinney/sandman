@@ -71,7 +71,7 @@ test('TemporalUiFrame renders an iframe whose src is the proxied path', async ({
 test('editor is the default center view with Cinder file tabs', async ({ page }) => {
 	await page.goto(`/${TEST_SESSION_ID}`);
 	await expect(page.locator('#center-panel-code')).toBeVisible();
-	await expect(page.locator('.cinder-tabs')).toBeVisible();
+	await expect(page.locator('.editor-tabs')).toBeVisible();
 	await expect(page.getByRole('tablist', { name: 'Editor files' })).toHaveClass(/cinder-tab-list/);
 	await expect(page.getByRole('tab', { name: 'order-workflow.ts' })).toHaveClass(/cinder-tab/);
 });
