@@ -671,20 +671,25 @@ describe('restartWorker()', () => {
 		expect(startIdx).toBeGreaterThan(killIdx);
 	});
 
-	it("pins the worker command timeout to E2B's 24h max, decoupled from the session TTL", async () => {
+	it("pins long-running background commands (worker + Temporal server) to E2B's 24h max, decoupled from the session TTL", async () => {
 		const { client, calls } = makeClient();
 		await provisionAndBootstrap(client);
 
-		const workerStart = calls.find(
-			(c) => c.method === 'commands.start' && c.cmd.includes('worker')
-		) as Extract<CallRecord, { method: 'commands.start' }> | undefined;
+		const backgroundStarts = calls.filter(
+			(c) =>
+				c.method === 'commands.start' &&
+				(c.cmd.includes('worker') || c.cmd.includes('temporal server start-dev'))
+		) as Extract<CallRecord, { method: 'commands.start' }>[];
 
-		expect(workerStart).toBeDefined();
+		// Both the worker and the Temporal dev server must be present and pinned.
+		expect(backgroundStarts.length).toBeGreaterThanOrEqual(2);
 		// Regression guard: an E2B command timeout is fixed at start and cannot be
-		// extended, while the VM timeout slides on activity. Coupling this to the
-		// session TTL would let a slid session outlive the worker command, so E2B
-		// would kill the worker mid-demo (spurious crash + restart every TTL).
-		expect(workerStart?.timeoutMs).toBe(24 * 60 * 60 * 1_000);
+		// extended, while the VM timeout slides on activity. Coupling any of these
+		// to the session TTL would let a slid session outlive the command, so E2B
+		// would kill the Temporal server / worker mid-demo.
+		for (const start of backgroundStarts) {
+			expect(start.timeoutMs).toBe(24 * 60 * 60 * 1_000);
+		}
 	});
 
 	it('does NOT re-issue the Temporal server start command', async () => {

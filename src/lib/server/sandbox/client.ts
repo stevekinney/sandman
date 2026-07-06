@@ -80,19 +80,21 @@ const DEFAULT_READINESS_DELAY_MS = 2_000;
 const DEFAULT_SANDBOX_TIMEOUT_MS = 10 * 60 * 1_000;
 
 /**
- * Timeout for the worker's long-running background command. Deliberately
- * decoupled from the (sliding) session TTL and pinned to E2B's maximum sandbox
- * lifetime (24 hours). E2B's `commands.start` timeout is a fixed wall-clock
- * deadline set once at worker start and cannot be extended, whereas the VM's
- * own timeout slides forward on every user interaction. If the worker command
- * timeout tracked the session TTL, an actively-used session slid past that
- * window would have its worker hard-killed by E2B while the VM lived on —
- * surfacing as a spurious crash + auto-restart (a "worker offline" flicker)
- * every TTL interval. The VM's sliding timeout (and E2B's own 24h cap) is the
- * real lifetime bound, so the worker command simply needs a ceiling it can
- * never realistically hit before the VM is reaped.
+ * Timeout for the sandbox's long-running background commands — the Temporal dev
+ * server AND the worker. Deliberately decoupled from the (sliding) session TTL
+ * and pinned to E2B's maximum sandbox lifetime (24 hours). E2B's
+ * `commands.start` timeout is a fixed wall-clock deadline set once when the
+ * command starts and cannot be extended, whereas the VM's own timeout slides
+ * forward on every user interaction. If a background command's timeout tracked
+ * the session TTL (or any value shorter than a live session), an actively-used
+ * session slid past that window would have the Temporal server / worker
+ * hard-killed by E2B while the VM lived on — breaking the demo mid-session (a
+ * dead Temporal server, or a spurious worker crash + auto-restart flicker). The
+ * VM's sliding timeout (and E2B's own 24h cap) is the real lifetime bound, so
+ * these commands just need a ceiling they can never realistically hit before
+ * the VM is reaped.
  */
-const WORKER_COMMAND_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
+const BACKGROUND_COMMAND_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
 
 /** Cap on a single file write into the sandbox before we give up. */
 const DEFAULT_WRITE_FILE_TIMEOUT_MS = 30_000;
@@ -443,8 +445,8 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 			// activity via `session.setTimeout`, but a command's timeout is fixed at
 			// start and cannot be extended, so tracking the TTL here would let E2B
 			// kill the worker mid-demo once a session is slid past its window. See
-			// WORKER_COMMAND_TIMEOUT_MS.
-			commandTimeoutMs: WORKER_COMMAND_TIMEOUT_MS,
+			// BACKGROUND_COMMAND_TIMEOUT_MS.
+			commandTimeoutMs: BACKGROUND_COMMAND_TIMEOUT_MS,
 			maxRestarts: opts.workerMaxRestarts,
 			restartDelayMs: opts.workerRestartDelayMs,
 			schedule: opts.workerSchedule,
@@ -530,7 +532,10 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 
 		// 4. Start the Temporal dev server in the background.
 		const temporalHandle = await session.commands.start(getTemporalServerCommand(handle.id), {
-			timeoutMs: 300_000
+			// Long-lived background server — pin to the same 24h ceiling as the
+			// worker so a slid session can't outlive the Temporal server's command
+			// timeout and have E2B kill it mid-demo. See BACKGROUND_COMMAND_TIMEOUT_MS.
+			timeoutMs: BACKGROUND_COMMAND_TIMEOUT_MS
 		});
 		state.temporalPid = temporalHandle.pid;
 
@@ -616,7 +621,10 @@ export function createSandboxClient(opts: SandboxClientOpts = {}): SandboxClient
 		}
 
 		const temporalHandle = await session.commands.start(getTemporalServerCommand(handle.id), {
-			timeoutMs: 300_000
+			// Long-lived background server — pin to the same 24h ceiling as the
+			// worker so a slid session can't outlive the Temporal server's command
+			// timeout and have E2B kill it mid-demo. See BACKGROUND_COMMAND_TIMEOUT_MS.
+			timeoutMs: BACKGROUND_COMMAND_TIMEOUT_MS
 		});
 		state.temporalPid = temporalHandle.pid;
 

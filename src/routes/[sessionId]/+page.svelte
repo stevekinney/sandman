@@ -362,14 +362,21 @@
 	 */
 	async function sendActivityHeartbeat(sandboxId: string): Promise<void> {
 		try {
-			await fetch('/api/session/heartbeat', {
+			const response = await fetch('/api/session/heartbeat', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				credentials: 'same-origin',
 				body: JSON.stringify({ sandboxId })
 			});
+			// A lost or rejected heartbeat must not consume the throttle window —
+			// reopen it so the next gesture retries instead of being swallowed until
+			// the window elapses (which, near the end of the TTL, could end an
+			// actively-resumed session).
+			if (!response.ok) activityThrottle.reset();
 		} catch {
-			// Offline/transient network failure — the next gesture retries naturally.
+			// Offline/transient network failure — reopen the window so the next
+			// gesture retries immediately.
+			activityThrottle.reset();
 		}
 	}
 

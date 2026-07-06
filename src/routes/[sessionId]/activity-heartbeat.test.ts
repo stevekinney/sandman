@@ -30,4 +30,16 @@ describe('createActivityThrottle', () => {
 		expect(throttle.attempt()).toBe(true);
 		expect(throttle.attempt()).toBe(false);
 	});
+
+	it('reset() reopens the window so the next attempt retries immediately', () => {
+		let clock = 0;
+		const throttle = createActivityThrottle(60_000, () => clock);
+		expect(throttle.attempt()).toBe(true);
+		clock = 1_000;
+		expect(throttle.attempt()).toBe(false);
+
+		// Simulate a failed heartbeat reopening the window.
+		throttle.reset();
+		expect(throttle.attempt()).toBe(true);
+	});
 });

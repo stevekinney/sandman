@@ -70,8 +70,9 @@ export function getSandboxRegistry(): Registry {
 			// that default (e.g. the 15-minute TTL vs. the 10-minute client default)
 			// would let E2B kill a provisioned-but-untouched sandbox's VM before its
 			// DB row, the in-memory reaper, and the UI countdown agree it has
-			// expired. (The worker's own command timeout is deliberately NOT tied to
-			// this — see WORKER_COMMAND_TIMEOUT_MS in client.ts.)
+			// expired. (The long-running background commands' own timeouts are
+			// deliberately NOT tied to this — see BACKGROUND_COMMAND_TIMEOUT_MS in
+			// client.ts.)
 			sandboxTimeoutMs: configuration.sessionTtlMs
 		});
 		const handles = new Map<string, SandboxHandle>();

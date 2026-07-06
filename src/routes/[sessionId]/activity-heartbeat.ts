@@ -25,6 +25,13 @@ export type ActivityThrottle = {
 	 * attempt; returns `false` without resetting the window otherwise.
 	 */
 	attempt: () => boolean;
+	/**
+	 * Reopen the window immediately, so the next `attempt()` succeeds. Call this
+	 * when a heartbeat POST failed — otherwise a lost/rejected request would
+	 * consume the throttle window and swallow every gesture until it elapses,
+	 * which near the end of the TTL could end an actively-resumed session.
+	 */
+	reset: () => void;
 };
 
 /**
@@ -46,6 +53,9 @@ export function createActivityThrottle(
 			if (currentTime - lastSentAt < windowMs) return false;
 			lastSentAt = currentTime;
 			return true;
+		},
+		reset(): void {
+			lastSentAt = -Infinity;
 		}
 	};
 }
