@@ -13,7 +13,7 @@ import TemporalUiFrame from './temporal-ui-frame.svelte';
 const connectedProbe = () => vi.fn(async () => true);
 const disconnectedProbe = () => vi.fn(async () => false);
 const inertFrameSource = 'about:blank';
-const temporalUiStatus = () => page.getByRole('status').first();
+const temporalUiStatus = () => page.getByTestId('temporal-ui-status').getByRole('status');
 
 describe('TemporalUiFrame', () => {
 	afterEach(() => vi.restoreAllMocks());

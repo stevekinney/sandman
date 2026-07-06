@@ -135,7 +135,7 @@
 </script>
 
 <div class="temporal-ui-frame {className ?? ''}">
-	<div class="temporal-ui-frame__status">
+	<div class="temporal-ui-frame__status" data-testid="temporal-ui-status">
 		<StatusDot {connectionState} label="Temporal UI" showLabel />
 	</div>
 	{#if iframeReady}

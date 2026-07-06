@@ -13,7 +13,6 @@
 	 */
 	import Button from '@lostgradient/cinder/button';
 	import Toolbar from '@lostgradient/cinder/toolbar';
-	import { Tabs } from '@lostgradient/cinder/tabs';
 	import type { ControlId } from '$lib/contracts/workflow-api';
 	import type { SessionState } from './session-state.svelte.ts';
 	import type { CenterView } from './session-actions.ts';
@@ -112,12 +111,38 @@
 	</Toolbar>
 
 	<div class="toolbar-shell__view">
-		<Tabs bind:value={view} class="toolbar-shell__tabs">
-			<Tabs.List label="Workbench view">
-				<Tabs.Trigger value="code">Code</Tabs.Trigger>
-				<Tabs.Trigger value="temporal">Temporal UI</Tabs.Trigger>
-			</Tabs.List>
-		</Tabs>
+		<div role="tablist" aria-label="Workbench view" class="cinder-tab-list toolbar-shell__tabs">
+			<button
+				type="button"
+				role="tab"
+				id="center-view-code-tab"
+				class="cinder-tab"
+				data-cinder-active={view === 'code' ? '' : undefined}
+				data-cinder-value="code"
+				data-variant="horizontal"
+				aria-selected={view === 'code'}
+				aria-controls="center-panel-code"
+				tabindex={view === 'code' ? 0 : -1}
+				onclick={() => (view = 'code')}
+			>
+				Code
+			</button>
+			<button
+				type="button"
+				role="tab"
+				id="center-view-temporal-tab"
+				class="cinder-tab"
+				data-cinder-active={view === 'temporal' ? '' : undefined}
+				data-cinder-value="temporal"
+				data-variant="horizontal"
+				aria-selected={view === 'temporal'}
+				aria-controls="center-panel-temporal"
+				tabindex={view === 'temporal' ? 0 : -1}
+				onclick={() => (view = 'temporal')}
+			>
+				Temporal UI
+			</button>
+		</div>
 	</div>
 </div>
 
@@ -149,8 +174,7 @@
 		margin-inline-start: auto;
 	}
 
-	.toolbar-shell__view :global(.toolbar-shell__tabs),
-	.toolbar-shell__view :global(.cinder-tab-list) {
+	.toolbar-shell__view .toolbar-shell__tabs {
 		inline-size: 100%;
 	}
 

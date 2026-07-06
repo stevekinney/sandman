@@ -56,7 +56,7 @@
 				<p class="sandbox-readiness-gate__copy">{startupProgress.currentStepDescription}</p>
 
 				<div class="sandbox-readiness-gate__progress-row">
-					<span>
+					<span id="sandbox-startup-progress-label">
 						Step {startupProgress.currentStepNumber} of {startupProgress.totalStepCount}
 					</span>
 					<span>{startupProgress.percent}%</span>
@@ -65,7 +65,7 @@
 					class="sandbox-readiness-gate__progress"
 					value={startupProgress.percent}
 					label={startupProgress.currentStepDescription}
-					ariaLabel="Sandbox startup progress"
+					ariaLabelledby="sandbox-startup-progress-label"
 				/>
 
 				<Steps

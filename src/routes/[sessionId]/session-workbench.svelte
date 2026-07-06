@@ -102,6 +102,7 @@
 			id="center-panel-code"
 			role="tabpanel"
 			aria-label="Code editor"
+			aria-labelledby="center-view-code-tab"
 			class="session-workbench__panel"
 			class:session-workbench__panel--hidden={centerView !== 'code'}
 		>
@@ -111,6 +112,7 @@
 			id="center-panel-temporal"
 			role="tabpanel"
 			aria-label="Temporal Web UI"
+			aria-labelledby="center-view-temporal-tab"
 			class="session-workbench__panel"
 			class:session-workbench__panel--hidden={centerView !== 'temporal'}
 		>
