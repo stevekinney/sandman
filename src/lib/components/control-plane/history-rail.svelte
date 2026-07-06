@@ -8,8 +8,6 @@
 	 * Temporal Web UI in the center view.
 	 */
 	import EmptyState from '@lostgradient/cinder/empty-state';
-	import Segment from '@lostgradient/cinder/segment';
-	import SegmentedControl from '@lostgradient/cinder/segmented-control';
 	import '@lostgradient/cinder/empty-state/styles';
 	import '@lostgradient/cinder/segmented-control/styles';
 	import type { EventStreamState } from '@lostgradient/cinder/event-stream-viewer';
@@ -29,23 +27,68 @@
 	const eventStreamState = $derived<EventStreamState>(
 		!session.workerOnline ? 'disconnected' : session.workerRestarting ? 'connecting' : 'connected'
 	);
+
+	function setLens(nextLens: 'events' | 'steps'): void {
+		lens = nextLens;
+	}
+
+	function focusLens(nextLens: 'events' | 'steps'): void {
+		document.querySelector<HTMLButtonElement>(`[data-history-lens="${nextLens}"]`)?.focus();
+	}
+
+	function handleLensKeydown(event: KeyboardEvent): void {
+		const nextLens =
+			event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === 'End'
+				? 'steps'
+				: event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'Home'
+					? 'events'
+					: null;
+
+		if (nextLens === null) return;
+		event.preventDefault();
+		setLens(nextLens);
+		requestAnimationFrame(() => focusLens(nextLens));
+	}
 </script>
 
 <aside class="history" aria-label="Workflow history">
 	<div class="history__header">
 		<h2 class="history__title">Workflow history</h2>
-		<SegmentedControl
+		<div
 			id="history-lens"
-			label="History lens"
-			hideLabel
-			size="sm"
-			fullWidth
-			value={lens}
-			onchange={(next) => (lens = next as 'events' | 'steps')}
+			class="cinder-segmented-control"
+			role="radiogroup"
+			aria-label="History lens"
+			data-cinder-size="sm"
+			data-cinder-full-width=""
 		>
-			<Segment value="events">Events</Segment>
-			<Segment value="steps">Steps</Segment>
-		</SegmentedControl>
+			<button
+				type="button"
+				class="cinder-segmented-control-option"
+				role="radio"
+				aria-checked={lens === 'events'}
+				tabindex={lens === 'events' ? 0 : -1}
+				data-history-lens="events"
+				data-cinder-selected={lens === 'events' ? '' : undefined}
+				onclick={() => setLens('events')}
+				onkeydown={handleLensKeydown}
+			>
+				Events
+			</button>
+			<button
+				type="button"
+				class="cinder-segmented-control-option"
+				role="radio"
+				aria-checked={lens === 'steps'}
+				tabindex={lens === 'steps' ? 0 : -1}
+				data-history-lens="steps"
+				data-cinder-selected={lens === 'steps' ? '' : undefined}
+				onclick={() => setLens('steps')}
+				onkeydown={handleLensKeydown}
+			>
+				Steps
+			</button>
+		</div>
 	</div>
 
 	{#if lens === 'events'}

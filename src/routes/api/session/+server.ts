@@ -13,16 +13,10 @@ import {
 import { assertSameOrigin } from '$lib/server/security/origin';
 import { logError, logInfo, logWarning } from '$lib/server/logging';
 
-type SessionRequestBody = {
-	token: string;
-};
-
-function isSessionRequestBody(value: unknown): value is SessionRequestBody {
-	return (
-		typeof value === 'object' &&
-		value !== null &&
-		typeof (value as Record<string, unknown>).token === 'string'
-	);
+function getStringField(value: unknown, field: string): string | null {
+	if (typeof value !== 'object' || value === null) return null;
+	const fieldValue = Reflect.get(value, field);
+	return typeof fieldValue === 'string' ? fieldValue : null;
 }
 
 export const POST: RequestHandler = async (event) => {
@@ -43,11 +37,17 @@ export const POST: RequestHandler = async (event) => {
 		throw error(400, 'Request body must be valid JSON');
 	}
 
-	if (!isSessionRequestBody(body)) {
+	const token = getStringField(body, 'token')?.trim();
+	if (!token) {
 		throw error(400, 'Request body must include "token"');
 	}
 
-	if (!validateDemoToken(body.token, configuration.demoTokenHash)) {
+	const email = getStringField(body, 'email')?.trim();
+	if (!email) {
+		throw error(400, 'Request body must include "email"');
+	}
+
+	if (!validateDemoToken(token, configuration.demoTokenHash)) {
 		logWarning({ event: 'demo_session.rejected', status: 'invalid-token' });
 		throw error(401, 'Invalid invite code');
 	}
@@ -57,7 +57,8 @@ export const POST: RequestHandler = async (event) => {
 	try {
 		await createDemoSession(getDatabase(configuration.databaseUrl), {
 			sessionId,
-			tokenHash: hashDemoToken(body.token),
+			tokenHash: hashDemoToken(token),
+			email,
 			now
 		});
 	} catch (err) {

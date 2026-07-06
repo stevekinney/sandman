@@ -24,6 +24,7 @@ export type SandboxSessionStatus =
 export const demoSession = pgTable('demo_session', {
 	id: text('id').primaryKey(),
 	tokenHash: text('token_hash').notNull(),
+	email: text('email'),
 	status: text('status').notNull().default(DEMO_SESSION_STATUS.Active),
 	createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 	lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow()

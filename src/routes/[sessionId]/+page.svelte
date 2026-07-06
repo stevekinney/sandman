@@ -21,7 +21,7 @@
 	import Button from '@lostgradient/cinder/button';
 	import SkipLink from '@lostgradient/cinder/skip-link';
 	import StatusDot from '@lostgradient/cinder/status-dot';
-	import ToastRegion from '@lostgradient/cinder/toast-region';
+	import { ToastRegion } from '@lostgradient/cinder';
 	import '@lostgradient/cinder/alert/styles';
 	import '@lostgradient/cinder/button/styles';
 	import '@lostgradient/cinder/status-dot/styles';

@@ -99,6 +99,51 @@ test('the center view switch exposes Code and Temporal UI as tabs', async ({ pag
 	await expect(page.locator('#center-panel-code')).toBeHidden();
 });
 
+test('segmented controls and file tabs support arrow-key navigation', async ({ page }) => {
+	await mockReadySandbox(page);
+	await page.goto(`/${TEST_SESSION_ID}`);
+
+	const viewSwitch = page.getByRole('tablist', { name: 'Workbench view' });
+	const codeTab = viewSwitch.getByRole('tab', { name: 'Code' });
+	const temporalTab = viewSwitch.getByRole('tab', { name: 'Temporal UI' });
+	await expect(codeTab).toHaveAttribute('tabindex', '0');
+	await expect(temporalTab).toHaveAttribute('tabindex', '-1');
+
+	await codeTab.focus();
+	await page.keyboard.press('ArrowRight');
+	await expect(temporalTab).toHaveAttribute('aria-selected', 'true');
+	await expect(temporalTab).toHaveAttribute('tabindex', '0');
+	await expect(temporalTab).toBeFocused();
+
+	await page.keyboard.press('ArrowLeft');
+	await expect(codeTab).toHaveAttribute('aria-selected', 'true');
+	await expect(codeTab).toBeFocused();
+
+	const historyLens = page.getByRole('radiogroup', { name: 'History lens' });
+	const eventsLens = historyLens.getByRole('radio', { name: 'Events' });
+	const stepsLens = historyLens.getByRole('radio', { name: 'Steps' });
+	await expect(eventsLens).toHaveAttribute('tabindex', '0');
+	await expect(stepsLens).toHaveAttribute('tabindex', '-1');
+
+	await eventsLens.focus();
+	await page.keyboard.press('ArrowRight');
+	await expect(stepsLens).toHaveAttribute('aria-checked', 'true');
+	await expect(stepsLens).toHaveAttribute('tabindex', '0');
+	await expect(stepsLens).toBeFocused();
+
+	const editorTabs = page.getByRole('tablist', { name: 'Editor files' });
+	const orderWorkflowTab = editorTabs.getByRole('tab', { name: 'order-workflow.ts' });
+	const deliveryWorkflowTab = editorTabs.getByRole('tab', { name: 'delivery-workflow.ts' });
+	await expect(orderWorkflowTab).toHaveAttribute('tabindex', '0');
+	await expect(deliveryWorkflowTab).toHaveAttribute('tabindex', '-1');
+
+	await orderWorkflowTab.focus();
+	await page.keyboard.press('ArrowRight');
+	await expect(deliveryWorkflowTab).toHaveAttribute('aria-selected', 'true');
+	await expect(deliveryWorkflowTab).toHaveAttribute('tabindex', '0');
+	await expect(deliveryWorkflowTab).toBeFocused();
+});
+
 test('topology strip shows the client, server, and worker nodes', async ({ page }) => {
 	await page.goto(`/${TEST_SESSION_ID}`);
 	const topology = page.locator('[aria-label="System topology"]');
