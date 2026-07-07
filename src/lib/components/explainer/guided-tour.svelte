@@ -6,13 +6,11 @@
 	 * "watch for this" line, and a call-to-action button when the step is driven
 	 * by a control), plus the full ordered step list beneath it. Progress is
 	 * event-driven: the parent advances `progress` as workflow events arrive.
-	 *
-	 * Uses a plain accessible ordered list because the tour can skip past steps
-	 * that should not be announced or styled as completed. Cinder tracking:
-	 * https://github.com/stevekinney/cinder/issues/655
 	 */
 	import Button from '@lostgradient/cinder/button';
 	import Spinner from '@lostgradient/cinder/spinner';
+	import Steps from '@lostgradient/cinder/steps';
+	import type { StepItem } from '@lostgradient/cinder/steps';
 	import MarkdownText from './markdown-text.svelte';
 	import type { TourProgress } from '$lib/content/tour-engine';
 	import { TOUR } from '$lib/content/demo-script';
@@ -79,6 +77,14 @@
 	const isComplete = $derived(activeStep >= TOUR.length);
 	const currentStep = $derived(TOUR[activeStep]);
 	const ctaControl = $derived(isComplete ? undefined : currentStep?.control);
+	const tourSteps = $derived<StepItem[]>(
+		TOUR.map((step, i) => ({
+			id: step.id,
+			label: step.title,
+			state: i < activeStep && !progress.completedStepIds.includes(step.id) ? 'skipped' : undefined
+		}))
+	);
+	const currentTourStep = $derived(Math.min(activeStep, TOUR.length));
 
 	function getActionLabel(control: ControlId): string {
 		switch (control) {
@@ -224,35 +230,17 @@
 			{/if}
 		</div>
 
-		<!-- Step overview — accessible ordered list with aria-current on the active step -->
-		<nav aria-label="Tour progress" class="journey__nav">
+		<!-- Step overview -->
+		<div class="journey__nav">
 			<p class="journey__nav-label">All steps</p>
-			<ol class="journey__steps">
-				{#each TOUR as step, i (step.id)}
-					{@const isDone = progress.completedStepIds.includes(step.id)}
-					{@const isActive = i === activeStep && !isComplete}
-					<!-- A step the tour advanced past without completing it (skipped
-					     because its event could never fire) is neither done nor active. -->
-					{@const isSkipped = i < activeStep && !isDone}
-					<li
-						class={[
-							'journey__step',
-							isDone && 'journey__step--done',
-							isSkipped && 'journey__step--skipped',
-							isActive && 'journey__step--active'
-						]}
-						aria-current={isActive ? 'step' : undefined}
-					>
-						<span class="journey__step-marker" aria-hidden="true">
-							{#if isDone}✓{:else if isSkipped}–{:else}{i + 1}{/if}
-						</span>
-						<span class="journey__step-label">
-							{step.title}{#if isSkipped}<span class="journey__step-note"> (skipped)</span>{/if}
-						</span>
-					</li>
-				{/each}
-			</ol>
-		</nav>
+			<Steps
+				steps={tourSteps}
+				currentStep={currentTourStep}
+				orientation="vertical"
+				label="Tour progress"
+				class="journey__steps"
+			/>
+		</div>
 	</div>
 </section>
 
@@ -449,70 +437,7 @@
 		color: var(--cinder-text-subtle);
 	}
 
-	.journey__steps {
-		list-style: none;
+	.journey :global(.journey__steps) {
 		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.125rem;
-	}
-
-	.journey__step {
-		display: flex;
-		align-items: center;
-		gap: 0.625rem;
-		padding: 0.375rem 0.5rem;
-		border-radius: 0.5rem;
-		font-size: 0.78rem;
-		color: var(--cinder-text-subtle);
-	}
-
-	.journey__step--done {
-		color: var(--cinder-text-muted);
-	}
-
-	.journey__step--skipped {
-		color: var(--cinder-text-subtle);
-	}
-
-	.journey__step-note {
-		font-style: italic;
-		color: var(--cinder-text-subtle);
-	}
-
-	.journey__step--active {
-		background: color-mix(in oklch, var(--cinder-accent), transparent 90%);
-		color: var(--cinder-text);
-		font-weight: 650;
-	}
-
-	.journey__step-marker {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 1.25rem;
-		height: 1.25rem;
-		flex: none;
-		border-radius: 50%;
-		font-size: 0.65rem;
-		font-weight: 700;
-		background: var(--cinder-surface-inset);
-		color: var(--cinder-text-subtle);
-	}
-
-	.journey__step--done .journey__step-marker {
-		background: var(--cinder-success);
-		color: #fff;
-	}
-
-	.journey__step--skipped .journey__step-marker {
-		background: var(--cinder-surface-inset);
-		color: var(--cinder-text-subtle);
-	}
-
-	.journey__step--active .journey__step-marker {
-		background: var(--cinder-accent);
-		color: var(--cinder-accent-contrast);
 	}
 </style>
