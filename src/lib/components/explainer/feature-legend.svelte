@@ -7,7 +7,6 @@
 	import Badge from '@lostgradient/cinder/badge';
 	import Table from '@lostgradient/cinder/table';
 	import { FEATURE_MAP } from '$lib/content/demo-script';
-	import '@lostgradient/cinder/table/styles';
 
 	const entries = Object.values(FEATURE_MAP);
 </script>

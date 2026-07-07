@@ -66,13 +66,12 @@ describe('GuidedTour', () => {
 
 		const nav = page.getByRole('navigation', { name: 'Tour progress' });
 		const skippedItem = nav.getByText(TOUR[1].title).element().closest('li');
-		expect(skippedItem?.className).toContain('journey__step--skipped');
-		expect(skippedItem?.className).not.toContain('journey__step--done');
+		expect(skippedItem?.getAttribute('data-cinder-state')).toBe('skipped');
 
 		// The completed step still reads as done.
 		const doneItem = nav.getByText(TOUR[0].title).element().closest('li');
-		expect(doneItem?.className).toContain('journey__step--done');
-		await expect.element(nav.getByText('(skipped)', { exact: false })).toBeInTheDocument();
+		expect(doneItem?.getAttribute('data-cinder-state')).toBe('complete');
+		await expect.element(nav.getByText('Skipped', { exact: false })).toBeInTheDocument();
 	});
 
 	it('shows the CTA when enabled and dispatches the step control', async () => {

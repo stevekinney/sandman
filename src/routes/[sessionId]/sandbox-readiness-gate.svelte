@@ -1,6 +1,8 @@
 <script lang="ts">
 	import Button from '@lostgradient/cinder/button';
-	import '@lostgradient/cinder/button/styles';
+	import Progress from '@lostgradient/cinder/progress';
+	import Steps from '@lostgradient/cinder/steps';
+	import type { StepItem } from '@lostgradient/cinder/steps';
 	import {
 		getSandboxStartupProgress,
 		getSandboxStatusFailureMessage,
@@ -21,6 +23,14 @@
 	const visible = $derived(starting || unavailable);
 	const startupProgress = $derived(getSandboxStartupProgress(status));
 	const failureMessage = $derived(getSandboxStatusFailureMessage(status, errorMessage));
+	const readinessSteps = $derived<StepItem[]>(
+		startupProgress.steps.map((step) => ({
+			id: step.id,
+			label: step.label,
+			description: step.description
+		}))
+	);
+	const currentReadinessStep = $derived(startupProgress.currentStepNumber - 1);
 	const gateRole = $derived(starting ? 'status' : 'alert');
 	const gateLive = $derived(starting ? 'polite' : 'assertive');
 	const unavailableEyebrow = $derived(
@@ -46,31 +56,25 @@
 				<p class="sandbox-readiness-gate__copy">{startupProgress.currentStepDescription}</p>
 
 				<div class="sandbox-readiness-gate__progress-row">
-					<span>
+					<span id="sandbox-startup-progress-label">
 						Step {startupProgress.currentStepNumber} of {startupProgress.totalStepCount}
 					</span>
 					<span>{startupProgress.percent}%</span>
 				</div>
-				<progress
+				<Progress
 					class="sandbox-readiness-gate__progress"
 					value={startupProgress.percent}
-					max="100"
-					aria-label="Sandbox startup progress"
-				>
-					{startupProgress.percent}%
-				</progress>
+					label={startupProgress.currentStepDescription}
+					ariaLabelledby="sandbox-startup-progress-label"
+				/>
 
-				<ol class="sandbox-readiness-gate__steps">
-					{#each startupProgress.steps as step (step.id)}
-						<li class="sandbox-readiness-gate__step" data-state={step.state}>
-							<span class="sandbox-readiness-gate__step-dot" aria-hidden="true"></span>
-							<span>
-								<span class="sandbox-readiness-gate__step-label">{step.label}</span>
-								<span class="sandbox-readiness-gate__step-description">{step.description}</span>
-							</span>
-						</li>
-					{/each}
-				</ol>
+				<Steps
+					steps={readinessSteps}
+					currentStep={currentReadinessStep}
+					orientation="vertical"
+					label="Sandbox startup steps"
+					class="sandbox-readiness-gate__steps"
+				/>
 			{:else}
 				<p class="sandbox-readiness-gate__eyebrow">{unavailableEyebrow}</p>
 				<h2 class="sandbox-readiness-gate__title">{unavailableTitle}</h2>
@@ -140,86 +144,11 @@
 		color: var(--cinder-text);
 	}
 
-	.sandbox-readiness-gate__progress {
+	.sandbox-readiness-gate :global(.sandbox-readiness-gate__progress) {
 		width: 100%;
-		height: 0.5rem;
-		overflow: hidden;
-		border: none;
-		border-radius: 999px;
-		background: var(--cinder-surface-inset);
 	}
 
-	.sandbox-readiness-gate__progress::-webkit-progress-bar {
-		background: var(--cinder-surface-inset);
-	}
-
-	.sandbox-readiness-gate__progress::-webkit-progress-value {
-		border-radius: 999px;
-		background: linear-gradient(90deg, var(--cinder-accent), #38bdf8);
-	}
-
-	.sandbox-readiness-gate__progress::-moz-progress-bar {
-		border-radius: 999px;
-		background: linear-gradient(90deg, var(--cinder-accent), #38bdf8);
-	}
-
-	.sandbox-readiness-gate__steps {
-		display: grid;
-		gap: 0.625rem;
-		margin: 0.25rem 0 0;
-		padding: 0;
-		list-style: none;
-	}
-
-	.sandbox-readiness-gate__step {
-		display: grid;
-		grid-template-columns: 0.75rem 1fr;
-		gap: 0.625rem;
-		align-items: start;
-		color: var(--cinder-text-subtle);
-	}
-
-	.sandbox-readiness-gate__step[data-state='complete'] {
-		color: var(--cinder-color-success-fg, #86efac);
-	}
-
-	.sandbox-readiness-gate__step[data-state='current'] {
-		color: var(--cinder-text);
-	}
-
-	.sandbox-readiness-gate__step-dot {
-		width: 0.625rem;
-		height: 0.625rem;
+	.sandbox-readiness-gate :global(.sandbox-readiness-gate__steps) {
 		margin-top: 0.25rem;
-		border: 2px solid currentColor;
-		border-radius: 999px;
-		background: transparent;
-	}
-
-	.sandbox-readiness-gate__step[data-state='complete'] .sandbox-readiness-gate__step-dot,
-	.sandbox-readiness-gate__step[data-state='current'] .sandbox-readiness-gate__step-dot {
-		background: currentColor;
-	}
-
-	.sandbox-readiness-gate__step-label,
-	.sandbox-readiness-gate__step-description {
-		display: block;
-	}
-
-	.sandbox-readiness-gate__step-label {
-		font-size: 0.8125rem;
-		font-weight: 700;
-		color: currentColor;
-	}
-
-	.sandbox-readiness-gate__step-description {
-		margin-top: 0.125rem;
-		font-size: 0.75rem;
-		line-height: 1.4;
-		color: var(--cinder-text-muted);
-	}
-
-	.sandbox-readiness-gate__step[data-state='upcoming'] .sandbox-readiness-gate__step-description {
-		color: var(--cinder-text-subtle);
 	}
 </style>

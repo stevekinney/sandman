@@ -19,6 +19,7 @@
 	 */
 
 	import StatusDot from '@lostgradient/cinder/status-dot';
+	import Spinner from '@lostgradient/cinder/spinner';
 	import type { StatusDotConnectionState } from '@lostgradient/cinder/status-dot';
 
 	type TemporalUiProbe = (url: string, signal: AbortSignal) => Promise<boolean>;
@@ -186,7 +187,7 @@
 </script>
 
 <div class="temporal-ui-frame {className ?? ''}">
-	<div class="temporal-ui-frame__status">
+	<div class="temporal-ui-frame__status" data-testid="temporal-ui-status">
 		<StatusDot {connectionState} label="Temporal UI" showLabel />
 	</div>
 	{#if iframeReady}
@@ -201,7 +202,7 @@
 		{/key}
 	{:else}
 		<div class="temporal-ui-frame__startup" aria-live="polite">
-			<div class="temporal-ui-frame__spinner" aria-hidden="true"></div>
+			<Spinner size="lg" label={startupTitle} />
 			<div>
 				<h2>{startupTitle}</h2>
 				<p>{startupDetail}</p>
@@ -253,20 +254,5 @@
 		margin: 0.6rem auto 0;
 		color: var(--cinder-text-muted);
 		line-height: 1.5;
-	}
-
-	.temporal-ui-frame__spinner {
-		width: 2rem;
-		height: 2rem;
-		border: 3px solid var(--cinder-border);
-		border-top-color: var(--cinder-accent);
-		border-radius: 999px;
-		animation: temporal-ui-spin 0.9s linear infinite;
-	}
-
-	@keyframes temporal-ui-spin {
-		to {
-			transform: rotate(360deg);
-		}
 	}
 </style>

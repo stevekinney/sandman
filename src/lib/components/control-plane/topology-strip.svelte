@@ -9,8 +9,6 @@
 	 */
 	import Button from '@lostgradient/cinder/button';
 	import StatusDot from '@lostgradient/cinder/status-dot';
-	import '@lostgradient/cinder/button/styles';
-	import '@lostgradient/cinder/status-dot/styles';
 	import type { SessionState } from './session-state.svelte.ts';
 
 	let { session, sandboxStatus }: { session: SessionState; sandboxStatus: string } = $props();

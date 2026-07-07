@@ -13,9 +13,6 @@
 	import Alert from '@lostgradient/cinder/alert';
 	import Button from '@lostgradient/cinder/button';
 	import Input from '@lostgradient/cinder/input';
-	import '@lostgradient/cinder/alert/styles';
-	import '@lostgradient/cinder/button/styles';
-	import '@lostgradient/cinder/input/styles';
 	import { SITE_DESCRIPTION, SITE_TITLE } from '$lib/metadata';
 	import { concepts, faqs, phases, surfaces, tour, type IconPart } from './splash-content';
 

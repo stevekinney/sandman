@@ -8,9 +8,6 @@
 	 *
 	 * Monaco is loaded lazily in the browser only.
 	 */
-	import '@lostgradient/cinder/tab/styles';
-	import '@lostgradient/cinder/tab-list/styles';
-	import '@lostgradient/cinder/tabs/styles';
 	import { FILE_DESCRIPTORS } from '$lib/components/editor/file-descriptors';
 	import { getDeterminismMarkers } from '$lib/components/editor/determinism-guard';
 	import { createDebounce } from '$lib/components/editor/debounce';
@@ -29,7 +26,6 @@
 	import WorkerStatusStrip from '$lib/components/editor/worker-status-strip.svelte';
 	import type { WorkerStatus } from '$lib/contracts/sandbox';
 	import type * as Monaco from 'monaco-editor';
-	import { onMount } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 
 	type Props = {
@@ -53,7 +49,6 @@
 	);
 	let workerStatus = $state<WorkerStatus | null>(null);
 	let isLoading = $state(false);
-	let isMounted = $state(false);
 	let editorContainer = $state<HTMLDivElement | undefined>();
 	/** Bumped when Monaco finishes loading so pointer effects re-run. */
 	let monacoReady = $state(false);
@@ -61,6 +56,40 @@
 	let contentRevision = $state(0);
 	/** Resolved 1-based line of the current execution pointer, if found. */
 	let executionLine = $state<number | null>(null);
+
+	function editorTabId(fileName: string): string {
+		return `editor-tab-${fileName}`;
+	}
+
+	function focusEditorTab(fileName: string): void {
+		const element = document.getElementById(editorTabId(fileName));
+		if (element instanceof HTMLButtonElement) element.focus();
+	}
+
+	function selectEditorFile(fileName: string): void {
+		activeFileName = fileName;
+		focusEditorTab(fileName);
+	}
+
+	function handleEditorTabKeydown(event: KeyboardEvent): void {
+		const currentIndex = FILE_DESCRIPTORS.findIndex(
+			(descriptor) => descriptor.name === activeFileName
+		);
+		const lastIndex = FILE_DESCRIPTORS.length - 1;
+		const nextIndex =
+			event.key === 'Home'
+				? 0
+				: event.key === 'End'
+					? lastIndex
+					: event.key === 'ArrowRight' || event.key === 'ArrowDown'
+						? Math.min(currentIndex + 1, lastIndex)
+						: event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+							? Math.max(currentIndex - 1, 0)
+							: null;
+		if (nextIndex === null) return;
+		event.preventDefault();
+		selectEditorFile(FILE_DESCRIPTORS[nextIndex].name);
+	}
 
 	// ---------------------------------------------------------------------------
 	// Imperative Monaco handles — plain variables, no Svelte tracking needed
@@ -88,53 +117,6 @@
 			_debouncers.set(path, createDebounce(saveFile, 750));
 		}
 		return _debouncers.get(path)!;
-	}
-
-	function focusFileTab(fileName: string): void {
-		document.querySelector<HTMLButtonElement>(`[data-file-tab="${CSS.escape(fileName)}"]`)?.focus();
-	}
-
-	function selectFileByOffset(offset: number): void {
-		const currentIndex = FILE_DESCRIPTORS.findIndex(
-			(descriptor) => descriptor.name === activeFileName
-		);
-		const nextIndex = (currentIndex + offset + FILE_DESCRIPTORS.length) % FILE_DESCRIPTORS.length;
-		const nextFileName = FILE_DESCRIPTORS[nextIndex].name;
-
-		selectFile(nextFileName);
-		requestAnimationFrame(() => focusFileTab(nextFileName));
-	}
-
-	function selectFileByIndex(index: number): void {
-		const nextFileName = FILE_DESCRIPTORS[index].name;
-
-		selectFile(nextFileName);
-		requestAnimationFrame(() => focusFileTab(nextFileName));
-	}
-
-	function handleFileTabKeydown(event: KeyboardEvent): void {
-		if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-			event.preventDefault();
-			selectFileByOffset(1);
-			return;
-		}
-
-		if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-			event.preventDefault();
-			selectFileByOffset(-1);
-			return;
-		}
-
-		if (event.key === 'Home') {
-			event.preventDefault();
-			selectFileByIndex(0);
-			return;
-		}
-
-		if (event.key === 'End') {
-			event.preventDefault();
-			selectFileByIndex(FILE_DESCRIPTORS.length - 1);
-		}
 	}
 
 	/** POSTs a file payload to the sandbox files route and updates workerStatus. */
@@ -169,17 +151,6 @@
 			markers.map((m) => ({ ...m, source: 'Temporal determinism guard' }))
 		);
 	}
-
-	// ---------------------------------------------------------------------------
-	// Client mount guard — the cinder <Tabs> are browser-only, so we render an
-	// SSR placeholder and swap them in after hydration. onMount runs once on the
-	// client after hydration completes, which keeps the server and initial-client
-	// render identical (no hydration mismatch).
-	// ---------------------------------------------------------------------------
-
-	onMount(() => {
-		isMounted = true;
-	});
 
 	$effect(() => {
 		// Use a native browser check rather than $app/environment (a SvelteKit virtual
@@ -275,10 +246,6 @@
 	// ---------------------------------------------------------------------------
 	// File switching — reacts to activeFile tab selection
 	// ---------------------------------------------------------------------------
-
-	function selectFile(fileName: string): void {
-		activeFileName = fileName;
-	}
 
 	$effect(() => {
 		const file = activeFile; // tracked dependency
@@ -376,54 +343,64 @@
 </script>
 
 <div class="sandman-editor">
-	{#if isMounted}
-		<div class="cinder-tabs editor-tabs">
-			<div role="tablist" aria-label="Editor files" class="cinder-tab-list editor-tab-list">
-				{#each FILE_DESCRIPTORS as descriptor (descriptor.name)}
-					<button
-						type="button"
-						role="tab"
-						aria-selected={activeFile.name === descriptor.name}
-						tabindex={activeFile.name === descriptor.name ? 0 : -1}
-						data-file-tab={descriptor.name}
-						class={`cinder-tab editor-tab${activeFile.name === descriptor.name ? ' active' : ''}${
-							descriptor.readOnly ? ' readonly' : ''
-						}`}
-						onclick={() => selectFile(descriptor.name)}
-						onkeydown={handleFileTabKeydown}
-					>
-						{descriptor.name}
-						{#if descriptor.readOnly}
-							<span class="readonly-badge" aria-hidden="true">read-only</span>
-						{/if}
-					</button>
-				{/each}
-			</div>
+	<div class="editor-tabs">
+		<div role="tablist" aria-label="Editor files" class="cinder-tab-list editor-tab-list">
+			{#each FILE_DESCRIPTORS as descriptor (descriptor.name)}
+				<button
+					type="button"
+					role="tab"
+					id={editorTabId(descriptor.name)}
+					class={`cinder-tab editor-tab${activeFile.name === descriptor.name ? ' active' : ''}${
+						descriptor.readOnly ? ' readonly' : ''
+					}`}
+					data-cinder-active={activeFile.name === descriptor.name ? '' : undefined}
+					data-cinder-value={descriptor.name}
+					data-variant="horizontal"
+					aria-selected={activeFile.name === descriptor.name}
+					aria-controls="editor-panel"
+					tabindex={activeFile.name === descriptor.name ? 0 : -1}
+					onclick={() => selectEditorFile(descriptor.name)}
+					onkeydown={handleEditorTabKeydown}
+				>
+					{descriptor.name}
+					{#if descriptor.readOnly}
+						<span class="readonly-badge" aria-hidden="true">read-only</span>
+					{/if}
+				</button>
+			{/each}
 		</div>
-	{:else}
-		<div class="editor-tabs-placeholder" aria-hidden="true"></div>
-	{/if}
+	</div>
 
 	{#if isLoading}
 		<div class="editor-saving" aria-live="polite" aria-label="Saving file">Saving…</div>
 	{/if}
 
-	<section class="file-purpose" aria-label="Current file purpose">
-		<strong>{activeFile.name}</strong>
-		<span>{activeFile.purpose}</span>
-	</section>
+	<div
+		id="editor-panel"
+		role="tabpanel"
+		tabindex="0"
+		aria-labelledby={editorTabId(activeFile.name)}
+		class="editor-panel"
+	>
+		<section class="file-purpose" aria-label="Current file purpose">
+			<strong>{activeFile.name}</strong>
+			<span>{activeFile.purpose}</span>
+		</section>
 
-	{#if execution !== null && executionLine !== null}
-		<div class={`exec-caption exec-caption--${execution.state}`} role="status" aria-live="polite">
-			<span class="exec-caption__marker" aria-hidden="true">{executionMarker(execution.state)}</span
-			>
-			<span>{executionCaption(execution, executionLine, execution.file === activeFile.name)}</span>
-		</div>
-	{/if}
+		{#if execution !== null && executionLine !== null}
+			<div class={`exec-caption exec-caption--${execution.state}`} role="status" aria-live="polite">
+				<span class="exec-caption__marker" aria-hidden="true"
+					>{executionMarker(execution.state)}</span
+				>
+				<span>{executionCaption(execution, executionLine, execution.file === activeFile.name)}</span
+				>
+			</div>
+		{/if}
 
-	<div class="editor-container" bind:this={editorContainer}></div>
+		<div class="editor-container" bind:this={editorContainer}></div>
 
-	<WorkerStatusStrip {workerStatus} />
+		<WorkerStatusStrip {workerStatus} />
+	</div>
 </div>
 
 <style>
@@ -438,12 +415,6 @@
 	.sandman-editor :global(.editor-tabs) {
 		flex-shrink: 0;
 		gap: 0;
-	}
-
-	.editor-tabs-placeholder {
-		min-height: 2.5rem;
-		flex-shrink: 0;
-		border-bottom: 1px solid var(--cinder-border-muted, #1f2937);
 	}
 
 	.sandman-editor :global(.editor-tab-list) {
@@ -497,6 +468,13 @@
 		color: var(--cinder-text-subtle, #64748b);
 		background: var(--cinder-surface, #0f172a);
 		flex-shrink: 0;
+	}
+
+	.editor-panel {
+		display: flex;
+		flex: 1;
+		min-height: 0;
+		flex-direction: column;
 	}
 
 	.file-purpose {

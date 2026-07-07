@@ -71,7 +71,7 @@ test('TemporalUiFrame renders an iframe whose src is the proxied path', async ({
 test('editor is the default center view with Cinder file tabs', async ({ page }) => {
 	await page.goto(`/${TEST_SESSION_ID}`);
 	await expect(page.locator('#center-panel-code')).toBeVisible();
-	await expect(page.locator('.cinder-tabs')).toBeVisible();
+	await expect(page.locator('.editor-tabs')).toBeVisible();
 	await expect(page.getByRole('tablist', { name: 'Editor files' })).toHaveClass(/cinder-tab-list/);
 	await expect(page.getByRole('tab', { name: 'order-workflow.ts' })).toHaveClass(/cinder-tab/);
 });
@@ -119,15 +119,15 @@ test('segmented controls and file tabs support arrow-key navigation', async ({ p
 	await expect(codeTab).toHaveAttribute('aria-selected', 'true');
 	await expect(codeTab).toBeFocused();
 
-	const historyLens = page.getByRole('radiogroup', { name: 'History lens' });
-	const eventsLens = historyLens.getByRole('radio', { name: 'Events' });
-	const stepsLens = historyLens.getByRole('radio', { name: 'Steps' });
+	const historyLens = page.getByRole('tablist', { name: 'History lens' });
+	const eventsLens = historyLens.getByRole('tab', { name: 'Events' });
+	const stepsLens = historyLens.getByRole('tab', { name: 'Steps' });
 	await expect(eventsLens).toHaveAttribute('tabindex', '0');
 	await expect(stepsLens).toHaveAttribute('tabindex', '-1');
 
 	await eventsLens.focus();
 	await page.keyboard.press('ArrowRight');
-	await expect(stepsLens).toHaveAttribute('aria-checked', 'true');
+	await expect(stepsLens).toHaveAttribute('aria-selected', 'true');
 	await expect(stepsLens).toHaveAttribute('tabindex', '0');
 	await expect(stepsLens).toBeFocused();
 

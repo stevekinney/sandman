@@ -13,9 +13,6 @@
 	 */
 	import Button from '@lostgradient/cinder/button';
 	import Toolbar from '@lostgradient/cinder/toolbar';
-	import '@lostgradient/cinder/button/styles';
-	import '@lostgradient/cinder/toolbar/styles';
-	import '@lostgradient/cinder/segmented-control/styles';
 	import type { ControlId } from '$lib/contracts/workflow-api';
 	import type { SessionState } from './session-state.svelte.ts';
 	import type { CenterView } from './session-actions.ts';
@@ -66,26 +63,26 @@
 		return 'Not available at this point in the order yet.';
 	}
 
-	function setView(nextView: CenterView): void {
+	function focusWorkbenchTab(nextView: CenterView): void {
+		const element = document.getElementById(`center-view-${nextView}-tab`);
+		if (element instanceof HTMLButtonElement) element.focus();
+	}
+
+	function selectWorkbenchView(nextView: CenterView): void {
 		view = nextView;
+		focusWorkbenchTab(nextView);
 	}
 
-	function focusViewTab(nextView: CenterView): void {
-		document.querySelector<HTMLButtonElement>(`[data-view-tab="${nextView}"]`)?.focus();
-	}
-
-	function handleViewKeydown(event: KeyboardEvent): void {
+	function handleWorkbenchTabKeydown(event: KeyboardEvent): void {
 		const nextView =
 			event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === 'End'
 				? 'temporal'
 				: event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'Home'
 					? 'code'
 					: null;
-
 		if (nextView === null) return;
 		event.preventDefault();
-		setView(nextView);
-		requestAnimationFrame(() => focusViewTab(nextView));
+		selectWorkbenchView(nextView);
 	}
 </script>
 
@@ -136,39 +133,36 @@
 	</Toolbar>
 
 	<div class="toolbar-shell__view">
-		<div
-			id="center-view"
-			class="cinder-segmented-control"
-			role="tablist"
-			aria-label="Workbench view"
-			data-cinder-density="toolbar"
-			data-cinder-variant="tablist"
-		>
+		<div role="tablist" aria-label="Workbench view" class="cinder-tab-list toolbar-shell__tabs">
 			<button
 				type="button"
-				class="cinder-segmented-control-option"
 				role="tab"
+				id="center-view-code-tab"
+				class="cinder-tab"
+				data-cinder-active={view === 'code' ? '' : undefined}
+				data-cinder-value="code"
+				data-variant="horizontal"
 				aria-selected={view === 'code'}
 				aria-controls="center-panel-code"
 				tabindex={view === 'code' ? 0 : -1}
-				data-view-tab="code"
-				data-cinder-selected={view === 'code' ? '' : undefined}
-				onclick={() => setView('code')}
-				onkeydown={handleViewKeydown}
+				onclick={() => selectWorkbenchView('code')}
+				onkeydown={handleWorkbenchTabKeydown}
 			>
 				Code
 			</button>
 			<button
 				type="button"
-				class="cinder-segmented-control-option"
 				role="tab"
+				id="center-view-temporal-tab"
+				class="cinder-tab"
+				data-cinder-active={view === 'temporal' ? '' : undefined}
+				data-cinder-value="temporal"
+				data-variant="horizontal"
 				aria-selected={view === 'temporal'}
 				aria-controls="center-panel-temporal"
 				tabindex={view === 'temporal' ? 0 : -1}
-				data-view-tab="temporal"
-				data-cinder-selected={view === 'temporal' ? '' : undefined}
-				onclick={() => setView('temporal')}
-				onkeydown={handleViewKeydown}
+				onclick={() => selectWorkbenchView('temporal')}
+				onkeydown={handleWorkbenchTabKeydown}
 			>
 				Temporal UI
 			</button>
@@ -192,13 +186,20 @@
 	   widths overflowing — allow its groups to wrap so buttons never collide.
 	   Workaround for stevekinney/cinder#613. */
 	.toolbar-shell :global(.cinder-toolbar) {
-		flex: 1 1 auto;
+		flex: 1 1 100%;
 		flex-wrap: wrap;
+		min-width: 0;
 		row-gap: 0.5rem;
 	}
 
 	.toolbar-shell__view {
+		flex: 0 0 11rem;
+		inline-size: 11rem;
 		margin-inline-start: auto;
+	}
+
+	.toolbar-shell__view .toolbar-shell__tabs {
+		inline-size: 100%;
 	}
 
 	.toolbar-shell :global(.toolbar-button--recommended) {

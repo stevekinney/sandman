@@ -1,6 +1,5 @@
 <script lang="ts">
 	import EmptyState from '@lostgradient/cinder/empty-state';
-	import '@lostgradient/cinder/empty-state/styles';
 	import Editor from '$lib/components/editor/editor.svelte';
 	import TemporalUiFrame from '$lib/components/temporal-ui/temporal-ui-frame.svelte';
 	import ControlToolbar from '$lib/components/control-plane/control-toolbar.svelte';
@@ -106,6 +105,7 @@
 			id="center-panel-code"
 			role="tabpanel"
 			aria-label="Code editor"
+			aria-labelledby="center-view-code-tab"
 			class="session-workbench__panel"
 			class:session-workbench__panel--hidden={centerView !== 'code'}
 		>
@@ -115,6 +115,7 @@
 			id="center-panel-temporal"
 			role="tabpanel"
 			aria-label="Temporal Web UI"
+			aria-labelledby="center-view-temporal-tab"
 			class="session-workbench__panel"
 			class:session-workbench__panel--hidden={centerView !== 'temporal'}
 		>

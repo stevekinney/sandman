@@ -464,8 +464,8 @@ test('guided tour can be completed through the visible workflow controls', async
 
 	// The friendly steps lens shows the same durable history.
 	await page
-		.getByRole('radiogroup', { name: 'History lens' })
-		.getByRole('radio', { name: 'Steps' })
+		.getByRole('tablist', { name: 'History lens' })
+		.getByRole('tab', { name: 'Steps' })
 		.click();
 	await expect(page.getByLabel('Order timeline').getByText('Order delivered')).toBeVisible();
 });

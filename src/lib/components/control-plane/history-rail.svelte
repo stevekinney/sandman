@@ -8,8 +8,6 @@
 	 * Temporal Web UI in the center view.
 	 */
 	import EmptyState from '@lostgradient/cinder/empty-state';
-	import '@lostgradient/cinder/empty-state/styles';
-	import '@lostgradient/cinder/segmented-control/styles';
 	import type { EventStreamState } from '@lostgradient/cinder/event-stream-viewer';
 	import EventRail from './event-rail.svelte';
 	import OrderTimeline from './order-timeline.svelte';
@@ -28,91 +26,110 @@
 		!session.workerOnline ? 'disconnected' : session.workerRestarting ? 'connecting' : 'connected'
 	);
 
-	function setLens(nextLens: 'events' | 'steps'): void {
+	function historyTabId(nextLens: 'events' | 'steps'): string {
+		return `history-lens-${nextLens}-tab`;
+	}
+
+	function focusHistoryTab(nextLens: 'events' | 'steps'): void {
+		const element = document.getElementById(historyTabId(nextLens));
+		if (element instanceof HTMLButtonElement) element.focus();
+	}
+
+	function selectHistoryLens(nextLens: 'events' | 'steps'): void {
 		lens = nextLens;
+		focusHistoryTab(nextLens);
 	}
 
-	function focusLens(nextLens: 'events' | 'steps'): void {
-		document.querySelector<HTMLButtonElement>(`[data-history-lens="${nextLens}"]`)?.focus();
-	}
-
-	function handleLensKeydown(event: KeyboardEvent): void {
+	function handleHistoryTabKeydown(event: KeyboardEvent): void {
 		const nextLens =
 			event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === 'End'
 				? 'steps'
 				: event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'Home'
 					? 'events'
 					: null;
-
 		if (nextLens === null) return;
 		event.preventDefault();
-		setLens(nextLens);
-		requestAnimationFrame(() => focusLens(nextLens));
+		selectHistoryLens(nextLens);
 	}
 </script>
 
 <aside class="history" aria-label="Workflow history">
 	<div class="history__header">
 		<h2 class="history__title">Workflow history</h2>
-		<div
-			id="history-lens"
-			class="cinder-segmented-control"
-			role="radiogroup"
-			aria-label="History lens"
-			data-cinder-size="sm"
-			data-cinder-full-width=""
-		>
-			<button
-				type="button"
-				class="cinder-segmented-control-option"
-				role="radio"
-				aria-checked={lens === 'events'}
-				tabindex={lens === 'events' ? 0 : -1}
-				data-history-lens="events"
-				data-cinder-selected={lens === 'events' ? '' : undefined}
-				onclick={() => setLens('events')}
-				onkeydown={handleLensKeydown}
-			>
-				Events
-			</button>
-			<button
-				type="button"
-				class="cinder-segmented-control-option"
-				role="radio"
-				aria-checked={lens === 'steps'}
-				tabindex={lens === 'steps' ? 0 : -1}
-				data-history-lens="steps"
-				data-cinder-selected={lens === 'steps' ? '' : undefined}
-				onclick={() => setLens('steps')}
-				onkeydown={handleLensKeydown}
-			>
-				Steps
-			</button>
+		<div class="history__tabs">
+			<div role="tablist" aria-label="History lens" class="cinder-tab-list">
+				<button
+					type="button"
+					role="tab"
+					id={historyTabId('events')}
+					class="cinder-tab"
+					data-cinder-active={lens === 'events' ? '' : undefined}
+					data-cinder-value="events"
+					data-variant="horizontal"
+					aria-selected={lens === 'events'}
+					aria-controls="history-lens-events-panel"
+					tabindex={lens === 'events' ? 0 : -1}
+					onclick={() => selectHistoryLens('events')}
+					onkeydown={handleHistoryTabKeydown}
+				>
+					Events
+				</button>
+				<button
+					type="button"
+					role="tab"
+					id={historyTabId('steps')}
+					class="cinder-tab"
+					data-cinder-active={lens === 'steps' ? '' : undefined}
+					data-cinder-value="steps"
+					data-variant="horizontal"
+					aria-selected={lens === 'steps'}
+					aria-controls="history-lens-steps-panel"
+					tabindex={lens === 'steps' ? 0 : -1}
+					onclick={() => selectHistoryLens('steps')}
+					onkeydown={handleHistoryTabKeydown}
+				>
+					Steps
+				</button>
+			</div>
 		</div>
 	</div>
 
-	{#if lens === 'events'}
+	<div
+		id="history-lens-events-panel"
+		role="tabpanel"
+		tabindex="0"
+		aria-labelledby={historyTabId('events')}
+		class="history__panel"
+		hidden={lens !== 'events'}
+	>
 		<p class="history__hint">
 			Everything the worker and workflow do as it happens — retries, signals, timers, recoveries.
 		</p>
 		<div class="history__stream">
 			<EventRail events={session.workflowEvents} connectionState={eventStreamState} />
 		</div>
-	{:else}
-		<div class="history__steps">
-			<p class="history__hint history__hint--flush">
-				A plain-language view of the run — the same durable history, as friendly steps.
-			</p>
-			{#if session.timelineEntries.length > 0}
-				<OrderTimeline entries={session.timelineEntries} />
-			{:else}
-				<EmptyState
-					title="No run yet"
-					description="Place an order to watch its durable history here."
-				/>
-			{/if}
-		</div>
-	{/if}
+	</div>
+
+	<div
+		id="history-lens-steps-panel"
+		role="tabpanel"
+		tabindex="0"
+		aria-labelledby={historyTabId('steps')}
+		class="history__panel history__steps"
+		hidden={lens !== 'steps'}
+	>
+		<p class="history__hint history__hint--flush">
+			A plain-language view of the run — the same durable history, as friendly steps.
+		</p>
+		{#if session.timelineEntries.length > 0}
+			<OrderTimeline entries={session.timelineEntries} />
+		{:else}
+			<EmptyState
+				title="No run yet"
+				description="Place an order to watch its durable history here."
+			/>
+		{/if}
+	</div>
 </aside>
 
 <style>
@@ -151,6 +168,17 @@
 		padding: 0 0 0.75rem;
 	}
 
+	.history__panel {
+		display: flex;
+		flex: 1;
+		min-height: 0;
+		flex-direction: column;
+	}
+
+	.history__panel[hidden] {
+		display: none;
+	}
+
 	.history__stream {
 		flex: 1;
 		min-height: 0;
@@ -159,8 +187,6 @@
 	}
 
 	.history__steps {
-		flex: 1;
-		min-height: 0;
 		overflow-y: auto;
 		padding: 0.875rem;
 	}

@@ -23,20 +23,20 @@
 </script>
 
 {#if entry !== undefined}
-	<!--
-		Wrap in a div with role="note" so assistive tech identifies this as a note.
-		Callout's root is <aside> which strips the role prop, so we add the wrapper.
-	-->
-	<div role="note" aria-label="Temporal concept: {entry.concept}" class="concept-annotation">
-		<Callout variant="info" title={entry.concept}>
-			<p class="concept-annotation__one-liner">{entry.oneLiner}</p>
-			<p class="concept-annotation__mechanic">{entry.mechanic}</p>
-		</Callout>
-	</div>
+	<Callout
+		variant="info"
+		semantic="note"
+		title={entry.concept}
+		aria-label="Temporal concept: {entry.concept}"
+		class="concept-annotation"
+	>
+		<p class="concept-annotation__one-liner">{entry.oneLiner}</p>
+		<p class="concept-annotation__mechanic">{entry.mechanic}</p>
+	</Callout>
 {/if}
 
 <style>
-	.concept-annotation {
+	:global(.concept-annotation) {
 		margin-block: 0.75rem;
 	}
 

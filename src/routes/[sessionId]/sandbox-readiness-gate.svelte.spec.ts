@@ -12,7 +12,7 @@ describe('SandboxReadinessGate', () => {
 		await expect.element(page.getByRole('status')).toBeInTheDocument();
 		await expect.element(page.getByText('Starting sandbox')).toBeInTheDocument();
 		await expect.element(page.getByText('Step 1 of 3')).toBeInTheDocument();
-		await expect.element(page.getByRole('progressbar')).toHaveAttribute('value', '34');
+		await expect.element(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '34');
 		await expect.element(page.getByText('Provision sandbox')).toBeInTheDocument();
 	});
 
@@ -22,7 +22,7 @@ describe('SandboxReadinessGate', () => {
 		});
 
 		await expect.element(page.getByText('Step 2 of 3')).toBeInTheDocument();
-		await expect.element(page.getByRole('progressbar')).toHaveAttribute('value', '67');
+		await expect.element(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '67');
 		await expect.element(page.getByText('Start Temporal services')).toBeInTheDocument();
 	});
 
