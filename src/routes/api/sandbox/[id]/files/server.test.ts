@@ -168,7 +168,7 @@ describe('POST /api/sandbox/[id]/files', () => {
 	describe('sandbox resolver', () => {
 		it('returns 503 when the resolver throws (unconfigured)', async () => {
 			// beforeEach already sets a throwing resolver
-			const event = makeEvent('sandbox-1', { path: 'order-workflow.ts', contents: 'code' });
+			const event = makeEvent('sandbox-1', { path: 'workflow.ts', contents: 'code' });
 			await expect(POST(event)).rejects.toMatchObject({ status: 503 });
 		});
 	});
@@ -186,12 +186,12 @@ describe('POST /api/sandbox/[id]/files', () => {
 			}));
 
 			const event = makeEvent('sandbox-1', {
-				path: 'order-workflow.ts',
+				path: 'workflow.ts',
 				contents: 'workflow code'
 			});
 			await POST(event);
 
-			expect(writeFile).toHaveBeenCalledWith(handle, 'order-workflow.ts', 'workflow code');
+			expect(writeFile).toHaveBeenCalledWith(handle, 'workflow.ts', 'workflow code');
 		});
 
 		it('returns the WorkerStatus from restartWorker as JSON', async () => {
@@ -233,7 +233,7 @@ describe('POST /api/sandbox/[id]/files', () => {
 				handle: makeHandle()
 			}));
 
-			const event = makeEvent('sandbox-1', { path: 'order-workflow.ts', contents: 'code' });
+			const event = makeEvent('sandbox-1', { path: 'workflow.ts', contents: 'code' });
 			await POST(event);
 
 			expect(requireOwnedSandbox).toHaveBeenCalledWith(event, 'sandbox-1');

@@ -8,15 +8,12 @@
 
 import { describe, expect, it } from 'vitest';
 import { FEATURES, ORDER_STATUS } from '$lib/contracts/workflow-api';
-import orderWorkflowSource from '../../../sandbox-template/order-workflow.ts?raw';
-import deliveryWorkflowSource from '../../../sandbox-template/delivery-workflow.ts?raw';
-import definitionsSource from '../../../sandbox-template/definitions.ts?raw';
+import workflowSource from '../../../sandbox-template/workflow.ts?raw';
 import activitiesSource from '../../../sandbox-template/activities.ts?raw';
 import {
 	FEATURE_MAP,
 	SIGNAL_FEATURE,
 	QUERY_FEATURE,
-	UPDATE_FEATURE,
 	CONTROL_FEATURE,
 	SCENARIO_COPY,
 	TOUR
@@ -85,22 +82,7 @@ describe('QUERY_FEATURE', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Update → feature association coverage
-// ---------------------------------------------------------------------------
-
-describe('UPDATE_FEATURE', () => {
-	it('every mapped FeatureId exists in FEATURE_MAP', () => {
-		for (const [update, featureId] of Object.entries(UPDATE_FEATURE)) {
-			expect(
-				featureId in FEATURE_MAP,
-				`UPDATE_FEATURE["${update}"] points to unknown FeatureId "${featureId}"`
-			).toBe(true);
-		}
-	});
-});
-
-// ---------------------------------------------------------------------------
-// 5. Control → feature association coverage
+// 4. Control → feature association coverage
 // ---------------------------------------------------------------------------
 
 describe('CONTROL_FEATURE', () => {
@@ -115,7 +97,7 @@ describe('CONTROL_FEATURE', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 6. SCENARIO_COPY — one entry per OrderStatus
+// 5. SCENARIO_COPY — one entry per OrderStatus
 // ---------------------------------------------------------------------------
 
 describe('SCENARIO_COPY', () => {
@@ -135,7 +117,7 @@ describe('SCENARIO_COPY', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7. TOUR integrity
+// 6. TOUR integrity
 // ---------------------------------------------------------------------------
 
 describe('TOUR', () => {
@@ -188,9 +170,7 @@ describe('TOUR', () => {
 
 	it('every experiment anchor exists verbatim in its named sandbox file (anti-drift)', () => {
 		const sources: Record<string, string> = {
-			'order-workflow.ts': orderWorkflowSource,
-			'delivery-workflow.ts': deliveryWorkflowSource,
-			'definitions.ts': definitionsSource,
+			'workflow.ts': workflowSource,
 			'activities.ts': activitiesSource
 		};
 		for (const step of TOUR) {

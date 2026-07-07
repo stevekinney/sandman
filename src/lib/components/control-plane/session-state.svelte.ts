@@ -13,16 +13,13 @@ import type { WorkflowEvent } from '$lib/contracts/events';
 import { stepStuckAtTerminal } from '$lib/content/tour-engine';
 import type { TourState } from '$lib/components/explainer';
 import type { TemporalController, WorkflowRun } from './types.ts';
-import { isUpdateRejectionError } from './types.ts';
 import {
-	DEMO_COURIER_LOCATION,
 	DEMO_ORDER_DEFAULTS,
-	DEMO_UPDATED_ADDRESS,
 	buildDemoOrder,
 	canUseControl,
-	deliveryWorkflowIdFor,
 	derivePhase,
 	formatMoney,
+	inferWorkflowEventType,
 	isRunActive,
 	nowIso,
 	type SessionPhase
@@ -125,7 +122,7 @@ export class SessionState {
 	/**
 	 * True when the workflow has reached a terminal phase that can never
 	 * satisfy the current tour step's `completes` predicate — e.g. the learner
-	 * cancelled the order to watch saga compensation, or the run finished
+	 * cancelled the order to watch the automatic refund, or the run finished
 	 * before the tour caught up. The guided-tour card offers skip/restart.
 	 */
 	readonly tourStepStuck: boolean;
@@ -169,26 +166,10 @@ export class SessionState {
 				return this.placeOrder();
 			case 'accept-restaurant':
 				return this.acceptRestaurant();
-			case 'reject-restaurant':
-				return this.rejectRestaurant();
-			case 'food-ready':
-				return this.foodReady();
 			case 'complete-delivery':
 				return this.completeDelivery();
-			case 'update-address':
-				return this.updateAddress();
-			case 'update-location':
-				return this.updateLocation();
-			case 'apply-promo':
-				return this.applyPromo();
 			case 'query-status':
 				return this.queryStatus();
-			case 'query-timeline':
-				return this.queryTimeline();
-			case 'list-visibility':
-				return this.listVisibility();
-			case 'add-tip':
-				return this.addTip();
 			case 'cancel-order':
 				return this.cancelOrder();
 			case 'kill-worker':
@@ -197,27 +178,31 @@ export class SessionState {
 	}
 
 	/**
-	 * Ingest a fresh `getTimeline` poll: replace the entries and replay any new
-	 * annotated entries into the event feed (which advances the guided tour).
+	 * Ingest a freshly polled timeline (from the `getStatus` snapshot): replace
+	 * the entries and replay any new ones into the event feed (which advances
+	 * the guided tour). The Temporal history event behind each entry is inferred
+	 * from its status transition — see `inferWorkflowEventType`.
 	 */
 	ingestTimeline(entries: TimelineEntry[]): void {
 		const run = this.run;
 		if (run === null) return;
 		this.timelineEntries = entries;
-		for (const entry of entries) {
-			if (entry.index <= this.#lastFedTimelineIndex || entry.eventType === undefined) continue;
+		for (let index = 0; index < entries.length; index++) {
+			if (index <= this.#lastFedTimelineIndex) continue;
+			const entry = entries[index];
+			const eventType = inferWorkflowEventType(entries[index - 1]?.status, entry);
+			this.#lastFedTimelineIndex = index;
+			if (eventType === undefined) continue;
 			this.#feedEvent({
-				sequence: entry.index,
-				type: entry.eventType,
+				sequence: index,
+				type: eventType,
 				timestamp: entry.timestamp,
 				workflowId: run.workflowId,
 				payload: {
 					description: entry.description,
-					status: entry.status,
-					featureId: entry.featureId
+					status: entry.status
 				}
 			});
-			this.#lastFedTimelineIndex = entry.index;
 		}
 		// The tour must never sit behind the real phase (e.g. restored progress
 		// parked on the update step once the order is in delivery, where the
@@ -317,52 +302,16 @@ export class SessionState {
 		const workflowId = this.run?.workflowId;
 		if (workflowId === undefined) return;
 		await this.#perform('accept-restaurant', 'cs', () =>
-			this.#controller.signal(workflowId, 'restaurantAccepted', {
-				estimatedPrepMinutes: DEMO_ORDER_DEFAULTS.estimatedPrepMinutes
-			})
-		);
-	}
-
-	async rejectRestaurant(): Promise<void> {
-		const workflowId = this.run?.workflowId;
-		if (workflowId === undefined) return;
-		await this.#perform('reject-restaurant', 'cs', async () => {
-			await this.#controller.signal(workflowId, 'restaurantRejected', {
-				reason: DEMO_ORDER_DEFAULTS.rejectReason,
-				retryable: false
-			});
-			this.notify('Rejection signaled — saga compensation refunds the payment.', 'warning');
-		});
-	}
-
-	async foodReady(): Promise<void> {
-		const workflowId = this.run?.workflowId;
-		if (workflowId === undefined) return;
-		await this.#perform('food-ready', 'cs', () =>
-			this.#controller.signal(workflowId, 'foodReady', {})
+			this.#controller.signal(workflowId, 'restaurantAccepted', {})
 		);
 	}
 
 	async completeDelivery(): Promise<void> {
-		const orderId = this.activeOrder?.orderId;
-		if (orderId === undefined) return;
-		await this.#perform('complete-delivery', 'cs', () =>
-			this.#controller.signal(deliveryWorkflowIdFor(orderId), 'deliveryCompleted', {})
-		);
-	}
-
-	async addTip(): Promise<void> {
 		const workflowId = this.run?.workflowId;
 		if (workflowId === undefined) return;
-		await this.#perform('add-tip', 'cs', async () => {
-			await this.#controller.signal(workflowId, 'addTip', {
-				amountCents: DEMO_ORDER_DEFAULTS.tipCents
-			});
-			this.notify(
-				`Tip added — ${formatMoney(DEMO_ORDER_DEFAULTS.tipCents)} signaled to the running order.`,
-				'success'
-			);
-		});
+		await this.#perform('complete-delivery', 'cs', () =>
+			this.#controller.signal(workflowId, 'deliveryCompleted', {})
+		);
 	}
 
 	async cancelOrder(): Promise<void> {
@@ -372,67 +321,10 @@ export class SessionState {
 			await this.#controller.signal(workflowId, 'cancelOrder', {
 				reason: DEMO_ORDER_DEFAULTS.cancelReason
 			});
-			this.notify('Cancellation signaled — saga compensation refunds the payment.', 'warning');
-		});
-	}
-
-	async updateAddress(): Promise<void> {
-		const workflowId = this.run?.workflowId;
-		if (workflowId === undefined) return;
-		await this.#perform('update-address', 'cs', async () => {
-			try {
-				const result = await this.#controller.update(workflowId, 'updateDeliveryAddress', {
-					newAddress: DEMO_UPDATED_ADDRESS
-				});
-				this.notify(
-					`Update accepted by the validator — delivering to ${result.effectiveAddress.street}.`,
-					'success'
-				);
-			} catch (error) {
-				if (isUpdateRejectionError(error)) {
-					// A rejection is the lesson, not a failure: the validator ran
-					// synchronously and no history event was written.
-					this.notify(
-						`Update rejected by the validator (${error.reason}) — no state changed, no history written.`,
-						'danger'
-					);
-					return;
-				}
-				throw error;
-			}
-		});
-	}
-
-	async updateLocation(): Promise<void> {
-		const workflowId = this.run?.workflowId;
-		if (workflowId === undefined) return;
-		await this.#perform('update-location', 'cs', () =>
-			this.#controller.signal(workflowId, 'courierLocationUpdate', DEMO_COURIER_LOCATION)
-		);
-	}
-
-	async applyPromo(): Promise<void> {
-		const workflowId = this.run?.workflowId;
-		if (workflowId === undefined) return;
-		await this.#perform('apply-promo', 'cs', async () => {
-			try {
-				const result = await this.#controller.update(workflowId, 'applyPromoCode', {
-					code: DEMO_ORDER_DEFAULTS.promoCode
-				});
-				this.notify(
-					`Promo applied — ${result.description}, new total ${formatMoney(result.newTotalCents)}.`,
-					'success'
-				);
-			} catch (error) {
-				if (isUpdateRejectionError(error)) {
-					this.notify(
-						`Promo rejected by the validator (${error.reason}) — no state changed, no history written.`,
-						'danger'
-					);
-					return;
-				}
-				throw error;
-			}
+			this.notify(
+				'Cancellation signaled — the workflow refunds the payment and finishes.',
+				'warning'
+			);
 		});
 	}
 
@@ -441,41 +333,10 @@ export class SessionState {
 		if (workflowId === undefined) return;
 		await this.#perform('query-status', 'cs', async () => {
 			const snapshot = await this.#controller.query(workflowId, 'getStatus');
+			this.ingestTimeline(snapshot.timeline);
 			this.#emitSyntheticEvent('QueryCompleted', workflowId);
 			this.notify(
 				`Snapshot: status ${snapshot.status}, total ${formatMoney(snapshot.totalCents)} — read-only, no history event.`,
-				'info'
-			);
-		});
-	}
-
-	async queryTimeline(): Promise<void> {
-		const workflowId = this.run?.workflowId;
-		if (workflowId === undefined) return;
-		await this.#perform('query-timeline', 'cs', async () => {
-			const entries = await this.#controller.query(workflowId, 'getTimeline');
-			this.ingestTimeline(entries);
-			this.#emitSyntheticEvent('QueryCompleted', workflowId);
-			this.notify(
-				`Timeline snapshot: ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} — read-only, no history event.`,
-				'info'
-			);
-		});
-	}
-
-	async listVisibility(): Promise<void> {
-		const order = this.activeOrder;
-		if (order === null) return;
-		await this.#perform('list-visibility', 'cs', async () => {
-			const workflows = await this.#controller.visibility({
-				status: this.timelineEntries.at(-1)?.status,
-				customerTier: order.customerTier,
-				restaurantId: order.restaurantId
-			});
-			this.#emitSyntheticEvent('QueryCompleted', this.run?.workflowId);
-			const count = workflows.length;
-			this.notify(
-				`Visibility matched ${count} execution${count === 1 ? '' : 's'} for restaurant ${order.restaurantId}.`,
 				'info'
 			);
 		});
@@ -502,7 +363,7 @@ export class SessionState {
 	 * the worker back. Emitting a synthetic `WorkerRestarted` event optimistically
 	 * would make the durability demo *claim* a recovery that never happened — the
 	 * worst possible failure for this exact teaching moment — and would resume the
-	 * `getTimeline` poll against a dead worker, spamming 502s. So we confirm the
+	 * status poll against a dead worker, spamming 502s. So we confirm the
 	 * worker is online via the status poll before advancing the tour, and surface
 	 * a clear "try again" message if it never recovers.
 	 */

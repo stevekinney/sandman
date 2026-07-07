@@ -13,10 +13,7 @@
  * by the app, only embedded as string literals.
  */
 
-import orderWorkflowRaw from '../../../../sandbox-template/order-workflow.ts?raw';
-import deliveryWorkflowRaw from '../../../../sandbox-template/delivery-workflow.ts?raw';
-import definitionsRaw from '../../../../sandbox-template/definitions.ts?raw';
-import signalsRaw from '../../../../sandbox-template/signals.ts?raw';
+import workflowRaw from '../../../../sandbox-template/workflow.ts?raw';
 import activitiesRaw from '../../../../sandbox-template/activities.ts?raw';
 import workerRaw from '../../../../sandbox-template/worker.ts?raw';
 import sharedRaw from '../../../../sandbox-template/shared.ts?raw';
@@ -44,44 +41,20 @@ export type FileDescriptor = {
  */
 export const FILE_DESCRIPTORS: FileDescriptor[] = [
 	{
-		name: 'order-workflow.ts',
+		name: 'workflow.ts',
 		purpose:
-			'The main workflow: durable state, signals, a deadline timer, a saga, and a delivery child — every await survives a crash.',
+			'The whole workflow: retryable activities, signals, a query, and a durable timer — every await survives a crash.',
 		language: 'typescript',
-		initialContents: orderWorkflowRaw,
-		readOnly: false
-	},
-	{
-		name: 'delivery-workflow.ts',
-		purpose:
-			'The delivery child workflow: its own history and UI page, courier heartbeats, and a durable SLA timer.',
-		language: 'typescript',
-		initialContents: deliveryWorkflowRaw,
-		readOnly: false
-	},
-	{
-		name: 'definitions.ts',
-		purpose:
-			'Activities, retry policies, timeouts, queries, and updates — the knobs to tweak without touching workflow logic.',
-		language: 'typescript',
-		initialContents: definitionsRaw,
+		initialContents: workflowRaw,
 		readOnly: false
 	},
 	{
 		name: 'activities.ts',
 		purpose:
-			'Activity implementations: side effects, simulated failures, heartbeats, and cancellation outside the workflow sandbox.',
+			'Activity implementations: the side effects (charge, notify, refund) that run outside the workflow sandbox.',
 		language: 'typescript',
 		initialContents: activitiesRaw,
 		readOnly: false
-	},
-	{
-		name: 'signals.ts',
-		purpose:
-			'Signal definitions: the external events this workflow can receive while it is running.',
-		language: 'typescript',
-		initialContents: signalsRaw,
-		readOnly: true
 	},
 	{
 		name: 'worker.ts',
@@ -93,8 +66,7 @@ export const FILE_DESCRIPTORS: FileDescriptor[] = [
 	},
 	{
 		name: SHARED_FILE_NAME,
-		purpose:
-			'Sandbox-local contract mirror: shared types and scenario metadata copied into the E2B template.',
+		purpose: 'Shared types and constants: the plain data shapes the order moves through.',
 		language: 'typescript',
 		initialContents: sharedRaw,
 		readOnly: true

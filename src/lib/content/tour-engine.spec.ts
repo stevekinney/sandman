@@ -349,25 +349,22 @@ describe('stepStuckAtTerminal', () => {
 	}
 
 	it('event-driven steps are stuck once the workflow is terminal', () => {
-		// Cancelling to watch saga compensation strands these: no new workflow
-		// start, activities, timers, or signals can ever arrive again.
-		for (const id of ['start-workflow', 'activities-run', 'durable-timer', 'signal-accept']) {
+		// Once the order reaches a terminal status, no new workflow start,
+		// activity, timer, signal, or completion event can ever arrive again.
+		for (const id of [
+			'start-workflow',
+			'activities-run',
+			'durable-timer',
+			'signal-accept',
+			'complete-delivery'
+		]) {
 			expect(stepStuckAtTerminal(step(id), { workerOnline: true })).toBe(true);
 			expect(stepStuckAtTerminal(step(id), { workerOnline: false })).toBe(true);
 		}
 	});
 
-	it('update and child-workflow steps are stuck once the workflow is terminal', () => {
-		for (const id of ['update-with-validator', 'child-workflow', 'complete-delivery']) {
-			expect(stepStuckAtTerminal(step(id), { workerOnline: true })).toBe(true);
-		}
-	});
-
 	it('query-driven steps are NOT stuck — queries read closed workflows', () => {
-		expect(stepStuckAtTerminal(step('queryable-business-snapshot'), { workerOnline: true })).toBe(
-			false
-		);
-		expect(stepStuckAtTerminal(step('search-attributes'), { workerOnline: true })).toBe(false);
+		expect(stepStuckAtTerminal(step('query-status'), { workerOnline: true })).toBe(false);
 	});
 
 	it('durable-recovery is stuck with a live worker (kill is gated off), but not with a dead one', () => {

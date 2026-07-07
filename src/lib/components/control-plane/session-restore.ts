@@ -5,16 +5,11 @@
  * knows nothing about a workflow started before a reload: `run` is null, the
  * timeline poll never fires, and restored tour progress would point at a run
  * the client cannot act on. This module re-derives the run from the sandbox
- * (Temporal Visibility, served by the server — no worker needed) and floors
+ * (the Temporal workflow list, served by the server — no worker needed) and floors
  * the tour against the real workflow phase so the two can never disagree.
  */
-import type {
-	OrderInput,
-	OrderStatus,
-	TimelineEntry,
-	VisibilityWorkflowSummary
-} from '$lib/contracts/workflow-api';
-import { ORDER_FOOD_WORKFLOW, ORDER_STATUS } from '$lib/contracts/workflow-api';
+import type { OrderInput, TimelineEntry, WorkflowSummary } from '$lib/contracts/workflow-api';
+import { ORDER_WORKFLOW, ORDER_STATUS } from '$lib/contracts/workflow-api';
 import { TOUR } from '$lib/content/demo-script';
 import type { TemporalController, WorkflowRun } from './types.ts';
 import { buildDemoOrder, type SessionPhase } from './session-actions.ts';
@@ -42,28 +37,27 @@ export type RestorableSession = {
 };
 
 /**
- * Whether a Visibility summary is the sandbox's order workflow — the parent
- * `orderFoodWorkflow`, not a `delivery-…` child — regardless of whether it is
- * still running. Used to find anything worth reconciling tour progress
- * against, including a run that finished (Delivered/Cancelled/Refunded)
- * moments before a reload raced the final `getTimeline` poll that would have
- * recorded it — that history is still real and worth replaying, not a reason
- * to wipe the learner's progress back to step 0.
+ * Whether a workflow-list summary is the sandbox's order workflow, regardless
+ * of whether it is still running. Used to find anything worth reconciling
+ * tour progress against, including a run that finished
+ * (Delivered/Cancelled/Refunded) moments before a reload raced the final
+ * status poll that would have recorded it — that history is still real and
+ * worth replaying, not a reason to wipe the learner's progress back to step 0.
  */
-export function isOrderWorkflowSummary(summary: VisibilityWorkflowSummary): boolean {
-	return summary.type === ORDER_FOOD_WORKFLOW;
+export function isOrderWorkflowSummary(summary: WorkflowSummary): boolean {
+	return summary.type === ORDER_WORKFLOW;
 }
 
 /**
- * Whether a Visibility summary is a *live* order workflow — the same check as
- * {@link isOrderWorkflowSummary}, plus still running. Used to prefer an
+ * Whether a workflow-list summary is a *live* order workflow — the same check
+ * as {@link isOrderWorkflowSummary}, plus still running. Used to prefer an
  * active run over a stale finished one when both are present and no
  * `preferredWorkflowId` disambiguates.
  * Status is compared case-insensitively because the Temporal CLI has emitted
  * both `WORKFLOW_EXECUTION_STATUS_RUNNING` (normalized to `RUNNING`) and
  * `Running` across versions.
  */
-export function isResumableOrderWorkflow(summary: VisibilityWorkflowSummary): boolean {
+export function isResumableOrderWorkflow(summary: WorkflowSummary): boolean {
 	return isOrderWorkflowSummary(summary) && summary.status.toUpperCase() === 'RUNNING';
 }
 
@@ -74,54 +68,34 @@ function tourStepIndex(id: string): number {
 	return index;
 }
 
-const KNOWN_ORDER_STATUSES: readonly string[] = Object.values(ORDER_STATUS);
-
-/** Type guard for a valid `OrderStatus` value. */
-function isOrderStatus(value: string): value is OrderStatus {
-	return KNOWN_ORDER_STATUSES.includes(value);
-}
-
-/** Narrow a Visibility summary's indexed OrderStatus search attribute, if present. */
-function knownOrderStatus(value: string | undefined): OrderStatus | undefined {
-	return value !== undefined && isOrderStatus(value) ? value : undefined;
-}
-
 /**
  * The earliest tour step consistent with an observed order phase.
  *
  * Replayed timeline events advance most steps on their own; this floor covers
- * what replay cannot: restored progress parked on a step the phase has made
- * impossible (the update validator rejects address changes once the order is
- * in delivery) and steps whose completing event necessarily already happened.
- * Forward-only by design — feed it to `TourState.advanceTo`, which ignores
- * targets at or behind the current step.
+ * what replay cannot: restored progress parked on a step whose completing
+ * event necessarily already happened before the reload. Forward-only by
+ * design — feed it to `TourState.advanceTo`, which ignores targets at or
+ * behind the current step.
  */
 export function minimumTourStepIndexForPhase(phase: SessionPhase): number {
 	switch (phase) {
 		case 'idle':
 			return 0;
-		case ORDER_STATUS.Created:
-		case ORDER_STATUS.Validating:
+		case ORDER_STATUS.Received:
 			// A run exists, so "place an order" is behind us.
 			return tourStepIndex('activities-run');
-		case ORDER_STATUS.AwaitingRestaurant:
-			// Activities completed and the deadline timer started on the way here.
+		case ORDER_STATUS.WaitingForRestaurant:
+			// The charge completed and the deadline timer started on the way here.
 			return tourStepIndex('signal-accept');
 		case ORDER_STATUS.Preparing:
-		case ORDER_STATUS.AwaitingCourier:
-			// The restaurant signal was received; the update lesson is still open.
-			return tourStepIndex('update-with-validator');
-		case ORDER_STATUS.InDelivery:
 		case ORDER_STATUS.Delivered:
-			// The delivery child has started, and the update validator now rejects
-			// address changes — that step can never complete from here. Nothing
-			// further (a Visibility query, a worker kill/restart, the completion
-			// observation) is implied merely by reaching either phase — including
-			// Delivered: the run can finish without the worker ever having been
-			// killed. Leave those later steps to real replayed events, or to
-			// `stepStuckAtTerminal`/`skip()` once the phase is terminal and no
-			// more events can arrive — don't silently mark them complete here.
-			return tourStepIndex('queryable-business-snapshot');
+			// The restaurant signal was received. Nothing further (a status query,
+			// a worker kill/restart, the completion observation) is implied merely
+			// by reaching either phase — including Delivered: the run can finish
+			// without the worker ever having been killed. Leave those later steps
+			// to real replayed events, or to `stepStuckAtTerminal`/`skip()` once
+			// the phase is terminal and no more events can arrive.
+			return tourStepIndex('query-status');
 		case ORDER_STATUS.Cancelled:
 		case ORDER_STATUS.Refunded:
 			// A cancelled order teaches nothing further — leave the tour alone;
@@ -136,9 +110,9 @@ export function minimumTourStepIndexForPhase(phase: SessionPhase): number {
 const restoreAttempted = new WeakSet<RestorableSession>();
 
 /**
- * Consecutive "no resumable workflow found" results per session. Temporal
- * Visibility is eventually consistent, so a workflow started moments before a
- * reload can briefly be absent from the list — this tolerates that lag before
+ * Consecutive "no resumable workflow found" results per session. The Temporal
+ * workflow list is eventually consistent, so a workflow started moments before
+ * a reload can briefly be absent from it — this tolerates that lag before
  * concluding there really is no workflow to restore.
  */
 const notFoundStreak = new WeakMap<RestorableSession, number>();
@@ -149,15 +123,15 @@ const NOT_FOUND_CONFIRMATION_ROUNDS = 3;
 /**
  * Restore a reloaded session from the sandbox's current workflow.
  *
- * Queries Temporal Visibility for a running order workflow, adopts its ids,
+ * Lists the sandbox's workflows for a running order workflow, adopts its ids,
  * rebuilds the canned demo order (the workflow id is the order id), floors
- * the tour to at least the phase the adopted run implies, and replays
- * `getTimeline` so the tour can reconcile further against the real phase. If
- * the timeline query fails (worker down), the regular poll catches up once
+ * the tour to at least the phase the adopted run implies, and replays the
+ * `getStatus` timeline so the tour can reconcile further against the real
+ * phase. If the query fails (worker down), the regular poll catches up once
  * the worker returns — the initial floor still applies so the tour isn't
  * stuck asking for an action a run already makes impossible.
  *
- * `preferredWorkflowId`, when supplied, disambiguates when Visibility returns
+ * `preferredWorkflowId`, when supplied, disambiguates when the list returns
  * more than one resumable order workflow (e.g. the learner used Reset — which
  * is client-only and does not cancel the run — then placed another order):
  * the summary matching it wins over an arbitrary first match.
@@ -172,14 +146,14 @@ const NOT_FOUND_CONFIRMATION_ROUNDS = 3;
  *
  * When no order workflow is running, stale in-progress tour state is reset so
  * the journey starts cleanly — a finished tour keeps its completed state.
- * Because Visibility is eventually consistent, "not found" is only treated as
+ * Because the workflow list is eventually consistent, "not found" is only treated as
  * final after `NOT_FOUND_CONFIRMATION_ROUNDS` consecutive empty results;
  * until then the attempt flag is cleared for the caller's next retry, exactly
- * like a Visibility error.
+ * like a list error.
  *
  * Runs at most once per session (once it finds and adopts a run, or confirms
  * none exists, or discovers the learner already has a live run of their own);
- * a Visibility failure or an unconfirmed empty result clears the attempt so
+ * a list failure or an unconfirmed empty result clears the attempt so
  * the caller's regular polling cadence can retry. A Reset mid-flight abandons
  * this attempt the same way — the next poll tick starts fresh and, if the
  * workflow is still running server-side, re-attaches to it exactly as it
@@ -209,9 +183,9 @@ export async function restoreSessionFromSandbox(
 	restoreAttempted.add(session);
 	const epochAtStart = session.resetEpoch;
 
-	let workflows: VisibilityWorkflowSummary[];
+	let workflows: WorkflowSummary[];
 	try {
-		workflows = await controller.visibility({});
+		workflows = await controller.listWorkflows();
 	} catch {
 		restoreAttempted.delete(session);
 		// An error is not an observation — it must not silently count towards
@@ -259,46 +233,22 @@ export async function restoreSessionFromSandbox(
 	session.run = { workflowId: active.workflowId, runId: active.runId };
 	session.onRunChanged(session.run);
 	session.activeOrder = buildDemoOrder(active.workflowId);
-	// Visibility's indexed OrderStatus search attribute is real and available
-	// even with the worker down — unlike `session.phase`, which reads Created
-	// until getTimeline supplies real entries. Floor the tour with it right
-	// away so a further-along order (e.g. AwaitingRestaurant) isn't floored as
-	// if it had only just started. Falls back to `session.phase` if the
-	// attribute is unavailable (Search Attributes weren't registered).
-	const knownPhase = knownOrderStatus(active.businessSnapshot.OrderStatus);
-	session.tour.advanceTo(minimumTourStepIndexForPhase(knownPhase ?? session.phase));
+	session.tour.advanceTo(minimumTourStepIndexForPhase(session.phase));
 	try {
-		const entries = await controller.query(active.workflowId, 'getTimeline');
+		const snapshot = await controller.query(active.workflowId, 'getStatus');
 		// The learner may have Reset and placed a different order while this
 		// query was in flight — only apply the timeline if it still belongs to
 		// the run we're restoring, or it would corrupt the new run's state.
-		if (Array.isArray(entries) && session.run?.workflowId === active.workflowId) {
-			session.ingestTimeline(entries);
+		if (
+			snapshot !== null &&
+			Array.isArray(snapshot.timeline) &&
+			session.run?.workflowId === active.workflowId
+		) {
+			session.ingestTimeline(snapshot.timeline);
 		}
 	} catch {
-		// Worker offline. The tour floor above already accounts for the real
-		// phase, but `session.phase` itself (which every `canDo()` gate reads —
-		// e.g. accepting an AwaitingRestaurant order is a signal that doesn't
-		// need the worker) would otherwise stay stuck at Created until the
-		// worker returns. Seed it from the same known phase via a synthetic,
-		// eventType-less entry: `ingestTimeline` never feeds it as an event (so
-		// it can't be mistaken for real history or duplicate-fed), but
-		// `derivePhase` reads its `status` until the real timeline poll
-		// replaces this array wholesale once the worker recovers.
-		//
-		// Same re-check as the success path above: the learner may have Reset
-		// and placed a different order while this query was in flight — only
-		// seed if `run` still belongs to the workflow we're restoring, or the
-		// synthetic entry would corrupt the new run's phase instead.
-		if (knownPhase !== undefined && session.run?.workflowId === active.workflowId) {
-			session.ingestTimeline([
-				{
-					index: -1,
-					timestamp: new Date(0).toISOString(),
-					description: 'Seeded from Visibility while the worker is offline.',
-					status: knownPhase
-				}
-			]);
-		}
+		// Worker offline — queries need a worker. The regular status poll
+		// replays the timeline (and re-floors the tour) once the worker
+		// returns; until then the adopted run is at least attached.
 	}
 }

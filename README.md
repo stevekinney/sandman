@@ -5,13 +5,13 @@ Sandman is a browser-based playground for exploring [Temporal](https://temporal.
 When you open Sandman, an ephemeral [E2B](https://e2b.dev) Firecracker MicroVM boots inside your session. That VM runs:
 
 - The Temporal CLI dev server (`temporal server start-dev`) — gRPC on port 7233, Web UI on port 8233
-- A Temporal TypeScript worker running a deliberately over-engineered food-ordering workflow
+- A Temporal TypeScript worker running a small, readable food-ordering workflow
 
 The browser shows three surfaces side by side:
 
-1. **Monaco editor** — edit `order-workflow.ts`, `delivery-workflow.ts`, `definitions.ts`, and `activities.ts` live; saving re-syncs the file into the sandbox and hot-restarts the worker (the Temporal server keeps running, so in-flight workflows survive the restart — this is the durability demo)
+1. **Monaco editor** — edit `workflow.ts` and `activities.ts` live; saving re-syncs the file into the sandbox and hot-restarts the worker (the Temporal server keeps running, so in-flight workflows survive the restart — this is the durability demo)
 2. **Temporal Web UI** — the real Temporal Web UI, reverse-proxied same-origin into an iframe
-3. **Control plane** — start a workflow, send signals, run queries and updates, and a "kill worker" chaos button that demonstrates durable recovery
+3. **Control plane** — start a workflow, send signals, run queries, and a "kill worker" chaos button that demonstrates durable recovery
 
 ## Getting started
 
@@ -144,7 +144,7 @@ bun run lint           # eslint
 bun run check          # svelte-check + TypeScript
 bun run build          # vite production build
 bun run test           # vitest (unit + browser component)
-bun run test:workflows # vitest over sandbox-template/ (food-ordering workflow suite, @temporalio/testing time-skipping)
+bun run test:workflows # vitest over sandbox-template/ (order workflow suite, @temporalio/testing time-skipping)
 bun run test:e2e       # Playwright end-to-end
 ```
 
@@ -179,26 +179,17 @@ runbook.
 
 ## Demo Script
 
-Sandman demonstrates the following Temporal features through a deliberately over-engineered food-ordering workflow.
+Sandman demonstrates the following Temporal features through a small, readable food-ordering workflow.
 
 ### Feature Legend
 
 | Feature | Concept | How it is demonstrated |
 | ------- | ------- | ---------------------- |
-| activities-retry | **Activities & Automatic Retry** (`start-order`) | Payment charge, restaurant notification, and courier dispatch each run as activities with configurable retry policies. Transient failures are automatically retried with exponential backoff. |
-| non-retryable-failure | **Non-Retryable Failures** (`start-order`) | An invalid payment method or out-of-area address throws ApplicationFailure with nonRetryable: true, bypassing the retry policy and immediately triggering the saga compensation path. |
-| saga-compensation | **Saga / Compensation** (`cancel-order`) | If the workflow fails after charging the customer, a compensation stack issues a refund. Each forward step registers a compensating action so the rollback is always symmetric. |
-| signals | **Signals** (`accept-restaurant`) | Restaurant acceptance, rejection, food-ready, courier location, tip, and order cancellation all use Temporal signals. The workflow blocks on signal receipt using condition(), resuming only when the expected signal arrives. |
-| queries | **Queries** (`query-status`) | getStatus returns a live OrderSnapshot of all workflow state without advancing execution. getTimeline returns the annotated event log consumed by the guided-tour panel. |
-| updates-validators | **Updates with Validators** (`update-address`) | updateDeliveryAddress is rejected synchronously by a validator if the order is already in delivery. applyPromoCode validates the code before mutating state, returning a typed rejection to the caller without re-driving the workflow. |
-| timers-durable-sleep | **Durable Timers / sleep()** (`start-order`) | A configurable deadline timer fires if the restaurant does not accept within N minutes, automatically triggering cancellation and saga compensation. The timer survives worker restarts. |
-| child-workflow | **Child Workflows** (`food-ready`) | Once a courier is assigned, the delivery leg is handed off to a DeliveryWorkflow child workflow. Its lifecycle is independently visible in the Temporal Web UI, demonstrating workflow composition. |
-| heartbeats-cancellation | **Activity Heartbeats & Cancellation** (`kill-worker`) | The courier-tracking activity heartbeats every 5 seconds with its latest location. Cancelling the order propagates cancellation to the activity via the heartbeat token, allowing a clean shutdown. |
-| continue-as-new | **ContinueAsNew** (—) | After 100 courier location updates, the workflow calls continueAsNew to keep event history bounded. The new run receives the current OrderSnapshot as its seed state so no data is lost. |
-| queryable-business-snapshot | **Queryable Business Snapshot** (`query-status`) | getStatus returns OrderStatus, CustomerTier, and RestaurantId in businessSnapshot. This gives learners a simple read model before the advanced Search Attributes scenario. |
-| search-attributes | **Temporal Search Attributes** (`list-visibility`) | The advanced Visibility scenario upserts OrderStatus, CustomerTier, and RestaurantId as real Temporal Search Attributes and lists matching executions through Temporal Visibility. |
-| local-activities | **Local Activities** (`start-order`) | Audit-log writes and metrics emission run as local activities (executed in the same process, no round-trip to the Temporal server) to demonstrate the durability/performance trade-off. |
-| replay-safety | **Replay Safety** (—) | All non-deterministic operations (random IDs, current time, external HTTP calls) are wrapped in activities. The workflow function itself is a pure deterministic function of its history, as verified by the replayer. |
+| activities-retry | **Activities & Automatic Retry** (`start-order`) | The payment charge runs as an activity with a visible retry policy. Card 0000 fails its first attempt with a fake gateway timeout, and Temporal retries it automatically with exponential backoff — the workflow contains no retry loop. |
+| non-retryable-failure | **Non-Retryable Failures** (`start-order`) | Card 9999 is declined by the issuer. A decline is permanent, so the activity throws ApplicationFailure with nonRetryable: true — the retry policy is skipped and the workflow cancels the order instead. |
+| signals | **Signals** (`accept-restaurant`) | Restaurant acceptance, delivery completion, and cancellation are Temporal signals — async messages into the running workflow. The workflow parks on condition() and resumes the moment the signal it is waiting for arrives. |
+| queries | **Queries** (`query-status`) | getStatus returns a live OrderSnapshot — status, total, payment attempts, and the order timeline — without advancing execution or writing history. |
+| timers-durable-sleep | **Durable Timers** (`start-order`) | A deadline timer fires if the restaurant does not accept in time, automatically refunding the payment. The timer lives in the Temporal server, not the worker — it survives worker restarts. |
 | durable-recovery | **Durable Recovery** (`kill-worker`) | The kill-worker button terminates the Node.js worker process mid-flight. Because the Temporal server preserves all workflow state, the workflow resumes exactly where it left off when the worker restarts — the centrepiece of the Sandman demo. |
 
 ### Guided Tour
@@ -208,8 +199,8 @@ The tour advances step-by-step as real Temporal workflow events arrive — not o
 1. **Place a food order** (control: `start-order`)
    Start one durable order workflow. Temporal records the start event in history, then a worker begins running your workflow code.
 
-2. **Activities run — with automatic retries**
-   Payment charge, restaurant notification, and courier dispatch each run as activities. If a transient failure occurs, Temporal retries automatically with exponential backoff. You do not write retry loops.
+2. **An activity runs — with automatic retries**
+   The payment charge runs as an activity. If a transient failure occurs, Temporal retries automatically with exponential backoff. You do not write retry loops.
 
 3. **A durable timer guards the deadline**
    The workflow starts a timer for the restaurant-acceptance deadline. This timer lives in the Temporal server — it will fire even if the worker crashes and restarts.
@@ -217,20 +208,11 @@ The tour advances step-by-step as real Temporal workflow events arrive — not o
 4. **Send a signal to resume** (control: `accept-restaurant`)
    The order is parked waiting for the restaurant. Sending the restaurant-accepted signal appends an event to history and resumes the workflow.
 
-5. **Update with a synchronous validator** (control: `update-address`)
-   Update the delivery address while the order is preparing. A validator accepts or rejects the change before any workflow state mutates — bad changes are rejected immediately.
-
-6. **Hand delivery to a child workflow** (control: `food-ready`)
-   Food ready spawns a DeliveryWorkflow child. The parent keeps owning the order, while the delivery workflow can be tracked on its own in the Temporal UI.
-
-7. **Read state with a query** (control: `query-status`)
+5. **Read state with a query** (control: `query-status`)
    Ask the running workflow for its current order snapshot. Queries are read-only: they inspect state without moving the workflow forward.
 
-8. **Search across workflows** (control: `list-visibility`)
-   List executions by indexed Search Attributes — order status, customer tier, and restaurant — across every workflow, no specific handle needed.
-
-9. **Kill the worker — watch it recover** (control: `kill-worker`)
+6. **Kill the worker — watch it recover** (control: `kill-worker`)
    Kill the process running your workflow code. State lives in the Temporal server, so after you restart the worker it replays history and resumes exactly where it left off.
 
-10. **Finish the delivery** (control: `complete-delivery`)
-   Complete the child delivery workflow. The parent observes that result and moves the order to its delivered final state.
+7. **Finish the delivery** (control: `complete-delivery`)
+   Send the delivery-completed signal. The workflow resumes from its final wait, records the delivery, and returns its result.

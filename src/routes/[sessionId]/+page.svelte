@@ -302,7 +302,7 @@
 		};
 	});
 
-	// Poll `getTimeline` while a run is active — queries execute on the worker,
+	// Poll `getStatus` while a run is active — queries execute on the worker,
 	// so polling pauses while the worker is down and resumes after restart.
 	$effect(() => {
 		const activeSession = session;
@@ -314,8 +314,10 @@
 
 		async function poll(): Promise<void> {
 			try {
-				const entries = await controller.query(workflowId, 'getTimeline');
-				if (!cancelled && Array.isArray(entries)) activeSession.ingestTimeline(entries);
+				const snapshot = await controller.query(workflowId, 'getStatus');
+				if (!cancelled && snapshot !== null && Array.isArray(snapshot.timeline)) {
+					activeSession.ingestTimeline(snapshot.timeline);
+				}
 			} catch {
 				// No live worker yet — keep the last known entries.
 			}

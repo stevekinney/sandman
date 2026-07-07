@@ -2,100 +2,65 @@
 
 This directory contains the Node.js / TypeScript code that runs **inside** the E2B Firecracker MicroVM. The Temporal dev server (`temporal server start-dev`) runs on the same VM; this code connects to it on `localhost:7233`.
 
-## Files
+It is also the code you see (and edit) in the Sandman Monaco editor, so it is written to be read top to bottom by someone who has never seen Temporal before.
 
-### `shared.ts`
+## The example: a food order
 
-Standalone mirror of `src/lib/contracts/workflow-api.ts`. Contains all types, constants (`ORDER_STATUS`, `CUSTOMER_TIER`, `TASK_QUEUE`, workflow type names), and `PROMO_CODES`. Does **not** import from the SvelteKit app layer so it works inside the VM where `src/lib/` is absent.
+One workflow, four steps:
 
-### `activities.ts`
+1. **Charge the card**: an activity. If it fails transiently, Temporal retries it automatically.
+2. **Wait for the restaurant**: the workflow parks on a signal, guarded by a durable timer. If the restaurant never accepts, the timer fires and the payment is refunded.
+3. **Wait for delivery**: another signal. This wait can last hours and survives worker crashes.
+4. **Done**: the workflow returns its final state.
 
-All Temporal activity implementations.
+Along the way you can query the live state (`getStatus`), cancel the order (`cancelOrder` triggers a refund), and—the centrepiece—kill the worker mid-flight and watch the workflow resume exactly where it left off.
 
-| Activity           | Type                | Purpose                                                            |
-| ------------------ | ------------------- | ------------------------------------------------------------------ |
-| `validateOrder`    | local               | Validates item list, address, payment method                       |
-| `calculatePricing` | local               | Computes subtotal, delivery fee, promo discount                    |
-| `writeAuditLog`    | local               | Structured audit log entry                                         |
-| `emitMetrics`      | local               | Phase-transition metrics                                           |
-| `chargePayment`    | regular             | Charges the customer; non-retryable on `PAYMENT_DECLINED`          |
-| `refundPayment`    | regular             | Saga compensation — refunds the customer                           |
-| `notifyRestaurant` | regular             | Sends order to restaurant POS                                      |
-| `assignCourier`    | regular             | Allocates a courier and returns `CourierInfo`                      |
-| `releaseCourier`   | regular             | Saga compensation — returns courier to pool                        |
-| `dispatchCourier`  | regular             | Confirms courier dispatch                                          |
-| `trackCourier`     | regular (heartbeat) | Infinite heartbeat loop; throws `CancelledFailure` on cancellation |
+## Read the files in this order
 
-### `workflows.ts`
+| File | What it teaches |
+| ---- | --------------- |
+| `workflow.ts` | **Start here.** The entire workflow: signal and query definitions, the activity proxy with its retry policy, and the four-step order function. Every `await` in it is durable. |
+| `activities.ts` | The side effects: `chargePayment` (with two magic card numbers—`'0000'` fails once to demo retries, `'9999'` is declined to demo non-retryable failures), `notifyRestaurant`, and `refundPayment`. |
+| `shared.ts` | The plain types and constants both sides share: `OrderInput`, `OrderSnapshot`, statuses, the task queue name. Nothing Temporal-specific. |
+| `worker.ts` | The process that runs your code: connects to the server, registers the workflow and activities, polls the task queue. |
+| `client.ts` | A CLI demo driver: start an order, query it, signal it forward, await the result. |
 
-Three exported workflow functions plus signal/query/update definitions.
+Look for `Try:` comments in `workflow.ts` and `activities.ts`—each marks a one-line edit that produces visibly different behavior. Saving a file in the editor hot-restarts the worker while the Temporal server (and every in-flight workflow) keeps running.
 
-**`orderFoodWorkflow(input, seed?)`** — the primary orchestration workflow. State machine: `CREATED → VALIDATING → AWAITING_RESTAURANT → PREPARING → AWAITING_COURIER → IN_DELIVERY → DELIVERED`, with `CANCELLED`/`REFUNDED` terminal branches.
+## Which button exercises which feature
 
-**`deliveryWorkflow(input)`** — child workflow for courier lifecycle. Starts `trackCourier` in a cancellable scope and waits for the `deliveryCompleted` signal or a 2-hour SLA.
+| Control-plane button | Temporal feature | How it works in the workflow |
+| -------------------- | ---------------- | ---------------------------- |
+| **Place order** | Activities + retry | `chargePayment` retries with exponential backoff; card `'0000'` fails its first attempt on purpose |
+| **Place order** (card `'9999'`) | Non-retryable failure | `ApplicationFailure.nonRetryable(..., 'PaymentDeclined')` skips the retry policy; the workflow cancels the order |
+| **Place order** | Durable timers | `condition(..., timeout)` guards the restaurant wait; if it fires, the workflow refunds the payment |
+| **Restaurant accepted** | Signals | The `restaurantAccepted` signal unblocks the first `condition()` |
+| **Complete delivery** | Signals | The `deliveryCompleted` signal unblocks the final wait and the workflow returns |
+| **Cancel & refund** | Signals | The `cancelOrder` signal makes the workflow refund the charge and finish as cancelled |
+| **Get status** | Queries | `getStatus` returns the live `OrderSnapshot`—read-only, no history written |
+| **Kill worker** | Durable recovery | Terminating the worker process leaves in-flight workflows intact on the server; restarting replays history and resumes exactly where it left off |
 
-**`subscriptionWorkflow(input)`** — periodic reorder loop. Calls `continueAsNew` after each cycle to bound event history.
+## Running it locally
 
-**`timeSkipSanity()`** — test-only; confirms the time-skipping test server is working.
-
-### `worker.ts`
-
-Bootstrap for the Temporal worker. Connects to `localhost:7233`, registers all activities and the workflow bundle, and starts polling.
-
-### `client.ts`
-
-Helper functions for driving the workflow from the CLI demo script. Exports `startOrder`, signal helpers (`acceptRestaurant`, `signalFoodReady`, `signalDeliveryCompleted`, `cancelOrder`, `updateLocation`, `addTip`), update helpers (`updateAddress`, `applyPromo`), query helpers (`queryStatus`, `queryTimeline`), and a `runDemo()` entry point.
-
-### `vitest.config.ts`
-
-Standalone Vitest configuration for this directory. Uses a plain `node` environment (no SvelteKit/Vite stack) so `@temporalio/testing` loads correctly.
-
-### `package.json`
-
-Declares the worker's runtime dependencies — `@temporalio/{worker,workflow,activity,client,common}` and `tsx` — pinned to the same versions as the host app so workflow behavior and replay stay consistent. The bootstrap copies this file into the sandbox at `/app` and runs `npm install`; without it the worker has no dependencies and never starts.
-
-## How this runs inside the E2B sandbox
-
-Sandman's sandbox service (`src/lib/server/sandbox/`) boots a fresh MicroVM and:
-
-1. Copies every `.ts`/`.json` file in this directory into the VM's `/app`.
-2. Ensures the Temporal CLI is present — the E2B base image ships Node but **not** the Temporal CLI, so it is installed on demand (download + symlink onto `PATH`), or baked into a prebuilt template.
-3. Runs `npm install` in `/app` against this `package.json`.
-4. Starts `temporal server start-dev`, then the worker (`tsx worker.ts`), as separate supervised processes. The server keeps running across worker restarts — this is what makes the kill-worker durable-recovery demo work.
-
-This whole flow is exercised against real E2B by `bun run smoke:sandbox` and `bun run smoke:e2e` (see the root README).
-
-## Running the worker (locally)
-
-Start the Temporal dev server first (bundled with the CLI):
+Start the Temporal dev server (bundled with the [Temporal CLI](https://docs.temporal.io/cli)):
 
 ```sh
 temporal server start-dev
 ```
 
-Then start the worker in a second terminal:
+Start the worker in a second terminal:
 
 ```sh
 bun run sandbox-template/worker.ts
 ```
 
-The worker prints:
-
-```
-[sandman] Worker running on task queue: sandman-food
-[sandman] Temporal Web UI: http://localhost:8233
-[sandman] Ctrl-C to stop (in-flight workflows survive on the server)
-```
-
-## Running the demo script
-
-With both the server and worker running:
+Drive one order through its whole life from a third:
 
 ```sh
 bun run sandbox-template/client.ts
 ```
 
-This places a sample order, drives it through the full happy path (restaurantAccepted → foodReady → deliveryCompleted), and prints the final status and total.
+Then open http://localhost:8233 to inspect the execution in the Temporal Web UI.
 
 ## Running tests
 
@@ -103,53 +68,23 @@ This places a sample order, drives it through the full happy path (restaurantAcc
 bun run test:workflows
 ```
 
-Tests use `@temporalio/testing`'s `TestWorkflowEnvironment.createTimeSkipping()`. The test server binary is downloaded on first run by the Temporal SDK.
+`workflow.test.ts` exercises the workflow against a real (time-skipping) Temporal test server via `@temporalio/testing`. The test server binary is downloaded on first run by the Temporal SDK.
 
-## Demo script: which button exercises which feature
+## How this runs inside the E2B sandbox
 
-| Control-plane button            | Temporal feature            | How it works in the workflow                                                                                                                               |
-| ------------------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Start Order**                 | Activities + Retry          | `chargePayment` retries with exponential backoff on transient gateway errors                                                                               |
-| **Start Order** (declined card) | Non-Retryable Failure       | `google-pay` triggers `ApplicationFailure(nonRetryable: true, type: 'PAYMENT_DECLINED')`, bypassing retries                                                |
-| **Start Order**                 | Local Activities            | `validateOrder` and `calculatePricing` run as local activities (same process, no server round-trip)                                                        |
-| **Start Order**                 | Durable Timers              | A configurable `condition(..., Nm)` deadline fires if the restaurant doesn't accept; workflow auto-cancels and refunds                                     |
-| **Accept Restaurant**           | Signals                     | `restaurantAccepted` signal unblocks the `condition()` in AWAITING_RESTAURANT phase                                                                        |
-| **Reject Restaurant**           | Signals                     | `restaurantRejected` signal triggers immediate cancellation                                                                                                |
-| **Food Ready**                  | Signals + Child Workflow    | `foodReady` advances to AWAITING_COURIER; courier assignment starts `deliveryWorkflow` as a child                                                          |
-| **Cancel Order**                | Saga Compensation           | Mid-flight cancel triggers `refundPayment` + `releaseCourier` in LIFO order                                                                                |
-| **Update Location**             | Heartbeats + ContinueAsNew  | `courierLocationUpdate` signal increments the counter; at 100 updates the workflow calls `continueAsNew`                                                   |
-| **Add Tip**                     | Signals                     | `addTip` mutates `tipCents` and `totalCents` in real time                                                                                                  |
-| **Update Address**              | Updates + Validators        | Accepted before IN_DELIVERY; the validator rejects the update with `order-already-in-delivery` once delivery starts                                        |
-| **Apply Promo**                 | Updates + Validators        | Validates the code synchronously, applies discount, returns new total                                                                                      |
-| **Query Status**                | Queries + Business Snapshot | `getStatus` returns live `OrderSnapshot`; snapshot fields show the business dimensions a production app could index for visibility                         |
-| **List Visibility**             | Search Attributes           | The advanced scenario filters executions by real `OrderStatus`, `CustomerTier`, and `RestaurantId` Search Attributes                                      |
-| **Query Timeline**              | Queries + Replay Safety     | `getTimeline` returns annotated event log; same history used by the replay-safety test                                                                     |
-| **Kill Worker**                 | Durable Recovery            | Terminating the Node.js worker process mid-flight leaves in-flight workflows intact on the server; restarting the worker resumes exactly where it left off |
+Sandman's sandbox service (`src/lib/server/sandbox/`) boots a fresh MicroVM and:
 
-## Temporal features exercised
+1. Copies every `.ts`/`.json` file in this directory (except tests and vitest config) into the VM's `/app`.
+2. Ensures the Temporal CLI is present—the E2B base image ships Node but **not** the Temporal CLI, so it is installed on demand (download + symlink onto `PATH`), or baked into a prebuilt template.
+3. Runs `npm install` in `/app` against this `package.json`.
+4. Starts `temporal server start-dev`, then the worker (`tsx worker.ts`), as separate supervised processes. The server keeps running across worker restarts—this is what makes the kill-worker durable-recovery demo work.
 
-| Feature                      | Mechanism                                                                                                                                                  |
-| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Activities + automatic retry | `chargePayment` and `notifyRestaurant` use a configurable `RetryPolicy`                                                                                    |
-| Non-retryable failure        | `ApplicationFailure.nonRetryable(msg, 'PAYMENT_DECLINED')` bypasses retry                                                                                  |
-| Saga / compensation          | Each successful side effect registers a compensation immediately; compensation executes LIFO on failure/cancel paths                                      |
-| Signals                      | Six signals (`cancelOrder`, `restaurantAccepted`, `restaurantRejected`, `foodReady`, `courierLocationUpdate`, `addTip`)                                    |
-| Queries                      | `getStatus` (full snapshot) and `getTimeline` (annotated event log) are read-only                                                                          |
-| Updates with validators      | `updateDeliveryAddress` rejects synchronously after IN_DELIVERY; `applyPromoCode` validates the code before mutating state                                 |
-| Durable timers / `sleep()`   | Restaurant-accept deadline via `condition(..., Nm)`; 2-hour delivery SLA in child workflow                                                                 |
-| Child workflows              | `deliveryWorkflow` runs as an independent child, visible in the Temporal Web UI                                                                            |
-| Heartbeats + cancellation    | `trackCourier` heartbeats every 5 s; cancelling the order propagates via `CancellationScope`; uses `WAIT_CANCELLATION_COMPLETED` so cleanup is synchronous |
-| ContinueAsNew                | `subscriptionWorkflow` calls `continueAsNew` each cycle; `orderFoodWorkflow` uses a demo threshold and documents `workflowInfo().continueAsNewSuggested`    |
-| Business snapshot            | `OrderStatus`, `CustomerTier`, and `RestaurantId` are returned from `OrderSnapshot.businessSnapshot` for query-first teaching                              |
-| Search attributes            | When `visibilitySearchAttributesEnabled` is true, the workflow upserts real `OrderStatus`, `CustomerTier`, and `RestaurantId` Search Attributes             |
-| Local activities             | `validateOrder`, `calculatePricing`, `writeAuditLog`, `emitMetrics`                                                                                        |
-| Replay safety                | All non-deterministic operations are in activities; the replay test confirms no determinism violations                                                     |
-| Durable recovery             | Kill-worker demo proves in-flight state survives worker process termination                                                                                |
+This whole flow is exercised against real E2B by `bun run smoke:sandbox` and `bun run smoke:e2e` (see the root README).
 
-## What to notice
+### `package.json`
 
-- Workflow code is deterministic; payment, restaurant, courier, logging, and metrics side effects live in activities or local activities.
-- Side-effecting activities receive stable `operationId` and `idempotencyKey` metadata so retries are safe to explain.
-- Compensation is registered immediately after each successful forward side effect and runs in reverse order.
-- `businessSnapshot` is the simple query lesson; opt-in Search Attributes power the advanced Visibility lesson.
-- Replay safety is verified by recorded-history replay.
+Declares the worker's runtime dependencies—`@temporalio/{worker,workflow,activity,client,common}` and `tsx`—pinned to the same versions as the host app so workflow behavior and replay stay consistent. The bootstrap copies this file into the sandbox at `/app` and runs `npm install`; without it the worker has no dependencies and never starts.
+
+### Contract mirror
+
+`shared.ts` is a standalone mirror of the workflow-facing half of `src/lib/contracts/workflow-api.ts`. It ships into the VM where `src/lib/` is absent, so it must not import from the app layer. If you change one, keep the other in sync—`src/lib/contracts/contracts.spec.ts` asserts they cannot drift.

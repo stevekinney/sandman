@@ -30,16 +30,10 @@
 	const lifecycleControls: ToolbarControl[] = [
 		{ control: 'start-order', label: 'Place order' },
 		{ control: 'accept-restaurant', label: 'Restaurant accepted' },
-		{ control: 'food-ready', label: 'Food ready' },
 		{ control: 'complete-delivery', label: 'Complete delivery' }
 	];
 
-	const interactionControls: ToolbarControl[] = [
-		{ control: 'update-address', label: 'Update address' },
-		{ control: 'query-status', label: 'Get status' },
-		{ control: 'list-visibility', label: 'List visibility' },
-		{ control: 'add-tip', label: 'Add tip' }
-	];
+	const interactionControls: ToolbarControl[] = [{ control: 'query-status', label: 'Get status' }];
 
 	function buttonClass(control: ControlId): string {
 		return session.recommendedControl === control ? 'toolbar-button--recommended' : '';

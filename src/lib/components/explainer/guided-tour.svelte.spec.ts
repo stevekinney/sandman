@@ -42,7 +42,7 @@ describe('GuidedTour', () => {
 	it('renders a progress indicator showing step count', async () => {
 		render(GuidedTour, { props: { progress: initialProgress } });
 		await expect.element(page.getByRole('heading', { name: 'Guided journey' })).toBeInTheDocument();
-		await expect.element(page.getByText('Step 1 of 10')).toBeInTheDocument();
+		await expect.element(page.getByText(`Step 1 of ${TOUR.length}`)).toBeInTheDocument();
 	});
 
 	it('always shows the full step list with the active step marked', async () => {

@@ -12,11 +12,7 @@ import type {
 	SignalPayloadMap,
 	QueryName,
 	QueryReturnMap,
-	UpdateName,
-	UpdateInputMap,
-	UpdateResultMap,
-	VisibilityFilter,
-	VisibilityWorkflowSummary
+	WorkflowSummary
 } from '$lib/contracts/workflow-api';
 import type { ProcessLiveness } from '$lib/contracts/sandbox';
 
@@ -31,13 +27,7 @@ export type WorkflowRun = {
 };
 
 /** Kind of Temporal interaction shown in the teaching command log. */
-export type CommandLogPrimitive =
-	| 'workflow'
-	| 'signal'
-	| 'query'
-	| 'update'
-	| 'worker'
-	| 'visibility';
+export type CommandLogPrimitive = 'workflow' | 'signal' | 'query' | 'worker';
 
 /** Status of a command recorded by the control plane. */
 export type CommandLogStatus = 'running' | 'succeeded' | 'failed';
@@ -66,33 +56,6 @@ export type CommandLogEntry = {
 export type CommandLogDraft = Omit<CommandLogEntry, 'id' | 'status' | 'timestamp'>;
 
 // ---------------------------------------------------------------------------
-// Update rejection
-// ---------------------------------------------------------------------------
-
-/**
- * Discriminated error thrown by `TemporalController.update` when the
- * Temporal update validator rejects the request synchronously.
- *
- * Catch this in components to show the rejection reason inline.
- */
-export type UpdateRejectionError = {
-	kind: 'rejection';
-	reason: string;
-};
-
-/**
- * Type guard for `UpdateRejectionError`.
- * Use in catch blocks to distinguish validator rejections from network errors.
- */
-export function isUpdateRejectionError(error: unknown): error is UpdateRejectionError {
-	return (
-		typeof error === 'object' &&
-		error !== null &&
-		(error as Record<string, unknown>)['kind'] === 'rejection'
-	);
-}
-
-// ---------------------------------------------------------------------------
 // Controller interface
 // ---------------------------------------------------------------------------
 
@@ -103,7 +66,7 @@ export function isUpdateRejectionError(error: unknown): error is UpdateRejection
  * Tests: `MockTemporalController` records calls and returns configurable results.
  */
 export type TemporalController = {
-	/** Start the `OrderFoodWorkflow` and return the resulting run identifiers. */
+	/** Start the order workflow and return the resulting run identifiers. */
 	start(input: OrderInput): Promise<WorkflowRun>;
 
 	/** Send a typed signal to an active workflow. */
@@ -118,16 +81,6 @@ export type TemporalController = {
 	 * Queries are read-only and never advance workflow execution.
 	 */
 	query<N extends QueryName>(workflowId: string, name: N): Promise<QueryReturnMap[N]>;
-
-	/**
-	 * Execute an update against an active workflow.
-	 * Throws `UpdateRejectionError` when the Temporal validator rejects the request.
-	 */
-	update<N extends UpdateName>(
-		workflowId: string,
-		name: N,
-		input: UpdateInputMap[N]
-	): Promise<UpdateResultMap[N]>;
 
 	/** Terminate the worker process inside the E2B sandbox. */
 	killWorker(): Promise<void>;
@@ -158,6 +111,10 @@ export type TemporalController = {
 	 */
 	startServer(): Promise<void>;
 
-	/** List workflows through Temporal Visibility Search Attributes. */
-	visibility(filter: VisibilityFilter): Promise<VisibilityWorkflowSummary[]>;
+	/**
+	 * List workflow executions inside the sandbox. Served by the Temporal
+	 * server (no worker needed) — used by reload restoration to re-attach to a
+	 * live run.
+	 */
+	listWorkflows(): Promise<WorkflowSummary[]>;
 };

@@ -1,385 +1,75 @@
 /**
- * activities.ts — Temporal activity implementations for the Sandman
- * food-ordering demo.
+ * activities.ts — the workflow's side effects.
  *
- * Every activity here runs OUTSIDE the workflow sandbox — in real Node.js
- * with access to I/O, network, and random numbers.  The worker imports this
- * module directly; the workflow file only imports the *types*.
+ * Temporal workflows must be deterministic, so anything unpredictable —
+ * network calls, payments, randomness — lives here, in *activities*. An
+ * activity is just an async function. The worker runs it in plain Node.js
+ * (full I/O access), records the result in the workflow's history, and a
+ * replaying workflow reuses that recorded result instead of running the
+ * activity again.
+ *
+ * If an activity throws, Temporal retries it automatically using the retry
+ * policy defined in workflow.ts. You never write a retry loop.
+ *
+ * These implementations are simulations — each one logs what a real system
+ * would do. Watch the worker logs while an order runs to see them fire.
  */
 
-import { ApplicationFailure, CancelledFailure } from '@temporalio/activity';
-import { activityInfo, heartbeat, log, sleep } from '@temporalio/activity';
-import type {
-	ActivityOperationMetadata,
-	CourierInfo,
-	DeliveryAddress,
-	MoneyCents,
-	OrderInput,
-	OrderItem
-} from './shared.ts';
-import { PROMO_CODES } from './shared.ts';
+import { ApplicationFailure, activityInfo, log } from '@temporalio/activity';
+import type { MoneyCents, OrderItem } from './shared.ts';
 
-// ---------------------------------------------------------------------------
-// Local activity: validateOrder
-// ---------------------------------------------------------------------------
-
-/** Validation result from `validateOrder`. */
-export type ValidationResult = {
-	valid: boolean;
-	reason?: string;
-};
-
-/**
- * Validates an incoming order — checks items, address, and payment method.
- * Runs as a local activity (same process, no server round-trip).
- * Throws `ApplicationFailure` (non-retryable) for hard validation failures.
- */
-export async function validateOrder(input: OrderInput): Promise<ValidationResult> {
-	if (!input.items || input.items.length === 0) {
-		throw ApplicationFailure.nonRetryable('Order must contain at least one item', 'INVALID_ORDER');
-	}
-	for (const item of input.items) {
-		if (item.quantity < 1) {
-			throw ApplicationFailure.nonRetryable(
-				`Item ${item.itemId} has invalid quantity ${item.quantity}`,
-				'INVALID_ORDER'
-			);
-		}
-		if (item.unitPriceCents < 0) {
-			throw ApplicationFailure.nonRetryable(
-				`Item ${item.itemId} has negative price`,
-				'INVALID_ORDER'
-			);
-		}
-	}
-	if (!input.deliveryAddress.street || !input.deliveryAddress.city) {
-		throw ApplicationFailure.nonRetryable('Delivery address is incomplete', 'INVALID_ADDRESS');
-	}
-	log.info('validateOrder: order validated', { orderId: input.orderId });
-	return { valid: true };
-}
-
-// ---------------------------------------------------------------------------
-// Local activity: calculatePricing
-// ---------------------------------------------------------------------------
-
-/** Pricing breakdown returned by `calculatePricing`. */
-export type PricingResult = {
-	subtotalCents: MoneyCents;
-	deliveryFeeCents: MoneyCents;
-	promoDiscountCents: MoneyCents;
-	totalCents: MoneyCents;
-};
-
-/**
- * Calculates order pricing including delivery fee and promo discount.
- * Runs as a local activity.  Deterministic — no external I/O.
- */
-export async function calculatePricing(
-	items: OrderItem[],
-	promoCode?: string
-): Promise<PricingResult> {
-	const subtotalCents = items.reduce((sum, item) => sum + item.unitPriceCents * item.quantity, 0);
-	const deliveryFeeCents = 299; // flat delivery fee
-
-	let promoDiscountCents = 0;
-	if (promoCode) {
-		const key = promoCode.toUpperCase() as keyof typeof PROMO_CODES;
-		const promo = PROMO_CODES[key];
-		if (promo) {
-			if ('discountPercent' in promo) {
-				promoDiscountCents = Math.floor((subtotalCents * promo.discountPercent) / 100);
-			} else {
-				promoDiscountCents = Math.min(promo.discountCents, subtotalCents);
-			}
-		}
-	}
-
-	const totalCents = subtotalCents + deliveryFeeCents - promoDiscountCents;
-	log.info('calculatePricing: computed', {
-		subtotalCents,
-		deliveryFeeCents,
-		promoDiscountCents,
-		totalCents
-	});
-	return { subtotalCents, deliveryFeeCents, promoDiscountCents, totalCents };
-}
-
-// ---------------------------------------------------------------------------
-// Local activity: writeAuditLog
-// ---------------------------------------------------------------------------
-
-/**
- * Writes an audit log entry.
- * Runs as a local activity for low-latency, in-process logging.
- */
-export async function writeAuditLog(entry: {
-	operation: ActivityOperationMetadata;
-	orderId: string;
-	event: string;
-	timestamp: string;
-}): Promise<void> {
-	log.info('AUDIT', {
-		orderId: entry.orderId,
-		event: entry.event,
-		timestamp: entry.timestamp,
-		idempotencyKey: entry.operation.idempotencyKey
-	});
-}
-
-// ---------------------------------------------------------------------------
-// Local activity: emitMetrics
-// ---------------------------------------------------------------------------
-
-/**
- * Emits workflow-phase metrics.
- * Runs as a local activity to avoid the server round-trip for observability.
- */
-export async function emitMetrics(metric: {
-	operation: ActivityOperationMetadata;
-	orderId: string;
-	phase: string;
-	durationMs?: number;
-}): Promise<void> {
-	log.info('METRIC', metric);
-}
-
-// ---------------------------------------------------------------------------
-// Regular activity: chargePayment
-// ---------------------------------------------------------------------------
-
-/** Result of a successful payment charge. */
+/** What a successful charge returns to the workflow. */
 export type ChargeResult = {
 	transactionId: string;
-	chargedCents: MoneyCents;
-	operation: ActivityOperationMetadata;
-	/**
-	 * The attempt number on which the charge ultimately succeeded, taken from
-	 * the activity's `activityInfo().attempt`. Reflects real Temporal retries:
-	 * 1 on first-try success, 2 if it succeeded after one retry, etc.
-	 */
+	/** Which attempt finally succeeded — 1 on the first try, 2 after one retry, etc. */
 	attempts: number;
 };
 
 /**
- * Charges the customer's payment method.
+ * Charge the customer's card.
  *
- * - Retries automatically on transient errors (network, gateway timeout).
- * - Throws `ApplicationFailure` (non-retryable) with type `"PAYMENT_DECLINED"`
- *   if the payment method is definitively declined.
+ * Two magic card numbers make failure easy to demo:
+ *  - '0000' — the first attempt throws a fake gateway timeout. Temporal
+ *    retries automatically, and the second attempt succeeds. Watch the event
+ *    history: the workflow itself never notices.
+ *  - '9999' — the card is declined. A decline is permanent, so we throw a
+ *    NON-retryable failure; the retry policy is skipped and the workflow's
+ *    catch block handles it.
+ *
+ * Try: change '0000' to '4242' (the default demo card) — now every new
+ * order's first charge attempt fails, and Temporal retries it for you.
  */
 export async function chargePayment(
-	operation: ActivityOperationMetadata,
-	paymentMethod: OrderInput['paymentMethod'],
+	orderId: string,
+	cardLast4: string,
 	amountCents: MoneyCents
 ): Promise<ChargeResult> {
-	const info = activityInfo();
-	log.info('chargePayment: attempt', {
-		orderId: operation.orderId,
-		attempt: info.attempt,
-		amountCents,
-		idempotencyKey: operation.idempotencyKey
-	});
+	// activityInfo() tells an activity about its own execution — including
+	// which retry attempt this is.
+	const { attempt } = activityInfo();
+	log.info('chargePayment', { orderId, amountCents, attempt });
 
-	// Simulate a declined payment for wallets with specific provider in test.
-	// In real code this would call the payment processor API.
-	if (paymentMethod.type === 'wallet' && paymentMethod.provider === 'google-pay') {
-		// Simulate a hard decline (for non-retryable test)
-		throw ApplicationFailure.nonRetryable('Payment method declined by issuer', 'PAYMENT_DECLINED', {
-			attempts: info.attempt
-		});
+	if (cardLast4 === '9999') {
+		throw ApplicationFailure.nonRetryable('Card declined by issuer', 'PaymentDeclined');
 	}
 
-	// Simulate a transient failure on the first attempt to exercise retry.
-	// Try: change '0000' to '4242' (the demo card) — every new order's first
-	// charge attempt then fails, and Temporal retries it automatically.
-	if (info.attempt === 1 && paymentMethod.type === 'card' && paymentMethod.last4 === '0000') {
-		throw new Error('Gateway timeout — will retry');
+	if (cardLast4 === '0000' && attempt === 1) {
+		throw new Error('Payment gateway timed out — Temporal will retry this automatically');
 	}
 
-	const transactionId = `txn-${operation.orderId}-${info.attempt}`;
-	log.info('chargePayment: success', {
-		orderId: operation.orderId,
-		transactionId,
-		attempts: info.attempt,
-		idempotencyKey: operation.idempotencyKey
-	});
-	return { transactionId, chargedCents: amountCents, attempts: info.attempt, operation };
+	return { transactionId: `txn-${orderId}-${attempt}`, attempts: attempt };
 }
 
-// ---------------------------------------------------------------------------
-// Regular activity: refundPayment  (saga compensation)
-// ---------------------------------------------------------------------------
-
-/** Result of a payment refund. */
-export type RefundResult = {
-	refundId: string;
-	refundedCents: MoneyCents;
-	operation: ActivityOperationMetadata;
-};
-
-/**
- * Refunds the customer's payment as part of saga compensation.
- * Proxied through the compensation retry policy in definitions.ts, which has no
- * attempt cap — a refund must eventually succeed, so it retries until it does.
- */
-export async function refundPayment(
-	operation: ActivityOperationMetadata,
-	amountCents: MoneyCents
-): Promise<RefundResult> {
-	log.info('refundPayment: issuing refund', {
-		orderId: operation.orderId,
-		amountCents,
-		idempotencyKey: operation.idempotencyKey
-	});
-	const refundId = `ref-${operation.orderId}`;
-	return { refundId, refundedCents: amountCents, operation };
+/** Tell the restaurant about the order (in real life: a POS integration or webhook). */
+export async function notifyRestaurant(orderId: string, items: OrderItem[]): Promise<void> {
+	log.info('notifyRestaurant', { orderId, itemCount: items.length });
 }
 
-// ---------------------------------------------------------------------------
-// Regular activity: notifyRestaurant
-// ---------------------------------------------------------------------------
-
-/** Result of restaurant notification. */
-export type NotifyResult = {
-	notificationId: string;
-	sentAt: string;
-	operation: ActivityOperationMetadata;
-};
-
 /**
- * Notifies the restaurant of a new order.
- * Retries automatically on transient failures.
+ * Refund the customer. The workflow calls this when the restaurant never
+ * accepts (the durable timer fires) or the customer cancels after being
+ * charged — money moved, so it must move back.
  */
-export async function notifyRestaurant(
-	operation: ActivityOperationMetadata,
-	restaurantId: string,
-	items: OrderItem[]
-): Promise<NotifyResult> {
-	log.info('notifyRestaurant', {
-		orderId: operation.orderId,
-		restaurantId,
-		itemCount: items.length,
-		idempotencyKey: operation.idempotencyKey
-	});
-	const notificationId = `notif-${operation.orderId}`;
-	return { notificationId, sentAt: new Date().toISOString(), operation };
-}
-
-// ---------------------------------------------------------------------------
-// Regular activity: assignCourier
-// ---------------------------------------------------------------------------
-
-/**
- * Assigns a courier for the delivery.
- * Returns courier info including a generated courierId.
- */
-export async function assignCourier(
-	operation: ActivityOperationMetadata,
-	deliveryAddress: DeliveryAddress
-): Promise<CourierInfo & { operation: ActivityOperationMetadata }> {
-	log.info('assignCourier', {
-		orderId: operation.orderId,
-		city: deliveryAddress.city,
-		idempotencyKey: operation.idempotencyKey
-	});
-	return {
-		courierId: `courier-${operation.orderId}`,
-		name: 'Alex Courier',
-		etaMinutes: 25,
-		operation
-	};
-}
-
-// ---------------------------------------------------------------------------
-// Regular activity: releaseCourier  (saga compensation)
-// ---------------------------------------------------------------------------
-
-/**
- * Releases a previously assigned courier back to the pool.
- * Used in saga compensation when an order is cancelled after courier assignment.
- */
-export async function releaseCourier(
-	operation: ActivityOperationMetadata,
-	courierId: string
-): Promise<void> {
-	log.info('releaseCourier', {
-		orderId: operation.orderId,
-		courierId,
-		idempotencyKey: operation.idempotencyKey
-	});
-}
-
-// ---------------------------------------------------------------------------
-// Regular activity: trackCourier  (heartbeating, cancellable)
-// ---------------------------------------------------------------------------
-
-/**
- * Tracks a courier's location by heartbeating every `heartbeatIntervalMs`
- * milliseconds.  Runs indefinitely until cancelled via a `CancellationScope`.
- *
- * Cancellation is propagated through the heartbeat mechanism: once the
- * Temporal server marks the activity cancelled, the next `sleep()` call will
- * throw `CancelledFailure`.
- */
-export async function trackCourier(options: {
-	courierId: string;
-	orderId: string;
-	heartbeatIntervalMs?: number;
-	/**
-	 * Maximum heartbeat ticks before the activity exits naturally.
-	 * Undefined (default) loops until the activity is cancelled.
-	 * Set in tests to allow the SLA timer to fire via time-skip once the
-	 * activity has completed.
-	 */
-	maxTicks?: number;
-}): Promise<void> {
-	const interval = options.heartbeatIntervalMs ?? 5_000;
-	const info = activityInfo();
-	log.info('trackCourier: starting', { courierId: options.courierId, orderId: options.orderId });
-
-	// Restore previous heartbeat position on retry
-	const startTick: number = (info.heartbeatDetails as number | undefined) ?? 0;
-	let tick = startTick;
-
-	try {
-		while (options.maxTicks === undefined || tick < options.maxTicks) {
-			heartbeat(tick);
-			tick++;
-			log.debug('trackCourier: heartbeat', { tick, courierId: options.courierId });
-			// sleep throws CancelledFailure if the activity is cancelled
-			await sleep(interval);
-		}
-		log.info('trackCourier: maxTicks reached — exiting naturally', {
-			tick,
-			courierId: options.courierId
-		});
-	} catch (err) {
-		if (err instanceof CancelledFailure) {
-			log.info('trackCourier: cancelled at tick', { tick, courierId: options.courierId });
-			throw err; // Re-throw so the framework cleans up correctly
-		}
-		throw err;
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Regular activity: dispatchCourier
-// ---------------------------------------------------------------------------
-
-/**
- * Dispatches the assigned courier to start delivery.
- */
-export async function dispatchCourier(
-	operation: ActivityOperationMetadata,
-	courierId: string,
-	deliveryAddress: DeliveryAddress
-): Promise<{ dispatchedAt: string; operation: ActivityOperationMetadata }> {
-	log.info('dispatchCourier', {
-		orderId: operation.orderId,
-		courierId,
-		city: deliveryAddress.city,
-		idempotencyKey: operation.idempotencyKey
-	});
-	return { dispatchedAt: new Date().toISOString(), operation };
+export async function refundPayment(orderId: string, amountCents: MoneyCents): Promise<void> {
+	log.info('refundPayment', { orderId, amountCents });
 }

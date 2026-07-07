@@ -1,16 +1,16 @@
 /**
- * workflow-api.ts — complete typed API for the Sandman food-ordering workflow.
+ * workflow-api.ts — complete typed API for the Sandman order workflow.
  *
  * This is the single source of truth for:
- *  - signal / query / update names and their payload / return types
+ *  - signal / query names and their payload / return types
  *  - order lifecycle state and supporting domain types
  *  - task-queue and workflow-type constants shared by the worker and client
  *  - the FEATURES list consumed by the control-plane and explainer panels
  *  - the WorkflowEventType union used by the live event rail
  *
- * Track D (workflow implementation), Track E (control plane), and Track F
- * (explainer) all import from here. Import only types where no runtime value
- * is needed — verbatimModuleSyntax is enforced.
+ * `sandbox-template/shared.ts` is a standalone mirror of the workflow-facing
+ * half of this file (it ships into the E2B VM where `src/lib` is absent) —
+ * keep the two in sync.
  */
 
 // ---------------------------------------------------------------------------
@@ -24,34 +24,23 @@
 export type MoneyCents = number;
 
 // ---------------------------------------------------------------------------
-// Customer tier
-// ---------------------------------------------------------------------------
-
-/** Customer tier — affects priority routing and discount eligibility. */
-export const CUSTOMER_TIER = {
-	Standard: 'standard',
-	Premium: 'premium',
-	Enterprise: 'enterprise'
-} as const;
-
-/** Union of all customer tier string values. */
-export type CustomerTier = (typeof CUSTOMER_TIER)[keyof typeof CUSTOMER_TIER];
-
-// ---------------------------------------------------------------------------
 // Order status
 // ---------------------------------------------------------------------------
 
-/** All possible order lifecycle states. */
+/** All possible order lifecycle states, in the happy-path order they occur. */
 export const ORDER_STATUS = {
-	Created: 'CREATED',
-	Validating: 'VALIDATING',
-	AwaitingRestaurant: 'AWAITING_RESTAURANT',
+	/** The workflow has started and is charging the card. */
+	Received: 'RECEIVED',
+	/** Payment succeeded; a durable timer runs while we wait for the restaurant. */
+	WaitingForRestaurant: 'WAITING_FOR_RESTAURANT',
+	/** The restaurant accepted and is cooking; waiting for delivery. */
 	Preparing: 'PREPARING',
-	AwaitingCourier: 'AWAITING_COURIER',
-	InDelivery: 'IN_DELIVERY',
+	/** Terminal: the order arrived. */
 	Delivered: 'DELIVERED',
-	Cancelled: 'CANCELLED',
-	Refunded: 'REFUNDED'
+	/** Terminal: the restaurant never accepted, so the payment was refunded. */
+	Refunded: 'REFUNDED',
+	/** Terminal: the customer cancelled (or payment failed). */
+	Cancelled: 'CANCELLED'
 } as const;
 
 /** Union of all order status string values. */
@@ -62,19 +51,13 @@ export type OrderStatus = (typeof ORDER_STATUS)[keyof typeof ORDER_STATUS];
 // ---------------------------------------------------------------------------
 
 /** Temporal task queue shared by the Sandman worker and client. */
-export const TASK_QUEUE = 'sandman-food' as const;
+export const TASK_QUEUE = 'orders' as const;
 
-/** Temporal workflow type name for the primary food-ordering orchestration workflow. */
-// MUST equal the exported workflow function name in sandbox-template/workflows.ts —
+/** Temporal workflow type name for the order workflow. */
+// MUST equal the exported workflow function name in sandbox-template/workflow.ts —
 // the Temporal worker registers workflows by their function name, so a client that
 // starts a different string gets "workflow type not registered" against a live worker.
-export const ORDER_FOOD_WORKFLOW = 'orderFoodWorkflow' as const;
-
-/** Temporal workflow type name for the delivery child workflow. */
-export const DELIVERY_WORKFLOW = 'DeliveryWorkflow' as const;
-
-/** Temporal workflow type name for the subscription renewal workflow. */
-export const SUBSCRIPTION_WORKFLOW = 'SubscriptionWorkflow' as const;
+export const ORDER_WORKFLOW = 'orderWorkflow' as const;
 
 // ---------------------------------------------------------------------------
 // Domain types used in OrderInput and OrderSnapshot
@@ -82,81 +65,40 @@ export const SUBSCRIPTION_WORKFLOW = 'SubscriptionWorkflow' as const;
 
 /** A single item in an order. */
 export type OrderItem = {
-	/** Menu item identifier. */
-	itemId: string;
 	/** Human-readable display name. */
 	name: string;
 	/** Quantity ordered. Must be ≥ 1. */
 	quantity: number;
 	/** Unit price in cents. */
-	unitPriceCents: MoneyCents;
+	priceCents: MoneyCents;
 };
-
-/** Delivery address for the order. */
-export type DeliveryAddress = {
-	street: string;
-	city: string;
-	state: string;
-	postalCode: string;
-	/** Optional delivery instructions (e.g. "leave at door"). */
-	notes?: string;
-};
-
-/** Payment method — discriminated union on `type`. */
-export type PaymentMethod =
-	| { type: 'card'; last4: string; brand: string }
-	| { type: 'wallet'; provider: 'apple-pay' | 'google-pay' }
-	| { type: 'credits'; balanceCents: MoneyCents };
 
 /**
- * Input passed to `workflow.startWorkflow` when placing a new food order.
- * This is the canonical start argument for `ORDER_FOOD_WORKFLOW`.
+ * Input passed when starting a new order workflow.
+ * This is the canonical start argument for `ORDER_WORKFLOW`.
+ *
+ * `cardLast4` drives the payment demo in the sandbox activities:
+ *  - '0000' — the first charge attempt fails, demonstrating automatic retry
+ *  - '9999' — the card is declined (a non-retryable failure)
+ *  - anything else — the charge succeeds on the first try
  */
 export type OrderInput = {
 	/** Idempotency key / order ID generated by the caller. */
 	orderId: string;
 	/** Non-empty list of ordered items. */
 	items: OrderItem[];
-	/** Delivery destination. */
-	deliveryAddress: DeliveryAddress;
-	/** Customer tier for priority routing and discounts. */
-	customerTier: CustomerTier;
-	/** Payment method used for this order. */
-	paymentMethod: PaymentMethod;
-	/** Restaurant identifier. */
-	restaurantId: string;
-	/** Customer identifier. */
-	customerId: string;
-	/** Optional promo code applied at placement time. */
-	promoCode?: string;
-	/** Override: maximum minutes the workflow waits for restaurant acceptance. Defaults to 10. */
-	restaurantAcceptTimeoutMinutes?: number;
-	/**
-	 * Demo-only override for the number of courier location updates that triggers
-	 * ContinueAsNew. Defaults to 100 so normal runs keep a production-shaped
-	 * history-compaction threshold.
-	 */
-	historyCompactionThreshold?: number;
-	/**
-	 * Advanced Visibility lesson toggle. When true, the workflow upserts real
-	 * Temporal Search Attributes in addition to returning businessSnapshot from queries.
-	 */
-	visibilitySearchAttributesEnabled?: boolean;
+	/** Last four digits of the demo payment card. */
+	cardLast4: string;
+	/** How long the durable timer waits for the restaurant before refunding. Default: 300. */
+	restaurantTimeoutSeconds?: number;
 };
 
 // ---------------------------------------------------------------------------
 // Signals
 // ---------------------------------------------------------------------------
 
-/** Signal names accepted by the food-ordering workflow. */
-export type SignalName =
-	| 'cancelOrder'
-	| 'restaurantAccepted'
-	| 'restaurantRejected'
-	| 'foodReady'
-	| 'courierLocationUpdate'
-	| 'addTip'
-	| 'deliveryCompleted';
+/** Signal names accepted by the order workflow. */
+export type SignalName = 'restaurantAccepted' | 'deliveryCompleted' | 'cancelOrder';
 
 /** Payload for the `cancelOrder` signal. */
 export type CancelOrderSignal = {
@@ -164,123 +106,57 @@ export type CancelOrderSignal = {
 	reason: string;
 };
 
-/** Payload for the `restaurantAccepted` signal. */
-export type RestaurantAcceptedSignal = {
-	/** Estimated preparation time in minutes. */
-	estimatedPrepMinutes: number;
-};
-
-/** Payload for the `restaurantRejected` signal. */
-export type RestaurantRejectedSignal = {
-	/** Human-readable reason for rejection. */
-	reason: string;
-	/** Whether the order could be retried with a different restaurant. */
-	retryable: boolean;
-};
-
-/** Payload for the `foodReady` signal — emitted when kitchen preparation is complete. */
-export type FoodReadySignal = Record<string, never>;
-
-/** Payload for the `courierLocationUpdate` signal. */
-export type CourierLocationUpdate = {
-	/** Latitude in decimal degrees. */
-	lat: number;
-	/** Longitude in decimal degrees. */
-	lng: number;
-	/** Speed in km/h, if available from the courier device. */
-	speedKmh?: number;
-};
-
-/** Payload for the `addTip` signal. */
-export type AddTipSignal = {
-	/** Tip amount in cents. Must be > 0. */
-	amountCents: MoneyCents;
-};
-
-/** Payload for the `deliveryCompleted` signal. */
-export type DeliveryCompletedSignal = Record<string, never>;
-
 /**
  * Maps each {@link SignalName} to its payload type.
  * Use this to build type-safe signal-dispatch helpers and `setHandler` calls.
  */
 export type SignalPayloadMap = {
+	restaurantAccepted: Record<string, never>;
+	deliveryCompleted: Record<string, never>;
 	cancelOrder: CancelOrderSignal;
-	restaurantAccepted: RestaurantAcceptedSignal;
-	restaurantRejected: RestaurantRejectedSignal;
-	foodReady: FoodReadySignal;
-	courierLocationUpdate: CourierLocationUpdate;
-	addTip: AddTipSignal;
-	deliveryCompleted: DeliveryCompletedSignal;
 };
+
+export const SIGNAL_NAMES = [
+	'restaurantAccepted',
+	'deliveryCompleted',
+	'cancelOrder'
+] as const satisfies readonly SignalName[];
+
+export function isSignalName(value: string): value is SignalName {
+	switch (value) {
+		case 'restaurantAccepted':
+		case 'deliveryCompleted':
+		case 'cancelOrder':
+			return true;
+		default:
+			return false;
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
 
-/** Query names exposed by the food-ordering workflow. */
-export type QueryName = 'getStatus' | 'getTimeline';
+/** Query names exposed by the order workflow. */
+export type QueryName = 'getStatus';
 
-/** Courier information included in an {@link OrderSnapshot}. */
-export type CourierInfo = {
-	/** Courier identifier. */
-	courierId: string;
-	/** Courier display name. */
-	name: string;
-	/** Last known location, populated once tracking begins. */
-	location?: CourierLocationUpdate;
-	/** Estimated time of arrival in minutes, if known. */
-	etaMinutes?: number;
-};
+export const QUERY_NAMES = ['getStatus'] as const satisfies readonly QueryName[];
 
-/** A compensation action recorded during saga rollback. */
-export type CompensationRecord = {
-	/** Identifier of the compensation step (e.g. `"refund-payment"`). */
-	action: string;
-	/** ISO-8601 timestamp of when the compensation executed. */
+export function isQueryName(value: string): value is QueryName {
+	return value === 'getStatus';
+}
+
+/**
+ * One human-readable entry in the order's story, recorded by the workflow as
+ * it runs and returned inside the `getStatus` snapshot.
+ */
+export type TimelineEntry = {
+	/** ISO-8601 timestamp of the event. */
 	timestamp: string;
-	/** Whether the compensation activity succeeded. */
-	ok: boolean;
-	/** Captured error message if `ok` is false. */
-	errorMessage?: string;
-};
-
-/** Business fields exposed through the read-only workflow query. */
-export type BusinessSnapshot = {
-	OrderStatus: OrderStatus;
-	CustomerTier: CustomerTier;
-	RestaurantId: string;
-};
-
-/** Search Attribute metadata used by the workflow, API, UI, and docs. */
-export type SearchAttributeMetadata = {
-	key: keyof BusinessSnapshot;
-	type: 'Keyword';
+	/** Human-readable description of what happened. */
 	description: string;
-};
-
-/** Filter accepted by the Temporal Visibility list endpoint. */
-export type VisibilityFilter = {
-	status?: OrderStatus;
-	customerTier?: CustomerTier;
-	restaurantId?: string;
-};
-
-/** Summary returned from the Temporal Visibility list endpoint. */
-export type VisibilityWorkflowSummary = {
-	workflowId: string;
-	runId: string;
-	status: string;
-	type?: string;
-	businessSnapshot: Partial<BusinessSnapshot>;
-};
-
-/** Idempotency metadata passed to every side-effecting activity. */
-export type ActivityOperationMetadata = {
-	operationId: string;
-	idempotencyKey: string;
-	workflowId: string;
-	orderId: string;
+	/** The order status after this step. */
+	status: OrderStatus;
 };
 
 /**
@@ -290,135 +166,20 @@ export type ActivityOperationMetadata = {
 export type OrderSnapshot = {
 	/** Current order status. */
 	status: OrderStatus;
-	/** The original order input, including any mutable overrides (address, promo). */
-	input: OrderInput;
+	/** The order this workflow is running. */
+	orderId: string;
+	/** The ordered items. */
+	items: OrderItem[];
 	/** Sum of all item prices × quantities, in cents. */
-	subtotalCents: MoneyCents;
-	/** Delivery fee in cents. */
-	deliveryFeeCents: MoneyCents;
-	/** Tip in cents (updated by the `addTip` signal). */
-	tipCents: MoneyCents;
-	/** Promo discount in cents (0 if no promo applied). */
-	promoDiscountCents: MoneyCents;
-	/** Grand total after all adjustments, in cents. */
 	totalCents: MoneyCents;
-	/** Activity attempt counts keyed by activity type name. */
-	attemptCounts: Record<string, number>;
-	/** Compensation actions executed during any saga rollback. */
-	compensations: CompensationRecord[];
-	/** Idempotency metadata for side-effecting activities that have executed. */
-	activityOperations: Record<string, ActivityOperationMetadata>;
-	/** Courier information, populated once a courier is assigned. */
-	courier?: CourierInfo;
-	/** Number of courier location updates received (used to gate ContinueAsNew). */
-	locationUpdateCount: number;
-	/** ISO-8601 deadline by which the restaurant must accept before auto-cancel. */
-	restaurantDeadline?: string;
-	/** ISO-8601 deadline by which the courier must deliver before SLA breach. */
-	deliveryDeadline?: string;
+	/** How many attempts the payment charge took (2+ means Temporal retried it). */
+	paymentAttempts: number;
+	/** Why the order was cancelled, when the customer cancelled it. */
+	cancelReason?: string;
 	/** ISO-8601 timestamp when the workflow execution started. */
 	startedAt: string;
-	/** ISO-8601 timestamp of the last state mutation. */
-	updatedAt: string;
-	/** ISO-8601 timestamp when the order reached a terminal state, if applicable. */
-	completedAt?: string;
-	/** Applied promo code string, if any. */
-	appliedPromoCode?: string;
-	/** Whether this run is about to call `continueAsNew`. */
-	continueAsNewPending: boolean;
-	/** Queryable business fields also promoted to Temporal Visibility. */
-	businessSnapshot: BusinessSnapshot;
-	/** Teaching-only description list for key internal timeline entries. */
-	timelineDescriptions: string[];
-};
-
-export const SEARCH_ATTRIBUTE_METADATA = [
-	{
-		key: 'OrderStatus',
-		type: 'Keyword',
-		description: 'Current business lifecycle state for the order workflow.'
-	},
-	{
-		key: 'CustomerTier',
-		type: 'Keyword',
-		description: 'Customer tier used for workshop filtering and prioritization examples.'
-	},
-	{
-		key: 'RestaurantId',
-		type: 'Keyword',
-		description: 'Restaurant identifier used to find all orders for one merchant.'
-	}
-] as const satisfies readonly SearchAttributeMetadata[];
-
-export const SIGNAL_NAMES = [
-	'cancelOrder',
-	'restaurantAccepted',
-	'restaurantRejected',
-	'foodReady',
-	'courierLocationUpdate',
-	'addTip',
-	'deliveryCompleted'
-] as const satisfies readonly SignalName[];
-
-export const QUERY_NAMES = ['getStatus', 'getTimeline'] as const satisfies readonly QueryName[];
-
-export const UPDATE_NAMES = [
-	'updateDeliveryAddress',
-	'applyPromoCode'
-] as const satisfies readonly UpdateName[];
-
-export function isSignalName(value: string): value is SignalName {
-	switch (value) {
-		case 'cancelOrder':
-		case 'restaurantAccepted':
-		case 'restaurantRejected':
-		case 'foodReady':
-		case 'courierLocationUpdate':
-		case 'addTip':
-		case 'deliveryCompleted':
-			return true;
-		default:
-			return false;
-	}
-}
-
-export function isQueryName(value: string): value is QueryName {
-	switch (value) {
-		case 'getStatus':
-		case 'getTimeline':
-			return true;
-		default:
-			return false;
-	}
-}
-
-export function isUpdateName(value: string): value is UpdateName {
-	switch (value) {
-		case 'updateDeliveryAddress':
-		case 'applyPromoCode':
-			return true;
-		default:
-			return false;
-	}
-}
-
-/**
- * A single annotated entry in the order event timeline.
- * Returned by the `getTimeline` query and rendered by Track F's guided-tour panel.
- */
-export type TimelineEntry = {
-	/** Monotonically increasing index within this run's timeline. */
-	index: number;
-	/** ISO-8601 timestamp of the event. */
-	timestamp: string;
-	/** Human-readable description of what happened. */
-	description: string;
-	/** The order status at the time of this entry. */
-	status: OrderStatus;
-	/** Optional feature identifier for guided-tour highlighting. */
-	featureId?: FeatureId;
-	/** Optional Temporal or UI event type that advances the guided tour. */
-	eventType?: WorkflowEventType | 'QueryCompleted' | 'WorkerRestarted';
+	/** The order's story so far, oldest first. */
+	timeline: TimelineEntry[];
 };
 
 /**
@@ -427,88 +188,20 @@ export type TimelineEntry = {
  */
 export type QueryReturnMap = {
 	getStatus: OrderSnapshot;
-	getTimeline: TimelineEntry[];
-};
-
-// ---------------------------------------------------------------------------
-// Updates
-// ---------------------------------------------------------------------------
-
-/** Update names accepted by the food-ordering workflow. */
-export type UpdateName = 'updateDeliveryAddress' | 'applyPromoCode';
-
-/** Input for the `updateDeliveryAddress` update. */
-export type UpdateDeliveryAddressInput = {
-	/** New delivery address to apply to the order. */
-	newAddress: DeliveryAddress;
-};
-
-/** Success return for `updateDeliveryAddress`. */
-export type UpdateDeliveryAddressResult = {
-	/** Whether the address was mutated (false if it was identical to the existing one). */
-	updated: boolean;
-	/** The address that is now effective on the order. */
-	effectiveAddress: DeliveryAddress;
 };
 
 /**
- * Rejection reason for `updateDeliveryAddress`.
- * Returned synchronously by the validator before the handler runs.
+ * Summary of one workflow execution inside the sandbox, as returned by the
+ * list route. Used by reload restoration to re-attach to a live run — not a
+ * teaching surface.
  */
-export type UpdateDeliveryAddressRejection =
-	| 'order-already-in-delivery'
-	| 'order-already-completed'
-	| 'order-cancelled';
-
-/** Input for the `applyPromoCode` update. */
-export type ApplyPromoCodeInput = {
-	/** The promo code string to validate and apply. */
-	code: string;
-};
-
-/** Success return for `applyPromoCode`. */
-export type ApplyPromoCodeResult = {
-	/** Discount amount applied in cents. */
-	discountCents: MoneyCents;
-	/** New grand total after the discount, in cents. */
-	newTotalCents: MoneyCents;
-	/** Human-readable description of the promotion (e.g. `"10% off your order"`). */
-	description: string;
-};
-
-/**
- * Rejection reason for `applyPromoCode`.
- * Returned synchronously by the validator before the handler runs.
- */
-export type ApplyPromoCodeRejection =
-	| 'invalid-code'
-	| 'code-already-used'
-	| 'code-expired'
-	| 'order-already-completed'
-	| 'order-cancelled';
-
-/**
- * Maps each {@link UpdateName} to its input type.
- */
-export type UpdateInputMap = {
-	updateDeliveryAddress: UpdateDeliveryAddressInput;
-	applyPromoCode: ApplyPromoCodeInput;
-};
-
-/**
- * Maps each {@link UpdateName} to its success return type.
- */
-export type UpdateResultMap = {
-	updateDeliveryAddress: UpdateDeliveryAddressResult;
-	applyPromoCode: ApplyPromoCodeResult;
-};
-
-/**
- * Maps each {@link UpdateName} to its validator-rejection reason type.
- */
-export type UpdateRejectionMap = {
-	updateDeliveryAddress: UpdateDeliveryAddressRejection;
-	applyPromoCode: ApplyPromoCodeRejection;
+export type WorkflowSummary = {
+	workflowId: string;
+	runId: string;
+	/** Normalized execution status (e.g. "RUNNING", "COMPLETED"). */
+	status: string;
+	/** Workflow type name (e.g. "orderWorkflow"). */
+	type?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -517,55 +210,38 @@ export type UpdateRejectionMap = {
 
 /**
  * Unique identifier for each Temporal feature demonstrated by the Sandman
- * food-ordering workflow. This is the authoritative list — Track F renders it
- * and the anti-drift coverage test checks it.
+ * order workflow. This is the authoritative list — the explainer panels
+ * render it and the anti-drift coverage test checks it.
  */
 export type FeatureId =
 	| 'activities-retry'
 	| 'non-retryable-failure'
-	| 'saga-compensation'
 	| 'signals'
 	| 'queries'
-	| 'updates-validators'
 	| 'timers-durable-sleep'
-	| 'child-workflow'
-	| 'heartbeats-cancellation'
-	| 'continue-as-new'
-	| 'queryable-business-snapshot'
-	| 'search-attributes'
-	| 'local-activities'
-	| 'replay-safety'
 	| 'durable-recovery';
 
 /**
  * Control-plane action identifier — maps to a button or interaction in the
- * sandbox control panel rendered by Track E.
+ * sandbox control panel.
  */
 export type ControlId =
 	| 'start-order'
-	| 'cancel-order'
 	| 'accept-restaurant'
-	| 'reject-restaurant'
-	| 'food-ready'
-	| 'update-location'
-	| 'add-tip'
-	| 'update-address'
-	| 'apply-promo'
 	| 'complete-delivery'
-	| 'kill-worker'
-	| 'list-visibility'
+	| 'cancel-order'
 	| 'query-status'
-	| 'query-timeline';
+	| 'kill-worker';
 
 /**
  * One entry in the {@link FEATURES} list.
- * Every `signal`, `query`, `update`, and `control` reference in the list resolves
- * to a name in the corresponding union exported from this file.
+ * Every `signal`, `query`, and `control` reference in the list resolves to a
+ * name in the corresponding union exported from this file.
  */
 export type Feature = {
 	/** Stable identifier for this feature. */
 	id: FeatureId;
-	/** The Temporal concept being demonstrated (rendered as a heading in Track F). */
+	/** The Temporal concept being demonstrated (rendered as a heading). */
 	concept: string;
 	/** How the concept is exercised in this specific workflow. */
 	mechanic: string;
@@ -575,46 +251,36 @@ export type Feature = {
 	signal?: SignalName;
 	/** Optional query that exercises this feature. */
 	query?: QueryName;
-	/** Optional update that exercises this feature. */
-	update?: UpdateName;
 };
 
 /**
  * The complete list of Temporal features demonstrated by the Sandman
- * food-ordering workflow.
+ * order workflow.
  *
- * Internal-consistency guarantee: every `signal`, `query`, `update`, and
- * `control` value in this list resolves to a member of the corresponding
- * union in this file.
+ * Internal-consistency guarantee: every `signal`, `query`, and `control`
+ * value in this list resolves to a member of the corresponding union in
+ * this file.
  */
 export const FEATURES = [
 	{
 		id: 'activities-retry',
 		concept: 'Activities & Automatic Retry',
 		mechanic:
-			'Payment charge, restaurant notification, and courier dispatch each run as activities with configurable retry policies. Transient failures are automatically retried with exponential backoff.',
+			'The payment charge runs as an activity with a visible retry policy. Card 0000 fails its first attempt with a fake gateway timeout, and Temporal retries it automatically with exponential backoff — the workflow contains no retry loop.',
 		control: 'start-order'
 	},
 	{
 		id: 'non-retryable-failure',
 		concept: 'Non-Retryable Failures',
 		mechanic:
-			'An invalid payment method or out-of-area address throws ApplicationFailure with nonRetryable: true, bypassing the retry policy and immediately triggering the saga compensation path.',
+			'Card 9999 is declined by the issuer. A decline is permanent, so the activity throws ApplicationFailure with nonRetryable: true — the retry policy is skipped and the workflow cancels the order instead.',
 		control: 'start-order'
-	},
-	{
-		id: 'saga-compensation',
-		concept: 'Saga / Compensation',
-		mechanic:
-			'If the workflow fails after charging the customer, a compensation stack issues a refund. Each forward step registers a compensating action so the rollback is always symmetric.',
-		control: 'cancel-order',
-		signal: 'cancelOrder'
 	},
 	{
 		id: 'signals',
 		concept: 'Signals',
 		mechanic:
-			'Restaurant acceptance, rejection, food-ready, courier location, tip, and order cancellation all use Temporal signals. The workflow blocks on signal receipt using condition(), resuming only when the expected signal arrives.',
+			'Restaurant acceptance, delivery completion, and cancellation are Temporal signals — async messages into the running workflow. The workflow parks on condition() and resumes the moment the signal it is waiting for arrives.',
 		control: 'accept-restaurant',
 		signal: 'restaurantAccepted'
 	},
@@ -622,77 +288,16 @@ export const FEATURES = [
 		id: 'queries',
 		concept: 'Queries',
 		mechanic:
-			'getStatus returns a live OrderSnapshot of all workflow state without advancing execution. getTimeline returns the annotated event log consumed by the guided-tour panel.',
+			'getStatus returns a live OrderSnapshot — status, total, payment attempts, and the order timeline — without advancing execution or writing history.',
 		control: 'query-status',
 		query: 'getStatus'
-	},
-	{
-		id: 'updates-validators',
-		concept: 'Updates with Validators',
-		mechanic:
-			'updateDeliveryAddress is rejected synchronously by a validator if the order is already in delivery. applyPromoCode validates the code before mutating state, returning a typed rejection to the caller without re-driving the workflow.',
-		control: 'update-address',
-		update: 'updateDeliveryAddress'
 	},
 	{
 		id: 'timers-durable-sleep',
-		concept: 'Durable Timers / sleep()',
+		concept: 'Durable Timers',
 		mechanic:
-			'A configurable deadline timer fires if the restaurant does not accept within N minutes, automatically triggering cancellation and saga compensation. The timer survives worker restarts.',
+			'A deadline timer fires if the restaurant does not accept in time, automatically refunding the payment. The timer lives in the Temporal server, not the worker — it survives worker restarts.',
 		control: 'start-order'
-	},
-	{
-		id: 'child-workflow',
-		concept: 'Child Workflows',
-		mechanic:
-			'Once a courier is assigned, the delivery leg is handed off to a DeliveryWorkflow child workflow. Its lifecycle is independently visible in the Temporal Web UI, demonstrating workflow composition.',
-		control: 'complete-delivery',
-		signal: 'deliveryCompleted'
-	},
-	{
-		id: 'heartbeats-cancellation',
-		concept: 'Activity Heartbeats & Cancellation',
-		mechanic:
-			'The courier-tracking activity heartbeats every 5 seconds with its latest location. Cancelling the order propagates cancellation to the activity via the heartbeat token, allowing a clean shutdown.',
-		control: 'kill-worker',
-		signal: 'courierLocationUpdate'
-	},
-	{
-		id: 'continue-as-new',
-		concept: 'ContinueAsNew',
-		mechanic:
-			'After 100 courier location updates, the workflow calls continueAsNew to keep event history bounded. The new run receives the current OrderSnapshot as its seed state so no data is lost.',
-		signal: 'courierLocationUpdate'
-	},
-	{
-		id: 'queryable-business-snapshot',
-		concept: 'Queryable Business Snapshot',
-		mechanic:
-			'The getStatus query returns the business fields you would normally index as Temporal search attributes: OrderStatus, CustomerTier, and RestaurantId. This keeps the v1 demo honest while still teaching which dimensions make executions searchable.',
-		control: 'query-status',
-		query: 'getStatus'
-	},
-	{
-		id: 'search-attributes',
-		concept: 'Temporal Search Attributes',
-		mechanic:
-			'The workflow upserts OrderStatus, CustomerTier, and RestaurantId as real Temporal Search Attributes so learners can filter executions in Temporal Web and through the Visibility list API.',
-		control: 'list-visibility',
-		query: 'getStatus'
-	},
-	{
-		id: 'local-activities',
-		concept: 'Local Activities',
-		mechanic:
-			'Audit-log writes and metrics emission run as local activities (executed in the same process, no round-trip to the Temporal server) to demonstrate the durability/performance trade-off.',
-		control: 'start-order'
-	},
-	{
-		id: 'replay-safety',
-		concept: 'Replay Safety',
-		mechanic:
-			'All non-deterministic operations (random IDs, current time, external HTTP calls) are wrapped in activities. The workflow function itself is a pure deterministic function of its history, as verified by the replayer.',
-		query: 'getTimeline'
 	},
 	{
 		id: 'durable-recovery',
@@ -719,12 +324,7 @@ export const SCENARIO_ID = {
 	HappyPath: 'happy-path',
 	Retry: 'retry',
 	TimeoutRefund: 'timeout-refund',
-	UpdateRejection: 'update-rejection',
-	ChildDelivery: 'child-delivery',
-	WorkerRecovery: 'worker-recovery',
-	ContinueAsNew: 'continue-as-new',
-	ReplaySafety: 'replay-safety',
-	SearchAttributes: 'search-attributes'
+	WorkerRecovery: 'worker-recovery'
 } as const;
 
 /** Union of all guided workshop scenario identifiers. */
@@ -755,8 +355,7 @@ export const SCENARIOS = [
 	{
 		id: SCENARIO_ID.HappyPath,
 		title: 'Deliver one order',
-		summary:
-			'Start the workflow, accept the order, update it, start the delivery child workflow, and complete delivery.',
+		summary: 'Start the workflow, accept the order as the restaurant, and complete the delivery.',
 		steps: [
 			{
 				id: 'start-workflow',
@@ -771,21 +370,9 @@ export const SCENARIOS = [
 				completesOn: 'WorkflowExecutionSignaled'
 			},
 			{
-				id: 'address-update',
-				control: 'update-address',
-				featureId: 'updates-validators',
-				completesOn: 'WorkflowExecutionUpdateAccepted'
-			},
-			{
-				id: 'delivery-child',
-				control: 'food-ready',
-				featureId: 'child-workflow',
-				completesOn: 'ChildWorkflowExecutionStarted'
-			},
-			{
 				id: 'complete-delivery',
 				control: 'complete-delivery',
-				featureId: 'child-workflow',
+				featureId: 'signals',
 				completesOn: 'WorkflowExecutionCompleted'
 			}
 		]
@@ -794,7 +381,7 @@ export const SCENARIOS = [
 		id: SCENARIO_ID.Retry,
 		title: 'Watch activity retry',
 		summary:
-			'Use the transient-failure payment fixture to show Temporal retrying an activity without workflow-side retry loops.',
+			'Use the flaky demo card (0000) to show Temporal retrying an activity without workflow-side retry loops.',
 		steps: [
 			{
 				id: 'activity-completes-after-retry',
@@ -808,41 +395,13 @@ export const SCENARIOS = [
 		id: SCENARIO_ID.TimeoutRefund,
 		title: 'Let the restaurant timeout refund the order',
 		summary:
-			'Start an order and do not accept it; the durable timer fires and compensation refunds the payment.',
+			'Start an order and do not accept it; the durable timer fires and the payment is refunded automatically.',
 		steps: [
 			{
 				id: 'restaurant-deadline',
 				control: 'start-order',
 				featureId: 'timers-durable-sleep',
 				completesOn: 'TimerStarted'
-			}
-		]
-	},
-	{
-		id: SCENARIO_ID.UpdateRejection,
-		title: 'Reject an invalid update',
-		summary:
-			'Try to change the address after delivery begins so the update validator rejects before the handler mutates state.',
-		steps: [
-			{
-				id: 'validator-rejects',
-				control: 'update-address',
-				featureId: 'updates-validators',
-				completesOn: 'WorkflowExecutionUpdateRejected'
-			}
-		]
-	},
-	{
-		id: SCENARIO_ID.ChildDelivery,
-		title: 'Inspect the delivery child workflow',
-		summary:
-			'Start delivery and inspect the child workflow as a separate execution in Temporal Web.',
-		steps: [
-			{
-				id: 'child-started',
-				control: 'food-ready',
-				featureId: 'child-workflow',
-				completesOn: 'ChildWorkflowExecutionStarted'
 			}
 		]
 	},
@@ -859,48 +418,6 @@ export const SCENARIOS = [
 				completesOn: 'WorkerRestarted'
 			}
 		]
-	},
-	{
-		id: SCENARIO_ID.ContinueAsNew,
-		title: 'Compact a long history',
-		summary:
-			'Run with a low history-compaction threshold and send courier location updates until ContinueAsNew starts a fresh run.',
-		steps: [
-			{
-				id: 'continued-as-new',
-				control: 'update-location',
-				featureId: 'continue-as-new',
-				completesOn: 'WorkflowExecutionContinuedAsNew'
-			}
-		]
-	},
-	{
-		id: SCENARIO_ID.ReplaySafety,
-		title: 'Replay the recorded history',
-		summary:
-			'Use the workflow test replayer to prove the workflow code is deterministic against a real event history.',
-		steps: [
-			{
-				id: 'query-timeline',
-				control: 'query-timeline',
-				featureId: 'replay-safety',
-				completesOn: 'QueryCompleted'
-			}
-		]
-	},
-	{
-		id: SCENARIO_ID.SearchAttributes,
-		title: 'Filter with Temporal Visibility',
-		summary:
-			'List workflows by real Search Attributes after first reading the queryable business snapshot.',
-		steps: [
-			{
-				id: 'list-visibility',
-				control: 'list-visibility',
-				featureId: 'search-attributes',
-				completesOn: 'QueryCompleted'
-			}
-		]
 	}
 ] as const satisfies readonly Scenario[];
 
@@ -909,12 +426,12 @@ export const SCENARIOS = [
 // ---------------------------------------------------------------------------
 
 /**
- * Concrete Temporal history event type strings emitted during a food-ordering
+ * Concrete Temporal history event type strings emitted during an order
  * workflow run. Each value is a valid `type` string for a `WorkflowEvent`
  * (see `src/lib/contracts/events.ts`).
  *
- * Track E uses these as completion predicates in the guided-tour rail and to
- * colour-code the live event stream.
+ * The control plane uses these as completion predicates in the guided-tour
+ * rail and to colour-code the live event stream.
  */
 export const WORKFLOW_EVENT_TYPE = {
 	WorkflowExecutionStarted: 'WorkflowExecutionStarted',
@@ -922,26 +439,15 @@ export const WORKFLOW_EVENT_TYPE = {
 	WorkflowExecutionFailed: 'WorkflowExecutionFailed',
 	WorkflowExecutionCanceled: 'WorkflowExecutionCanceled',
 	WorkflowExecutionTerminated: 'WorkflowExecutionTerminated',
-	WorkflowExecutionContinuedAsNew: 'WorkflowExecutionContinuedAsNew',
 	ActivityTaskScheduled: 'ActivityTaskScheduled',
 	ActivityTaskStarted: 'ActivityTaskStarted',
 	ActivityTaskCompleted: 'ActivityTaskCompleted',
 	ActivityTaskFailed: 'ActivityTaskFailed',
 	ActivityTaskTimedOut: 'ActivityTaskTimedOut',
-	ActivityTaskCancelRequested: 'ActivityTaskCancelRequested',
-	ActivityTaskCanceled: 'ActivityTaskCanceled',
 	TimerStarted: 'TimerStarted',
 	TimerFired: 'TimerFired',
 	TimerCanceled: 'TimerCanceled',
-	WorkflowExecutionSignaled: 'WorkflowExecutionSignaled',
-	WorkflowExecutionUpdateAccepted: 'WorkflowExecutionUpdateAccepted',
-	WorkflowExecutionUpdateCompleted: 'WorkflowExecutionUpdateCompleted',
-	WorkflowExecutionUpdateRejected: 'WorkflowExecutionUpdateRejected',
-	ChildWorkflowExecutionStarted: 'ChildWorkflowExecutionStarted',
-	ChildWorkflowExecutionCompleted: 'ChildWorkflowExecutionCompleted',
-	ChildWorkflowExecutionFailed: 'ChildWorkflowExecutionFailed',
-	StartChildWorkflowExecutionInitiated: 'StartChildWorkflowExecutionInitiated',
-	MarkerRecorded: 'MarkerRecorded'
+	WorkflowExecutionSignaled: 'WorkflowExecutionSignaled'
 } as const;
 
 /** Union of concrete Temporal history event type strings used by this workflow. */

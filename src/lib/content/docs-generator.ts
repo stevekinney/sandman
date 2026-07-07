@@ -23,7 +23,7 @@ export function generateDemoSection(): string {
 	lines.push('## Demo Script');
 	lines.push('');
 	lines.push(
-		'Sandman demonstrates the following Temporal features through a deliberately over-engineered food-ordering workflow.'
+		'Sandman demonstrates the following Temporal features through a small, readable food-ordering workflow.'
 	);
 	lines.push('');
 

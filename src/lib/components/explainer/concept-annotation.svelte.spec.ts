@@ -44,7 +44,7 @@ describe('ConceptAnnotation', () => {
 	});
 
 	it('concept is conveyed by text, not color alone', async () => {
-		const controlId = 'update-address';
+		const controlId = 'start-order';
 		const featureId = CONTROL_FEATURE[controlId];
 		const entry = FEATURE_MAP[featureId];
 		render(ConceptAnnotation, { props: { controlId } });

@@ -3,14 +3,10 @@
  *
  * Unit tests for FetchController — the HTTP-backed TemporalController.
  * Stubs `fetch` globally; no network, no E2B, no Temporal server needed.
- *
- * Critical path: update() with HTTP 422 must throw UpdateRejectionError
- * (not a generic Error) so the UI can display the rejection reason inline.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { FetchController } from './fetch-controller.ts';
-import { isUpdateRejectionError } from './types.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -50,17 +46,8 @@ describe('FetchController.start', () => {
 		const controller = new FetchController('sandbox-abc');
 		const result = await controller.start({
 			orderId: 'ord-1',
-			restaurantId: 'rest-1',
-			customerId: 'cust-1',
-			customerTier: 'standard',
-			items: [{ itemId: 'item-1', name: 'Pizza', quantity: 1, unitPriceCents: 1099 }],
-			deliveryAddress: {
-				street: '1 Main St',
-				city: 'Springfield',
-				state: 'IL',
-				postalCode: '62701'
-			},
-			paymentMethod: { type: 'card', last4: '4242', brand: 'Visa' }
+			items: [{ name: 'Spicy noodles', quantity: 1, priceCents: 1295 }],
+			cardLast4: '4242'
 		});
 
 		expect(result).toEqual(run);
@@ -157,66 +144,6 @@ describe('FetchController.query', () => {
 
 		const controller = new FetchController('sandbox-abc');
 		await expect(controller.query('wf-1', 'getStatus')).rejects.toThrow('Query getStatus failed');
-	});
-});
-
-// ---------------------------------------------------------------------------
-// update() — critical path: 422 → UpdateRejectionError
-// ---------------------------------------------------------------------------
-
-describe('FetchController.update', () => {
-	it('throws an UpdateRejectionError (not a generic Error) when the server responds 422', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi
-				.fn()
-				.mockResolvedValue(
-					mockResponse(422, { reason: 'Delivery address is outside service area' })
-				)
-		);
-
-		const controller = new FetchController('sandbox-abc');
-
-		let thrown: unknown;
-		try {
-			await controller.update('wf-1', 'updateDeliveryAddress', {
-				newAddress: { street: '999 Far Away Rd', city: 'Nowhere', state: 'AK', postalCode: '99999' }
-			});
-		} catch (err) {
-			thrown = err;
-		}
-
-		expect(thrown).toBeDefined();
-		expect(isUpdateRejectionError(thrown)).toBe(true);
-		expect((thrown as { reason: string }).reason).toBe('Delivery address is outside service area');
-	});
-
-	it('does NOT throw an UpdateRejectionError for other 4xx errors', async () => {
-		vi.stubGlobal(
-			'fetch',
-			vi.fn().mockResolvedValue(new Response('unauthorized', { status: 401 }))
-		);
-
-		const controller = new FetchController('sandbox-abc');
-		let thrown: unknown;
-		try {
-			await controller.update('wf-1', 'updateDeliveryAddress', {} as never);
-		} catch (err) {
-			thrown = err;
-		}
-
-		expect(isUpdateRejectionError(thrown)).toBe(false);
-		expect(thrown).toBeInstanceOf(Error);
-	});
-
-	it('returns the parsed result on success', async () => {
-		const result = { applied: true };
-		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse(200, result)));
-
-		const controller = new FetchController('sandbox-abc');
-		const response = await controller.update('wf-1', 'applyPromoCode', { code: 'SAVE10' });
-
-		expect(response).toEqual(result);
 	});
 });
 
@@ -324,5 +251,32 @@ describe('FetchController.readProcessLiveness', () => {
 
 		const controller = new FetchController('sandbox-abc');
 		await expect(controller.readProcessLiveness()).rejects.toThrow('Read sandbox status failed');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// listWorkflows()
+// ---------------------------------------------------------------------------
+
+describe('FetchController.listWorkflows', () => {
+	it('GETs /api/sandbox/[id]/workflow/list and returns the unwrapped workflows array', async () => {
+		const workflows = [
+			{ workflowId: 'wf-1', runId: 'run-1', status: 'RUNNING', type: 'orderWorkflow' }
+		];
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse(200, { workflows })));
+
+		const controller = new FetchController('sandbox-abc');
+		const result = await controller.listWorkflows();
+
+		expect(result).toEqual(workflows);
+		const fetchMock = vi.mocked(global.fetch as ReturnType<typeof vi.fn>);
+		expect(fetchMock).toHaveBeenCalledWith('/api/sandbox/sandbox-abc/workflow/list');
+	});
+
+	it('throws when the response is not ok', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('error', { status: 500 })));
+
+		const controller = new FetchController('sandbox-abc');
+		await expect(controller.listWorkflows()).rejects.toThrow('Workflow list failed');
 	});
 });

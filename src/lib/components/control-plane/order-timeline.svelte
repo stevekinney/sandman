@@ -1,7 +1,7 @@
 <script lang="ts">
 	/**
-	 * order-timeline.svelte — maps `TimelineEntry[]` from the `getTimeline`
-	 * query onto Cinder's `RunStepTimeline` step format.
+	 * order-timeline.svelte — maps the `TimelineEntry[]` from the polled
+	 * `getStatus` snapshot onto Cinder's `RunStepTimeline` step format.
 	 */
 	import RunStepTimeline from '@lostgradient/cinder/run-step-timeline';
 	import type { RunStep, RunStepStatus } from '@lostgradient/cinder/run-step-timeline';
@@ -12,17 +12,11 @@
 	/** Map domain order status onto the generic `RunStepStatus` values. */
 	function toRunStepStatus(status: OrderStatus): RunStepStatus {
 		switch (status) {
-			case 'CREATED':
-				return 'pending';
-			case 'VALIDATING':
+			case 'RECEIVED':
 				return 'running';
-			case 'AWAITING_RESTAURANT':
+			case 'WAITING_FOR_RESTAURANT':
 				return 'waiting_approval';
 			case 'PREPARING':
-				return 'running';
-			case 'AWAITING_COURIER':
-				return 'waiting_approval';
-			case 'IN_DELIVERY':
 				return 'running';
 			case 'DELIVERED':
 				return 'succeeded';
@@ -36,8 +30,8 @@
 	}
 
 	const steps = $derived<RunStep[]>(
-		entries.map((entry) => ({
-			id: String(entry.index),
+		entries.map((entry, index) => ({
+			id: String(index),
 			label: entry.description,
 			status: toRunStepStatus(entry.status),
 			startTime: entry.timestamp

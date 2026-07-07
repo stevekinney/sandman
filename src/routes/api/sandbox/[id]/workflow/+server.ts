@@ -1,7 +1,7 @@
 /**
  * POST /api/sandbox/[id]/workflow
  *
- * Starts an `OrderFoodWorkflow` in the Temporal server running inside the
+ * Starts an order workflow in the Temporal server running inside the
  * named E2B sandbox. Returns the workflow and run IDs on success.
  *
  * Request body: `OrderInput` (see src/lib/contracts/workflow-api.ts)
@@ -10,7 +10,7 @@
 
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { TASK_QUEUE, ORDER_FOOD_WORKFLOW } from '$lib/contracts/workflow-api';
+import { TASK_QUEUE, ORDER_WORKFLOW } from '$lib/contracts/workflow-api';
 import type { OrderInput } from '$lib/contracts/workflow-api';
 import { assertSameOrigin } from '$lib/server/security/origin';
 import { requireOwnedSandbox, touchSessionActivity } from '$lib/server/security/guards';
@@ -41,8 +41,8 @@ export const POST: RequestHandler = async (event) => {
 	if (!isNonEmptyString(input.orderId)) {
 		return json({ error: 'orderId is required' }, { status: 400 });
 	}
-	if (!isNonEmptyString(input.restaurantId)) {
-		return json({ error: 'restaurantId is required' }, { status: 400 });
+	if (!isNonEmptyString(input.cardLast4)) {
+		return json({ error: 'cardLast4 is required' }, { status: 400 });
 	}
 	if (!Array.isArray(input.items) || input.items.length === 0) {
 		return json({ error: 'items must be a non-empty array' }, { status: 400 });
@@ -57,7 +57,7 @@ export const POST: RequestHandler = async (event) => {
 		[
 			'temporal workflow start',
 			`--task-queue ${quoteShellArgument(TASK_QUEUE)}`,
-			`--type ${quoteShellArgument(ORDER_FOOD_WORKFLOW)}`,
+			`--type ${quoteShellArgument(ORDER_WORKFLOW)}`,
 			`--workflow-id ${quoteShellArgument(input.orderId)}`,
 			`--input-file ${quoteShellArgument(inputPath)}`,
 			'--color never',

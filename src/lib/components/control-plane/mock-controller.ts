@@ -14,18 +14,14 @@
  * ```
  */
 
-import type { TemporalController, WorkflowRun, UpdateRejectionError } from './types.ts';
+import type { TemporalController, WorkflowRun } from './types.ts';
 import type {
 	OrderInput,
 	SignalName,
 	SignalPayloadMap,
 	QueryName,
 	QueryReturnMap,
-	UpdateName,
-	UpdateInputMap,
-	UpdateResultMap,
-	VisibilityFilter,
-	VisibilityWorkflowSummary
+	WorkflowSummary
 } from '$lib/contracts/workflow-api';
 import type { ProcessLiveness } from '$lib/contracts/sandbox';
 
@@ -42,16 +38,6 @@ export type SignalCall = {
 export type QueryCall = {
 	workflowId: string;
 	name: QueryName;
-};
-
-export type UpdateCall = {
-	workflowId: string;
-	name: UpdateName;
-	input: UpdateInputMap[UpdateName];
-};
-
-export type VisibilityCall = {
-	filter: VisibilityFilter;
 };
 
 // ---------------------------------------------------------------------------
@@ -76,12 +62,6 @@ export class MockTemporalController implements TemporalController {
 	/** All `query()` calls in order. */
 	readonly queryCalls: QueryCall[] = [];
 
-	/** All `update()` calls in order. */
-	readonly updateCalls: UpdateCall[] = [];
-
-	/** All `visibility()` calls in order. */
-	readonly visibilityCalls: VisibilityCall[] = [];
-
 	/** Number of `killWorker()` invocations. */
 	killWorkerCount = 0;
 
@@ -96,6 +76,9 @@ export class MockTemporalController implements TemporalController {
 
 	/** Number of `startServer()` invocations. */
 	startServerCount = 0;
+
+	/** Number of `listWorkflows()` invocations. */
+	listWorkflowsCount = 0;
 
 	// ---- configurable results -----------------------------------------------
 
@@ -115,21 +98,14 @@ export class MockTemporalController implements TemporalController {
 	 */
 	readonly queryResults = new Map<QueryName, unknown>();
 
-	/**
-	 * Per-update return values. If an update name has no entry, the mock
-	 * returns `{}` cast to the expected type.
-	 *
-	 * ```ts
-	 * controller.updateResults.set('applyPromoCode', { discountCents: 500, … });
-	 * ```
-	 */
-	readonly updateResults = new Map<UpdateName, unknown>();
+	/** When set, `query()` throws this error instead of succeeding. */
+	queryError: Error | null = null;
 
-	/** Result returned by `visibility()`. */
-	visibilityResult: VisibilityWorkflowSummary[] = [];
+	/** Result returned by `listWorkflows()`. */
+	listWorkflowsResult: WorkflowSummary[] = [];
 
-	/** When set, `visibility()` throws this error instead of succeeding. */
-	visibilityError: Error | null = null;
+	/** When set, `listWorkflows()` throws this error instead of succeeding. */
+	listWorkflowsError: Error | null = null;
 
 	/**
 	 * Liveness returned by `readProcessLiveness()`. Defaults to fully online so
@@ -137,16 +113,6 @@ export class MockTemporalController implements TemporalController {
 	 * to `false` to simulate a restart that never brings the worker back.
 	 */
 	processLiveness: ProcessLiveness = { serverOnline: true, workerOnline: true };
-
-	/**
-	 * When set, `update()` throws this rejection error instead of succeeding.
-	 * Set to `null` (default) for the happy path.
-	 *
-	 * ```ts
-	 * controller.updateRejection = { kind: 'rejection', reason: 'order-already-in-delivery' };
-	 * ```
-	 */
-	updateRejection: UpdateRejectionError | null = null;
 
 	// ---- method implementations ---------------------------------------------
 
@@ -166,19 +132,8 @@ export class MockTemporalController implements TemporalController {
 
 	async query<N extends QueryName>(workflowId: string, name: N): Promise<QueryReturnMap[N]> {
 		this.queryCalls.push({ workflowId, name });
+		if (this.queryError !== null) throw this.queryError;
 		return (this.queryResults.get(name) ?? null) as QueryReturnMap[N];
-	}
-
-	async update<N extends UpdateName>(
-		workflowId: string,
-		name: N,
-		input: UpdateInputMap[N]
-	): Promise<UpdateResultMap[N]> {
-		this.updateCalls.push({ workflowId, name, input } as UpdateCall);
-		if (this.updateRejection !== null) {
-			throw this.updateRejection;
-		}
-		return (this.updateResults.get(name) ?? {}) as UpdateResultMap[N];
 	}
 
 	async killWorker(): Promise<void> {
@@ -202,9 +157,9 @@ export class MockTemporalController implements TemporalController {
 		this.startServerCount++;
 	}
 
-	async visibility(filter: VisibilityFilter): Promise<VisibilityWorkflowSummary[]> {
-		this.visibilityCalls.push({ filter });
-		if (this.visibilityError !== null) throw this.visibilityError;
-		return this.visibilityResult;
+	async listWorkflows(): Promise<WorkflowSummary[]> {
+		this.listWorkflowsCount++;
+		if (this.listWorkflowsError !== null) throw this.listWorkflowsError;
+		return this.listWorkflowsResult;
 	}
 }

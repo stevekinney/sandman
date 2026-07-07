@@ -72,12 +72,7 @@
 		return 'This step unlocks as the workflow reaches the right point.';
 	});
 	const execution = $derived(
-		executionPointerFor(
-			session.phase,
-			session.workerOnline,
-			session.workerRestarting,
-			session.timelineEntries
-		)
+		executionPointerFor(session.phase, session.workerOnline, session.workerRestarting)
 	);
 </script>
 

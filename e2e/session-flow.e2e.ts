@@ -27,7 +27,7 @@ async function mockSessionExchange(
 async function mockSandboxCreation(
 	page: Page,
 	status = 200,
-	body = { sandboxId: SANDBOX_ID }
+	body: string | Record<string, unknown> = { sandboxId: SANDBOX_ID }
 ): Promise<void> {
 	await page.route('**/api/sandbox', async (route) => {
 		await route.fulfill({
@@ -274,19 +274,20 @@ test('expired and terminated sandboxes show explicit unusable states', async ({ 
 test('guided tour can be completed through the visible workflow controls', async ({ page }) => {
 	const sandboxId = 'sbx-guided-tour-flow';
 	let orderId = 'order-not-started';
-	let nextTimelineIndex = 3;
-	const makeEntry = (description: string, status: string, eventType: string) => ({
-		index: nextTimelineIndex++,
-		timestamp: new Date(Date.UTC(2026, 0, 1, 1, nextTimelineIndex)).toISOString(),
+	let entryIndex = 0;
+	const makeEntry = (description: string, status: string) => ({
+		timestamp: new Date(Date.UTC(2026, 0, 1, 0, entryIndex++)).toISOString(),
 		description,
-		status,
-		eventType
+		status
 	});
-	let timeline = makeTourTimelineEntries([
-		['Workflow execution started', 'CREATED', 'WorkflowExecutionStarted'],
-		['Payment charged', 'VALIDATING', 'ActivityTaskCompleted'],
-		['Waiting for restaurant', 'AWAITING_RESTAURANT', 'TimerStarted']
-	]);
+	// The demo activity and durable timer both settle instantly in the sandbox,
+	// so a freshly started order already carries all three entries by the time
+	// the first `getStatus` poll lands — mirroring the real worker's behaviour.
+	let timeline = [
+		makeEntry('Order received', 'RECEIVED'),
+		makeEntry('Payment charged', 'RECEIVED'),
+		makeEntry('Waiting for restaurant', 'WAITING_FOR_RESTAURANT')
+	];
 
 	// Model real process liveness: the status endpoint reports whether the worker
 	// is polling, and a restart is only treated as recovered once it flips back
@@ -315,71 +316,40 @@ test('guided tour can be completed through the visible workflow controls', async
 	await page.route(`**/api/sandbox/${sandboxId}/workflow/signal`, async (route) => {
 		const payload = route.request().postDataJSON() as { name: string; workflowId: string };
 		if (payload.name === 'restaurantAccepted') {
-			timeline = [
-				...timeline,
-				makeEntry('Restaurant accepted', 'PREPARING', 'WorkflowExecutionSignaled')
-			];
+			timeline = [...timeline, makeEntry('Restaurant accepted', 'PREPARING')];
 		}
-		if (payload.name === 'foodReady') {
-			timeline = [
-				...timeline,
-				makeEntry('Delivery child workflow started', 'IN_DELIVERY', 'ChildWorkflowExecutionStarted')
-			];
-		}
-		if (payload.name === 'deliveryCompleted' && payload.workflowId === `delivery-${orderId}`) {
-			timeline = [
-				...timeline,
-				makeEntry('Order delivered', 'DELIVERED', 'WorkflowExecutionCompleted')
-			];
+		if (payload.name === 'deliveryCompleted') {
+			timeline = [...timeline, makeEntry('Order delivered', 'DELIVERED')];
 		}
 		await route.fulfill({ status: 204, body: '' });
-	});
-	await page.route(`**/api/sandbox/${sandboxId}/workflow/update`, async (route) => {
-		timeline = [
-			...timeline,
-			makeEntry('Delivery address updated', 'PREPARING', 'WorkflowExecutionUpdateAccepted')
-		];
-		await route.fulfill({
-			status: 200,
-			contentType: 'application/json',
-			body: JSON.stringify({
-				updated: true,
-				effectiveAddress: {
-					street: '44 Maple Avenue',
-					city: 'Denver',
-					state: 'CO',
-					postalCode: '80209'
-				}
-			})
-		});
 	});
 	await page.route(`**/api/sandbox/${sandboxId}/workflow/query**`, async (route) => {
 		const url = new URL(route.request().url());
 		const name = url.searchParams.get('name');
+		if (name !== 'getStatus') {
+			await route.fulfill({ status: 400, contentType: 'application/json', body: '{}' });
+			return;
+		}
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
-			body: JSON.stringify(
-				name === 'getTimeline'
-					? timeline
-					: {
-							status: 'IN_DELIVERY',
-							totalCents: 2019,
-							businessSnapshot: {
-								OrderStatus: 'IN_DELIVERY',
-								CustomerTier: 'standard',
-								RestaurantId: 'kitchen-44'
-							}
-						}
-			)
+			body: JSON.stringify({
+				status: timeline.at(-1)?.status ?? 'RECEIVED',
+				orderId,
+				items: [{ name: 'Spicy noodles', quantity: 1, priceCents: 1295 }],
+				totalCents: 1295,
+				paymentAttempts: 1,
+				startedAt: timeline[0]?.timestamp ?? new Date(0).toISOString(),
+				timeline
+			})
 		});
 	});
-	await page.route(`**/api/sandbox/${sandboxId}/workflow/visibility**`, async (route) => {
-		// Real Temporal Visibility only lists workflows that actually exist —
-		// mirror that here so the page's reload-restoration poll (which queries
-		// this route from the moment the sandbox is ready, before any order is
-		// placed) doesn't mistake the placeholder pre-order state for a
-		// resumable run and disable "Place order".
+	await page.route(`**/api/sandbox/${sandboxId}/workflow/list`, async (route) => {
+		// Real Temporal only lists workflows that actually exist — mirror that
+		// here so the page's reload-restoration poll (which queries this route
+		// from the moment the sandbox is ready, before any order is placed)
+		// doesn't mistake the placeholder pre-order state for a resumable run
+		// and disable "Place order".
 		const workflows =
 			orderId === 'order-not-started'
 				? []
@@ -387,11 +357,8 @@ test('guided tour can be completed through the visible workflow controls', async
 						{
 							workflowId: orderId,
 							runId: 'run-guided-tour',
-							type: 'orderFoodWorkflow',
 							status: 'Running',
-							orderStatus: 'IN_DELIVERY',
-							customerTier: 'standard',
-							restaurantId: 'kitchen-44'
+							type: 'orderWorkflow'
 						}
 					];
 		await route.fulfill({
@@ -417,36 +384,23 @@ test('guided tour can be completed through the visible workflow controls', async
 	const journey = page.locator('[aria-label="Guided journey"]');
 
 	await toolbar.getByRole('button', { name: 'Place order' }).click();
+	// Payment charges (an activity) and the restaurant deadline (a durable
+	// timer) both settle before the first poll, so the tour lands straight on
+	// the signal step.
 	await expect(journey.getByRole('heading', { name: 'Send a signal to resume' })).toBeVisible();
 
 	// The execution pointer maps the awaiting-restaurant phase onto the
-	// condition() line in workflows.ts and captions it above the editor.
+	// condition() line in workflow.ts and captions it above the editor.
 	await expect(page.getByText(/Executing line \d+ — parked on condition\(\)/)).toBeVisible({
 		timeout: 15_000
 	});
 
 	await toolbar.getByRole('button', { name: 'Restaurant accepted' }).click();
-	await expect(
-		journey.getByRole('heading', { name: 'Update with a synchronous validator' })
-	).toBeVisible();
-
-	// This step carries a hands-on code experiment with a jump-to-code button.
-	await expect(journey.getByText('Try changing the code')).toBeVisible();
-	await journey.getByRole('button', { name: 'Show me the code' }).click();
-	await expect(page.locator('#center-panel-code')).toBeVisible();
-
-	await interactions.getByRole('button', { name: 'Update address' }).click();
-	await expect(
-		journey.getByRole('heading', { name: 'Hand delivery to a child workflow' })
-	).toBeVisible();
-
-	await toolbar.getByRole('button', { name: 'Food ready' }).click();
-	await expect(journey.getByRole('heading', { name: 'Read state with a query' })).toBeVisible();
+	await expect(journey.getByRole('heading', { name: 'Read state with a query' })).toBeVisible({
+		timeout: 15_000
+	});
 
 	await interactions.getByRole('button', { name: 'Get status' }).click();
-	await expect(journey.getByRole('heading', { name: 'Search across workflows' })).toBeVisible();
-
-	await interactions.getByRole('button', { name: 'List visibility' }).click();
 	await expect(
 		journey.getByRole('heading', { name: 'Kill the worker — watch it recover' })
 	).toBeVisible();
@@ -460,7 +414,7 @@ test('guided tour can be completed through the visible workflow controls', async
 	await expect(journey.getByRole('heading', { name: 'Finish the delivery' })).toBeVisible();
 
 	await toolbar.getByRole('button', { name: 'Complete delivery' }).click();
-	await expect(page.getByText('Tour complete')).toBeVisible();
+	await expect(page.getByText('Tour complete')).toBeVisible({ timeout: 15_000 });
 
 	// The friendly steps lens shows the same durable history.
 	await page
@@ -469,15 +423,3 @@ test('guided tour can be completed through the visible workflow controls', async
 		.click();
 	await expect(page.getByLabel('Order timeline').getByText('Order delivered')).toBeVisible();
 });
-
-function makeTourTimelineEntries(
-	entries: Array<[description: string, status: string, eventType: string]>
-) {
-	return entries.map(([description, status, eventType], index) => ({
-		index,
-		timestamp: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
-		description,
-		status,
-		eventType
-	}));
-}

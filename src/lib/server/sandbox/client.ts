@@ -286,19 +286,6 @@ async function waitForTemporal(
 	return false;
 }
 
-async function registerSearchAttributes(session: E2bSandboxSession): Promise<void> {
-	for (const name of ['OrderStatus', 'CustomerTier', 'RestaurantId']) {
-		const result = await session.commands.run(
-			`temporal operator search-attribute create --name ${name} --type Keyword`,
-			{ timeoutMs: 10_000 }
-		);
-		const output = `${result.stdout}${result.stderr}`.toLowerCase();
-		if (result.exitCode !== 0 && !output.includes('already')) {
-			throw new Error(`Failed to register Temporal Search Attribute ${name}: ${result.stderr}`);
-		}
-	}
-}
-
 /**
  * Polls the Temporal Web UI until it responds inside the sandbox.
  * A sandbox is not user-ready unless both the gRPC API and Web UI are up.
@@ -358,8 +345,7 @@ async function waitForPublicTemporalUi(
 /**
  * Waits for a freshly (re)started Temporal dev server to become fully
  * reachable — gRPC (7233), the local Web UI (8233), and the same public E2B
- * host the iframe uses — then registers the custom Search Attributes a
- * fresh server process always starts without.
+ * host the iframe uses.
  *
  * Shared by `bootstrap` and `startServer`, which both start the same
  * `temporal server start-dev` process and must wait on it identically.
@@ -380,10 +366,6 @@ async function waitForTemporalReady(
 		? await waitForPublicTemporalUi(uiUrl, handle.accessToken, publicUiFetch, maxRetries, delayMs)
 		: false;
 	const ready = temporalReady && localTemporalUiReady && publicTemporalUiReady;
-
-	if (temporalReady) {
-		await registerSearchAttributes(session);
-	}
 
 	return { ready, uiUrl };
 }

@@ -22,9 +22,7 @@
 
 	/** Replace raw workflow ids with the actor a learner can reason about. */
 	function sourceLabel(workflowId: string | undefined): string {
-		if (workflowId === undefined) return 'control plane';
-		if (workflowId.startsWith('delivery-')) return 'delivery child';
-		return 'order';
+		return workflowId === undefined ? 'control plane' : 'order';
 	}
 
 	/** Compact local wall-clock label; the full ISO stamp stays on <time datetime>. */

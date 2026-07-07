@@ -6,14 +6,8 @@
  * the in-memory MockTemporalController.
  */
 import { describe, expect, it } from 'vitest';
-import type {
-	OrderSnapshot,
-	QueryName,
-	QueryReturnMap,
-	TimelineEntry,
-	VisibilityWorkflowSummary
-} from '$lib/contracts/workflow-api';
-import { ORDER_FOOD_WORKFLOW, ORDER_STATUS } from '$lib/contracts/workflow-api';
+import type { OrderSnapshot, TimelineEntry, WorkflowSummary } from '$lib/contracts/workflow-api';
+import { ORDER_STATUS, ORDER_WORKFLOW } from '$lib/contracts/workflow-api';
 import { TOUR } from '$lib/content/demo-script';
 import { TourState } from '$lib/components/explainer';
 import type { StorageAdapter, TourProgress } from '$lib/content/tour-engine';
@@ -52,35 +46,25 @@ function makeSession() {
 	return { controller, tour, session, notifications };
 }
 
-function timelineEntry(
-	index: number,
-	status: TimelineEntry['status'],
-	eventType?: TimelineEntry['eventType']
-): TimelineEntry {
+function entry(status: TimelineEntry['status'], index: number): TimelineEntry {
 	return {
-		index,
 		timestamp: new Date(index * 1000).toISOString(),
 		description: `entry-${index}`,
-		status,
-		eventType
+		status
 	};
 }
 
-/**
- * Looks up a mocked query response keyed exactly like `QueryReturnMap`, so
- * the generic index `responses[name]` type-checks as `QueryReturnMap[N] |
- * undefined` and narrows to `QueryReturnMap[N]` after the `undefined` check
- * below — without a cast. (A same-shaped object literal alone can't prove
- * this to the compiler; indexing a record declared over the same key space
- * as the return-type map can.)
- */
-function queryResponseFor<N extends QueryName>(
-	responses: Partial<{ [K in QueryName]: QueryReturnMap[K] }>,
-	name: N
-): QueryReturnMap[N] {
-	const value = responses[name];
-	if (value === undefined) throw new Error(`No mock response configured for query "${name}"`);
-	return value;
+function makeSnapshot(overrides: Partial<OrderSnapshot> = {}): OrderSnapshot {
+	return {
+		status: ORDER_STATUS.Received,
+		orderId: 'order-1',
+		items: [],
+		totalCents: 0,
+		paymentAttempts: 1,
+		startedAt: new Date(0).toISOString(),
+		timeline: [],
+		...overrides
+	};
 }
 
 describe('SessionState', () => {
@@ -106,7 +90,7 @@ describe('SessionState', () => {
 		expect(controller.startCalls).toHaveLength(1);
 		expect(session.run).toEqual(controller.startResult);
 		expect(session.workflowEvents.at(-1)?.type).toBe('WorkflowExecutionStarted');
-		// Step 1 (start-workflow) completes on WorkflowExecutionStarted.
+		// Step 0 (start-workflow) completes on WorkflowExecutionStarted.
 		expect(tour.currentStepIndex).toBe(1);
 	});
 
@@ -122,15 +106,15 @@ describe('SessionState', () => {
 		expect(session.workerOnline).toBe(false);
 	});
 
-	it('ingestTimeline feeds only new annotated entries into the event feed', async () => {
+	it('ingestTimeline feeds only newly inferred events into the event feed', async () => {
 		const { session } = makeSession();
 		await session.placeOrder();
 		const before = session.workflowEvents.length;
 
 		const entries = [
-			timelineEntry(0, ORDER_STATUS.Created, 'WorkflowExecutionStarted'),
-			timelineEntry(1, ORDER_STATUS.Validating), // unannotated — not fed
-			timelineEntry(2, ORDER_STATUS.Validating, 'ActivityTaskCompleted')
+			entry(ORDER_STATUS.Received, 0), // first entry — no previous status, infers nothing
+			entry(ORDER_STATUS.Received, 1), // second RECEIVED — ActivityTaskCompleted
+			entry(ORDER_STATUS.WaitingForRestaurant, 2) // TimerStarted
 		];
 		session.ingestTimeline(entries);
 		expect(session.timelineEntries).toEqual(entries);
@@ -144,8 +128,8 @@ describe('SessionState', () => {
 	it('derives the phase from the latest timeline entry', async () => {
 		const { session } = makeSession();
 		await session.placeOrder();
-		session.ingestTimeline([timelineEntry(0, ORDER_STATUS.AwaitingRestaurant, 'TimerStarted')]);
-		expect(session.phase).toBe(ORDER_STATUS.AwaitingRestaurant);
+		session.ingestTimeline([entry(ORDER_STATUS.WaitingForRestaurant, 0)]);
+		expect(session.phase).toBe(ORDER_STATUS.WaitingForRestaurant);
 		expect(session.canDo('accept-restaurant')).toBe(true);
 	});
 
@@ -157,138 +141,72 @@ describe('SessionState', () => {
 			{
 				workflowId: controller.startResult.workflowId,
 				name: 'restaurantAccepted',
-				payload: { estimatedPrepMinutes: 20 }
+				payload: {}
 			}
 		]);
 	});
 
-	it('rejectRestaurant signals the running workflow', async () => {
-		const { controller, session } = makeSession();
-		await session.placeOrder();
-		await session.rejectRestaurant();
-		expect(controller.signalCalls.at(-1)).toEqual({
-			workflowId: controller.startResult.workflowId,
-			name: 'restaurantRejected',
-			payload: { reason: 'Kitchen is over capacity', retryable: false }
-		});
-	});
-
-	it('updateLocation signals the courier location', async () => {
-		const { controller, session } = makeSession();
-		await session.placeOrder();
-		await session.updateLocation();
-		expect(controller.signalCalls.at(-1)).toEqual({
-			workflowId: controller.startResult.workflowId,
-			name: 'courierLocationUpdate',
-			payload: { lat: 39.7392, lng: -104.9903, speedKmh: 24 }
-		});
-	});
-
-	it('applyPromo updates the workflow and summarizes the discount', async () => {
-		const { controller, session, notifications } = makeSession();
-		controller.updateResults.set('applyPromoCode', {
-			discountCents: 500,
-			newTotalCents: 1500,
-			description: '10% off your order'
-		});
-		await session.placeOrder();
-		await session.applyPromo();
-
-		expect(controller.updateCalls.at(-1)).toEqual({
-			workflowId: controller.startResult.workflowId,
-			name: 'applyPromoCode',
-			input: { code: 'SAVE10' }
-		});
-		expect(notifications.at(-1)?.variant).toBe('success');
-		expect(notifications.at(-1)?.message).toContain('$15.00');
-	});
-
-	it('applyPromo surfaces a validator rejection as a toast instead of an error', async () => {
-		const { controller, session, notifications } = makeSession();
-		controller.updateRejection = { kind: 'rejection', reason: 'invalid-code' };
-		await session.placeOrder();
-		await session.applyPromo();
-
-		const rejection = notifications.at(-1);
-		expect(rejection?.variant).toBe('danger');
-		expect(rejection?.message).toContain('invalid-code');
-	});
-
-	it('completeDelivery signals the child delivery workflow', async () => {
+	it('completeDelivery signals the main workflow (no child workflow)', async () => {
 		const { controller, session } = makeSession();
 		await session.placeOrder();
 		await session.completeDelivery();
-		const orderId = controller.startCalls[0].orderId;
 		expect(controller.signalCalls.at(-1)).toEqual({
-			workflowId: `delivery-${orderId}`,
+			workflowId: controller.startResult.workflowId,
 			name: 'deliveryCompleted',
 			payload: {}
 		});
 	});
 
-	it('surfaces a validator rejection as a toast instead of an error', async () => {
+	it('cancelOrder signals the workflow with the demo cancel reason', async () => {
 		const { controller, session, notifications } = makeSession();
-		controller.updateRejection = { kind: 'rejection', reason: 'order-already-in-delivery' };
 		await session.placeOrder();
-		await session.updateAddress();
+		await session.cancelOrder();
 
-		const rejection = notifications.at(-1);
-		expect(rejection?.variant).toBe('danger');
-		expect(rejection?.message).toContain('order-already-in-delivery');
-		// The rejection is a lesson, not an unhandled failure — no event is fed.
-		expect(session.workflowEvents.some((event) => event.type.includes('Update'))).toBe(false);
+		expect(controller.signalCalls.at(-1)?.name).toBe('cancelOrder');
+		expect((controller.signalCalls.at(-1)?.payload as { reason: string }).reason).toBe(
+			'Customer cancelled from the sandbox control plane'
+		);
+		expect(notifications.at(-1)?.variant).toBe('warning');
 	});
 
-	it('queryStatus emits a QueryCompleted event and summarizes the snapshot', async () => {
+	it('queryStatus ingests the snapshot timeline, emits QueryCompleted, and summarizes the snapshot', async () => {
 		const { controller, session, notifications } = makeSession();
-		controller.queryResults.set('getStatus', {
-			status: ORDER_STATUS.Preparing,
-			totalCents: 2019
-		} as Partial<OrderSnapshot>);
+		const timeline = [
+			entry(ORDER_STATUS.Received, 0),
+			entry(ORDER_STATUS.Received, 1), // ActivityTaskCompleted
+			entry(ORDER_STATUS.WaitingForRestaurant, 2) // TimerStarted
+		];
+		controller.queryResults.set(
+			'getStatus',
+			makeSnapshot({ status: ORDER_STATUS.WaitingForRestaurant, totalCents: 2019, timeline })
+		);
 		await session.placeOrder();
 		await session.queryStatus();
 
+		// The snapshot's timeline was ingested — not just the synthetic query event.
+		expect(session.timelineEntries).toEqual(timeline);
+		expect(session.phase).toBe(ORDER_STATUS.WaitingForRestaurant);
+		expect(session.workflowEvents.map((event) => event.type)).toEqual(
+			expect.arrayContaining(['ActivityTaskCompleted', 'TimerStarted', 'QueryCompleted'])
+		);
 		expect(session.workflowEvents.at(-1)?.type).toBe('QueryCompleted');
 		expect(notifications.at(-1)?.message).toContain('$20.19');
-	});
-
-	it('queryTimeline emits a QueryCompleted event and ingests the returned entries', async () => {
-		const { controller, session, notifications } = makeSession();
-		await session.placeOrder();
-		const entries = [
-			timelineEntry(0, ORDER_STATUS.Created, 'WorkflowExecutionStarted'),
-			timelineEntry(1, ORDER_STATUS.Validating, 'ActivityTaskCompleted')
-		];
-		controller.queryResults.set('getTimeline', entries);
-
-		await session.queryTimeline();
-
-		expect(controller.queryCalls.at(-1)).toEqual({
-			workflowId: controller.startResult.workflowId,
-			name: 'getTimeline'
-		});
-		expect(session.timelineEntries).toEqual(entries);
-		expect(session.workflowEvents.at(-1)?.type).toBe('QueryCompleted');
-		expect(notifications.at(-1)?.message).toContain('2 entries');
-	});
-
-	it('listVisibility filters by the current order status and search attributes', async () => {
-		const { controller, session } = makeSession();
-		await session.placeOrder();
-		// The latest timeline entry supplies the current order status filter.
-		session.ingestTimeline([timelineEntry(0, ORDER_STATUS.Preparing)]);
-
-		await session.listVisibility();
-
-		const call = controller.visibilityCalls.at(-1);
-		expect(call?.filter.status).toBe(ORDER_STATUS.Preparing);
-		expect(call?.filter.customerTier).toBe(session.activeOrder?.customerTier);
-		expect(call?.filter.restaurantId).toBe(session.activeOrder?.restaurantId);
 	});
 
 	it('kill and restart round-trip the worker with recovery events', async () => {
 		const { controller, tour, session } = makeSession();
 		await session.placeOrder();
+
+		// Walk the tour to the durable-recovery step to verify WorkerRestarted advances it.
+		controller.queryResults.set('getStatus', makeSnapshot({ timeline: [] }));
+		session.ingestTimeline([
+			entry(ORDER_STATUS.Received, 0),
+			entry(ORDER_STATUS.Received, 1), // ActivityTaskCompleted
+			entry(ORDER_STATUS.WaitingForRestaurant, 2), // TimerStarted
+			entry(ORDER_STATUS.Preparing, 3) // WorkflowExecutionSignaled
+		]);
+		await session.queryStatus(); // QueryCompleted
+		expect(TOUR[tour.currentStepIndex]?.id).toBe('durable-recovery');
 
 		await session.killWorker();
 		expect(controller.killWorkerCount).toBe(1);
@@ -297,8 +215,6 @@ describe('SessionState', () => {
 		// While offline, the kill-worker control becomes "restart" and stays usable.
 		expect(session.canDo('kill-worker')).toBe(true);
 
-		// Walk the tour to the durable-recovery step to verify WorkerRestarted advances it.
-		const restore = tour.currentStepIndex;
 		await session.restartWorker();
 		expect(controller.restartWorkerCount).toBe(1);
 		// The restart is only reported as recovered once the backend confirms the
@@ -306,7 +222,7 @@ describe('SessionState', () => {
 		expect(controller.readProcessLivenessCount).toBeGreaterThanOrEqual(1);
 		expect(session.workerOnline).toBe(true);
 		expect(session.workflowEvents.at(-1)?.type).toBe('WorkerRestarted');
-		expect(tour.currentStepIndex).toBeGreaterThanOrEqual(restore);
+		expect(TOUR[tour.currentStepIndex]?.id).toBe('complete-delivery');
 	});
 
 	it('does not claim recovery when a restarted worker never comes back online', async () => {
@@ -438,14 +354,13 @@ describe('SessionState', () => {
 	describe('restoreSessionFromSandbox', () => {
 		function runningOrderSummary(
 			workflowId: string,
-			overrides: Partial<VisibilityWorkflowSummary> = {}
-		): VisibilityWorkflowSummary {
+			overrides: Partial<WorkflowSummary> = {}
+		): WorkflowSummary {
 			return {
 				workflowId,
 				runId: 'run-restored-1',
 				status: 'RUNNING',
-				type: ORDER_FOOD_WORKFLOW,
-				businessSnapshot: {},
+				type: ORDER_WORKFLOW,
 				...overrides
 			};
 		}
@@ -461,23 +376,30 @@ describe('SessionState', () => {
 
 		it('re-attaches to the running order workflow and replays its timeline', async () => {
 			const { controller, tour, session } = makeSession();
-			controller.visibilityResult = [
-				runningOrderSummary('delivery-order-9', { type: 'deliveryWorkflow' }),
+			controller.listWorkflowsResult = [
+				runningOrderSummary('other-workflow-1', { type: 'someOtherWorkflow' }),
 				runningOrderSummary('order-9')
 			];
-			controller.queryResults.set('getTimeline', [
-				timelineEntry(0, ORDER_STATUS.Created, 'WorkflowExecutionStarted'),
-				timelineEntry(1, ORDER_STATUS.Validating, 'ActivityTaskCompleted'),
-				timelineEntry(2, ORDER_STATUS.AwaitingRestaurant, 'TimerStarted')
-			]);
+			controller.queryResults.set(
+				'getStatus',
+				makeSnapshot({
+					status: ORDER_STATUS.WaitingForRestaurant,
+					orderId: 'order-9',
+					timeline: [
+						entry(ORDER_STATUS.Received, 0),
+						entry(ORDER_STATUS.Received, 1),
+						entry(ORDER_STATUS.WaitingForRestaurant, 2)
+					]
+				})
+			);
 
 			await restoreSessionFromSandbox(controller, session);
 
 			expect(session.run).toEqual({ workflowId: 'order-9', runId: 'run-restored-1' });
 			// The workflow id is the order id, so the demo order is rebuilt around it.
 			expect(session.activeOrder?.orderId).toBe('order-9');
-			expect(session.phase).toBe(ORDER_STATUS.AwaitingRestaurant);
-			// Replayed history advanced the tour to the signal step.
+			expect(session.phase).toBe(ORDER_STATUS.WaitingForRestaurant);
+			// Replayed history floors the tour to the signal step.
 			expect(TOUR[tour.currentStepIndex]?.id).toBe('signal-accept');
 		});
 
@@ -493,10 +415,13 @@ describe('SessionState', () => {
 
 			// Reload: everything client-side is fresh except the storage adapter.
 			const controller = new MockTemporalController();
-			controller.visibilityResult = [runningOrderSummary(firstController.startResult.workflowId)];
-			controller.queryResults.set('getTimeline', [
-				timelineEntry(0, ORDER_STATUS.Created, 'WorkflowExecutionStarted')
-			]);
+			controller.listWorkflowsResult = [
+				runningOrderSummary(firstController.startResult.workflowId)
+			];
+			controller.queryResults.set(
+				'getStatus',
+				makeSnapshot({ timeline: [entry(ORDER_STATUS.Received, 0)] })
+			);
 			const tour = new TourState(storage);
 			expect(tour.currentStepIndex).toBe(1);
 			const session = new SessionState(controller, tour);
@@ -508,47 +433,24 @@ describe('SessionState', () => {
 				workflowId: firstController.startResult.workflowId,
 				runId: 'run-restored-1'
 			});
-			expect(session.phase).toBe(ORDER_STATUS.Created);
+			expect(session.phase).toBe(ORDER_STATUS.Received);
 			// No inconsistent half-state: the restored tour step and the restored
 			// run agree, and the replayed start event did not double-advance.
 			expect(tour.currentStepIndex).toBe(1);
-		});
-
-		it('skips restored steps the real workflow phase has made impossible', async () => {
-			const storage = volatileStorage();
-			const updateStepIndex = TOUR.findIndex((step) => step.id === 'update-with-validator');
-			const tour = restoredTour(storage, updateStepIndex);
-			const controller = new MockTemporalController();
-			controller.visibilityResult = [runningOrderSummary('order-3')];
-			// The order moved to delivery while the page was closed; the learner
-			// never performed the update, so no update event exists to replay.
-			controller.queryResults.set('getTimeline', [
-				timelineEntry(0, ORDER_STATUS.InDelivery, 'ChildWorkflowExecutionStarted')
-			]);
-			const session = new SessionState(controller, tour);
-			session.sandboxUsable = true;
-
-			await restoreSessionFromSandbox(controller, session);
-
-			// The update validator rejects in-delivery changes, so the tour floors
-			// forward past the update and child steps instead of sitting stuck.
-			expect(TOUR[tour.currentStepIndex]?.id).toBe('queryable-business-snapshot');
-			expect(tour.completedStepIds).toContain('update-with-validator');
-			expect(tour.completedStepIds).toContain('child-workflow');
 		});
 
 		it('resets stale in-progress tour state once no order workflow is confirmed absent', async () => {
 			const storage = volatileStorage();
 			const tour = restoredTour(storage, 3);
 			const controller = new MockTemporalController();
-			// A delivery child alone doesn't count — no order workflow of any
+			// An unrelated workflow alone doesn't count — no order workflow of any
 			// status exists, which is the only case that should reset progress.
-			controller.visibilityResult = [
-				runningOrderSummary('delivery-order-1', { type: 'deliveryWorkflow' })
+			controller.listWorkflowsResult = [
+				runningOrderSummary('other-workflow-1', { type: 'someOtherWorkflow' })
 			];
 			const session = new SessionState(controller, tour);
 
-			// Visibility is eventually consistent, so a single empty result isn't
+			// Listing is eventually consistent, so a single empty result isn't
 			// conclusive — it takes a few consecutive confirmations (simulating the
 			// caller's normal polling cadence) before stale progress is reset.
 			await restoreSessionFromSandbox(controller, session);
@@ -571,28 +473,28 @@ describe('SessionState', () => {
 			const controller = new MockTemporalController();
 			const session = new SessionState(controller, tour);
 
-			// First two polls see nothing (Visibility indexing lag); the third
-			// sees the workflow the learner actually started.
-			controller.visibilityResult = [];
+			// First two polls see nothing (listing lag); the third sees the
+			// workflow the learner actually started.
+			controller.listWorkflowsResult = [];
 			await restoreSessionFromSandbox(controller, session);
 			await restoreSessionFromSandbox(controller, session);
 			expect(tour.currentStepIndex).toBe(3);
 
-			controller.visibilityResult = [runningOrderSummary('order-late')];
+			controller.listWorkflowsResult = [runningOrderSummary('order-late')];
 			await restoreSessionFromSandbox(controller, session);
 
 			expect(session.run?.workflowId).toBe('order-late');
 			expect(tour.currentStepIndex).toBe(3);
 		});
 
-		it('does not let an empty result after a Visibility error count towards confirmation', async () => {
+		it('does not let an empty result after a listWorkflows error count towards confirmation', async () => {
 			const storage = volatileStorage();
 			const tour = restoredTour(storage, 3);
 			const controller = new MockTemporalController();
 			const session = new SessionState(controller, tour);
 
 			// Two empty results build a streak of 2 (one short of confirmation).
-			controller.visibilityResult = [];
+			controller.listWorkflowsResult = [];
 			await restoreSessionFromSandbox(controller, session);
 			await restoreSessionFromSandbox(controller, session);
 			expect(tour.currentStepIndex).toBe(3);
@@ -600,9 +502,9 @@ describe('SessionState', () => {
 			// A transient error interrupts the sequence — it isn't an
 			// observation and must not let the streak survive to combine with
 			// the next empty result.
-			controller.visibilityError = new Error('temporal exploded');
+			controller.listWorkflowsError = new Error('temporal exploded');
 			await restoreSessionFromSandbox(controller, session);
-			controller.visibilityError = null;
+			controller.listWorkflowsError = null;
 
 			// Without clearing the streak on error, this would be the "third"
 			// confirmed-empty result and would wipe progress.
@@ -622,11 +524,11 @@ describe('SessionState', () => {
 			expect(tour.isComplete).toBe(true);
 		});
 
-		it('leaves the session untouched and allows a retry when visibility fails', async () => {
+		it('leaves the session untouched and allows a retry when listWorkflows fails', async () => {
 			const storage = volatileStorage();
 			const tour = restoredTour(storage, 2);
 			const controller = new MockTemporalController();
-			controller.visibilityError = new Error('server is down');
+			controller.listWorkflowsError = new Error('server is down');
 			const session = new SessionState(controller, tour);
 
 			await restoreSessionFromSandbox(controller, session);
@@ -634,48 +536,48 @@ describe('SessionState', () => {
 			expect(tour.currentStepIndex).toBe(2);
 
 			// Once the server recovers, the next trigger retries the restore.
-			controller.visibilityError = null;
-			controller.visibilityResult = [runningOrderSummary('order-2')];
+			controller.listWorkflowsError = null;
+			controller.listWorkflowsResult = [runningOrderSummary('order-2')];
 			await restoreSessionFromSandbox(controller, session);
 			expect(session.run?.workflowId).toBe('order-2');
 		});
 
 		it('runs at most once and never clobbers a run the learner started', async () => {
 			const { controller, session } = makeSession();
-			controller.visibilityResult = [runningOrderSummary('order-stale')];
+			controller.listWorkflowsResult = [runningOrderSummary('order-stale')];
 			await session.placeOrder();
 
 			await restoreSessionFromSandbox(controller, session);
 			expect(session.run).toEqual(controller.startResult);
-			expect(controller.visibilityCalls).toHaveLength(0);
+			expect(controller.listWorkflowsCount).toBe(0);
 		});
 
 		it('does not let a later poll undo a Reset when the learner ordered before restore ever ran', async () => {
 			const { controller, session } = makeSession();
 			// The learner places an order fast enough that restoreSessionFromSandbox
 			// has never actually run yet when it's first called — run is already
-			// non-null, so it short-circuits without ever calling Visibility.
+			// non-null, so it short-circuits without ever calling listWorkflows.
 			await session.placeOrder();
 			const orderedWorkflowId = session.run?.workflowId;
 			await restoreSessionFromSandbox(controller, session);
-			expect(controller.visibilityCalls).toHaveLength(0);
+			expect(controller.listWorkflowsCount).toBe(0);
 
 			// Reset is client-only — the workflow above keeps running server-side.
 			session.reset();
-			controller.visibilityResult = [runningOrderSummary(orderedWorkflowId ?? '')];
+			controller.listWorkflowsResult = [runningOrderSummary(orderedWorkflowId ?? '')];
 
 			// A later poll tick (the same trigger that ran restore the first time)
 			// must not resurrect the just-reset run.
 			await restoreSessionFromSandbox(controller, session);
 			expect(session.run).toBeNull();
-			expect(controller.visibilityCalls).toHaveLength(0);
+			expect(controller.listWorkflowsCount).toBe(0);
 		});
 
 		it('does not adopt a stale run when an order is placed mid-restore', async () => {
 			const { controller, session } = makeSession();
-			// Simulate the race: the learner places an order while the visibility
+			// Simulate the race: the learner places an order while the list
 			// lookup is still in flight.
-			controller.visibility = async () => {
+			controller.listWorkflows = async () => {
 				await session.placeOrder();
 				return [runningOrderSummary('order-stale')];
 			};
@@ -686,13 +588,13 @@ describe('SessionState', () => {
 			expect(session.activeOrder?.orderId).not.toBe('order-stale');
 		});
 
-		it('abandons adopting a run if the learner hits Reset while the Visibility lookup is in flight', async () => {
+		it('abandons adopting a run if the learner hits Reset while the list lookup is in flight', async () => {
 			const { controller, session } = makeSession();
 			// A workflow really is still running server-side (Reset doesn't
 			// cancel it) — but the learner reset mid-lookup, and `run` was
 			// already null before and after, so a plain `run !== null` recheck
 			// wouldn't catch this.
-			controller.visibility = async () => {
+			controller.listWorkflows = async () => {
 				session.reset();
 				return [runningOrderSummary('order-still-running')];
 			};
@@ -704,22 +606,24 @@ describe('SessionState', () => {
 
 			// The abandoned attempt doesn't block a later, uncontested retry —
 			// matching what would happen if Reset had simply run first.
-			controller.visibility = async () => [runningOrderSummary('order-still-running')];
+			controller.listWorkflows = async () => [runningOrderSummary('order-still-running')];
 			await restoreSessionFromSandbox(controller, session);
 			expect(session.run?.workflowId).toBe('order-still-running');
 		});
 
 		it('discards a stale timeline if the learner reset and placed a new order mid-query', async () => {
 			const { controller, session } = makeSession();
-			controller.visibilityResult = [runningOrderSummary('order-restored')];
-			const staleEntries = [timelineEntry(0, ORDER_STATUS.AwaitingRestaurant, 'TimerStarted')];
-			// The Visibility lookup resolves fine, but while the getTimeline query
-			// for the restored run is in flight, the learner resets and starts a
-			// brand-new order — a race Bugbot flagged (comment_id=3525759058).
-			controller.query = async (_workflowId, name) => {
+			controller.listWorkflowsResult = [runningOrderSummary('order-restored')];
+			const staleSnapshot = makeSnapshot({
+				timeline: [entry(ORDER_STATUS.WaitingForRestaurant, 0)]
+			});
+			// The list lookup resolves fine, but while the getStatus query for the
+			// restored run is in flight, the learner resets and starts a
+			// brand-new order.
+			controller.query = async () => {
 				session.reset();
 				await session.placeOrder();
-				return queryResponseFor({ getTimeline: staleEntries }, name);
+				return staleSnapshot;
 			};
 
 			await restoreSessionFromSandbox(controller, session);
@@ -727,37 +631,14 @@ describe('SessionState', () => {
 			// The restored run's stale timeline must not be applied to the new run.
 			expect(session.run).toEqual(controller.startResult);
 			expect(session.timelineEntries).toEqual([]);
-			expect(session.phase).toBe(ORDER_STATUS.Created);
-		});
-
-		it('does not seed a stale fallback phase if the learner reset and placed a new order mid-query (offline path)', async () => {
-			const { controller, session } = makeSession();
-			controller.visibilityResult = [
-				runningOrderSummary('order-restored', {
-					businessSnapshot: { OrderStatus: ORDER_STATUS.AwaitingRestaurant }
-				})
-			];
-			// The same race as above, but this time getTimeline REJECTS (worker
-			// offline) instead of resolving — the seeding fallback has its own
-			// re-check, mirroring the success path's.
-			controller.query = async <N extends QueryName>(): Promise<QueryReturnMap[N]> => {
-				session.reset();
-				await session.placeOrder();
-				throw new Error('no worker available');
-			};
-
-			await restoreSessionFromSandbox(controller, session);
-
-			expect(session.run).toEqual(controller.startResult);
-			expect(session.timelineEntries).toEqual([]);
-			expect(session.phase).toBe(ORDER_STATUS.Created);
+			expect(session.phase).toBe(ORDER_STATUS.Received);
 		});
 
 		it('keeps the run when the timeline query fails (worker offline)', async () => {
 			const storage = volatileStorage();
-			const tour = restoredTour(storage, 8);
+			const tour = restoredTour(storage, 6);
 			const controller = new MockTemporalController();
-			controller.visibilityResult = [runningOrderSummary('order-7')];
+			controller.listWorkflowsResult = [runningOrderSummary('order-7')];
 			controller.query = async () => {
 				throw new Error('no worker available');
 			};
@@ -765,18 +646,17 @@ describe('SessionState', () => {
 
 			await restoreSessionFromSandbox(controller, session);
 
-			// The run is restored and floored to at least the Created phase (a
-			// no-op here since step 8 is already well past it); the regular poll
-			// reconciles further once the worker returns and the timeline replays.
+			// The run is restored; the regular poll reconciles further once the
+			// worker returns and the timeline replays.
 			expect(session.run?.workflowId).toBe('order-7');
-			expect(tour.currentStepIndex).toBe(8);
+			expect(tour.currentStepIndex).toBe(6);
 		});
 
-		it('floors the tour to at least Created on adopting a run even if timeline replay fails', async () => {
+		it('floors the tour to at least activities-run on adopting a run even if timeline replay fails', async () => {
 			const storage = volatileStorage();
 			const tour = new TourState(storage); // fresh — no persisted progress at all
 			const controller = new MockTemporalController();
-			controller.visibilityResult = [runningOrderSummary('order-8')];
+			controller.listWorkflowsResult = [runningOrderSummary('order-8')];
 			controller.query = async () => {
 				throw new Error('no worker available');
 			};
@@ -792,59 +672,9 @@ describe('SessionState', () => {
 			expect(TOUR[tour.currentStepIndex]?.id).toBe('activities-run');
 		});
 
-		it('floors using the real Visibility OrderStatus, not the always-Created session.phase, when the worker is offline', async () => {
-			// A further-along order (already past signal-accept) reloads while
-			// the worker happens to be down. `session.phase` would read Created
-			// (no timeline entries yet) and floor only to activities-run — far
-			// short of reality — unless the immediate floor uses Visibility's
-			// indexed OrderStatus search attribute instead.
-			const storage = volatileStorage();
-			const tour = new TourState(storage);
-			const controller = new MockTemporalController();
-			controller.visibilityResult = [
-				runningOrderSummary('order-9', {
-					businessSnapshot: { OrderStatus: ORDER_STATUS.Preparing }
-				})
-			];
-			controller.query = async () => {
-				throw new Error('no worker available');
-			};
-			const session = new SessionState(controller, tour);
-
-			await restoreSessionFromSandbox(controller, session);
-
-			expect(session.run?.workflowId).toBe('order-9');
-			expect(TOUR[tour.currentStepIndex]?.id).toBe('update-with-validator');
-		});
-
-		it('seeds session.phase from Visibility when the worker is offline, not just the tour floor', async () => {
-			// The tour-floor fix above isn't enough on its own: canDo() and every
-			// other phase-gated control read session.phase directly, which stays
-			// at Created (no timeline entries) unless something seeds it too.
-			// Accepting an AwaitingRestaurant order is a signal — server-served,
-			// doesn't need the worker — so it should be usable immediately.
-			const tour = new TourState(volatileStorage());
-			const controller = new MockTemporalController();
-			controller.visibilityResult = [
-				runningOrderSummary('order-10', {
-					businessSnapshot: { OrderStatus: ORDER_STATUS.AwaitingRestaurant }
-				})
-			];
-			controller.query = async () => {
-				throw new Error('no worker available');
-			};
-			const session = new SessionState(controller, tour);
-			session.sandboxUsable = true;
-
-			await restoreSessionFromSandbox(controller, session);
-
-			expect(session.phase).toBe(ORDER_STATUS.AwaitingRestaurant);
-			expect(session.canDo('accept-restaurant')).toBe(true);
-		});
-
 		it('prefers the summary matching a persisted workflow id over an arbitrary first match', async () => {
 			const { controller, session } = makeSession();
-			controller.visibilityResult = [
+			controller.listWorkflowsResult = [
 				runningOrderSummary('order-old'),
 				runningOrderSummary('order-new')
 			];
@@ -856,7 +686,7 @@ describe('SessionState', () => {
 
 		it('falls back to the first resumable match when no preferred id is given or found', async () => {
 			const { controller, session } = makeSession();
-			controller.visibilityResult = [
+			controller.listWorkflowsResult = [
 				runningOrderSummary('order-old'),
 				runningOrderSummary('order-new')
 			];
@@ -871,7 +701,7 @@ describe('SessionState', () => {
 			// since Reset is client-only) and reloaded without placing a new
 			// order. It must not be silently re-adopted.
 			const { controller, session } = makeSession();
-			controller.visibilityResult = [runningOrderSummary('order-stale')];
+			controller.listWorkflowsResult = [runningOrderSummary('order-stale')];
 
 			await restoreSessionFromSandbox(
 				controller,
@@ -885,7 +715,7 @@ describe('SessionState', () => {
 
 		it('excludes a dismissed workflow id even while adopting a different one', async () => {
 			const { controller, session } = makeSession();
-			controller.visibilityResult = [
+			controller.listWorkflowsResult = [
 				runningOrderSummary('order-dismissed'),
 				runningOrderSummary('order-current')
 			];
@@ -899,7 +729,7 @@ describe('SessionState', () => {
 			const { controller, session } = makeSession();
 			// Both order-A and order-B are still running server-side (Reset is
 			// client-only) — the learner walked away from both in this sandbox.
-			controller.visibilityResult = [
+			controller.listWorkflowsResult = [
 				runningOrderSummary('order-A'),
 				runningOrderSummary('order-B')
 			];
@@ -911,7 +741,7 @@ describe('SessionState', () => {
 
 		it('prefers a still-running order over a finished one when both are present', async () => {
 			const { controller, session } = makeSession();
-			controller.visibilityResult = [
+			controller.listWorkflowsResult = [
 				runningOrderSummary('order-finished', { status: 'COMPLETED' }),
 				runningOrderSummary('order-running')
 			];
@@ -923,17 +753,21 @@ describe('SessionState', () => {
 
 		it('preserves and reconciles progress against a finished order instead of wiping it', async () => {
 			// The learner completed delivery and reloaded before the final
-			// getTimeline poll ever recorded WorkflowExecutionCompleted — the
+			// getStatus poll ever recorded WorkflowExecutionCompleted — the
 			// workflow is no longer RUNNING, but its history is still real.
 			const storage = volatileStorage();
-			const tour = restoredTour(storage, 6); // mid-tour, well short of complete
+			const tour = restoredTour(storage, 4); // mid-tour, well short of complete
 			const controller = new MockTemporalController();
-			controller.visibilityResult = [
+			controller.listWorkflowsResult = [
 				runningOrderSummary('order-finished', { status: 'COMPLETED' })
 			];
-			controller.queryResults.set('getTimeline', [
-				timelineEntry(0, ORDER_STATUS.Delivered, 'WorkflowExecutionCompleted')
-			]);
+			controller.queryResults.set(
+				'getStatus',
+				makeSnapshot({
+					status: ORDER_STATUS.Delivered,
+					timeline: [entry(ORDER_STATUS.Delivered, 0)]
+				})
+			);
 			const session = new SessionState(controller, tour);
 
 			await restoreSessionFromSandbox(controller, session);
@@ -952,7 +786,7 @@ describe('SessionState', () => {
 
 		// The learner drives the workflow from the toolbar without following the
 		// tour: the phase jumps ahead of the current step's completing event.
-		session.ingestTimeline([timelineEntry(0, ORDER_STATUS.AwaitingRestaurant, 'TimerStarted')]);
+		session.ingestTimeline([entry(ORDER_STATUS.WaitingForRestaurant, 0)]);
 
 		expect(TOUR[tour.currentStepIndex]?.id).toBe('signal-accept');
 	});
@@ -970,7 +804,7 @@ describe('SessionState', () => {
 			expect(session.tourStepStuck).toBe(false); // idle
 
 			await session.placeOrder();
-			session.ingestTimeline([timelineEntry(0, ORDER_STATUS.Preparing)]);
+			session.ingestTimeline([entry(ORDER_STATUS.Preparing, 0)]);
 			expect(session.tourStepStuck).toBe(false);
 		});
 
@@ -981,33 +815,25 @@ describe('SessionState', () => {
 			walkTour(tour, ['ActivityTaskCompleted', 'TimerStarted']);
 			expect(tour.currentStep?.id).toBe('signal-accept');
 
-			session.ingestTimeline([
-				timelineEntry(0, ORDER_STATUS.Cancelled),
-				timelineEntry(1, ORDER_STATUS.Refunded)
-			]);
+			session.ingestTimeline([entry(ORDER_STATUS.Cancelled, 0), entry(ORDER_STATUS.Refunded, 1)]);
 
 			// The workflow is terminal; a restaurant-accepted signal can never arrive.
 			expect(session.tourStepStuck).toBe(true);
 			// Skipping unsticks the tour one step at a time without faking completion.
 			tour.skip();
-			expect(tour.currentStep?.id).toBe('update-with-validator');
+			expect(tour.currentStep?.id).toBe('query-status');
 			expect(tour.completedStepIds).not.toContain('signal-accept');
-			expect(session.tourStepStuck).toBe(true); // update step is also stranded
+			// query-status stays reachable post-terminal — queries read closed workflows.
+			expect(session.tourStepStuck).toBe(false);
 		});
 
 		it('query-driven steps stay live after a terminal phase — queries read closed workflows', async () => {
 			const { tour, session } = makeSession();
 			await session.placeOrder();
-			walkTour(tour, [
-				'ActivityTaskCompleted',
-				'TimerStarted',
-				'WorkflowExecutionSignaled',
-				'WorkflowExecutionUpdateAccepted',
-				'ChildWorkflowExecutionStarted'
-			]);
-			expect(tour.currentStep?.id).toBe('queryable-business-snapshot');
+			walkTour(tour, ['ActivityTaskCompleted', 'TimerStarted', 'WorkflowExecutionSignaled']);
+			expect(tour.currentStep?.id).toBe('query-status');
 
-			session.ingestTimeline([timelineEntry(0, ORDER_STATUS.Delivered)]);
+			session.ingestTimeline([entry(ORDER_STATUS.Delivered, 0)]);
 			expect(session.tourStepStuck).toBe(false);
 		});
 
@@ -1018,16 +844,13 @@ describe('SessionState', () => {
 				'ActivityTaskCompleted',
 				'TimerStarted',
 				'WorkflowExecutionSignaled',
-				'WorkflowExecutionUpdateAccepted',
-				'ChildWorkflowExecutionStarted',
-				'QueryCompleted',
 				'QueryCompleted'
 			]);
 			expect(tour.currentStep?.id).toBe('durable-recovery');
 
 			// Delivered before the worker was ever killed: kill-worker is gated off
 			// for a finished run, so WorkerRestarted can never fire.
-			session.ingestTimeline([timelineEntry(0, ORDER_STATUS.Delivered)]);
+			session.ingestTimeline([entry(ORDER_STATUS.Delivered, 0)]);
 			expect(session.tourStepStuck).toBe(true);
 
 			// But a worker that is already down can still be restarted, which
@@ -1040,7 +863,7 @@ describe('SessionState', () => {
 			const { tour, session } = makeSession();
 			await session.placeOrder();
 			walkTour(tour, ['ActivityTaskCompleted', 'TimerStarted']);
-			session.ingestTimeline([timelineEntry(0, ORDER_STATUS.Refunded)]);
+			session.ingestTimeline([entry(ORDER_STATUS.Refunded, 0)]);
 			expect(session.tourStepStuck).toBe(true);
 
 			session.reset();

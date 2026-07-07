@@ -73,7 +73,7 @@ test('editor is the default center view with Cinder file tabs', async ({ page })
 	await expect(page.locator('#center-panel-code')).toBeVisible();
 	await expect(page.locator('.editor-tabs')).toBeVisible();
 	await expect(page.getByRole('tablist', { name: 'Editor files' })).toHaveClass(/cinder-tab-list/);
-	await expect(page.getByRole('tab', { name: 'order-workflow.ts' })).toHaveClass(/cinder-tab/);
+	await expect(page.getByRole('tab', { name: 'workflow.ts' })).toHaveClass(/cinder-tab/);
 });
 
 test('guided journey and workflow history rails are rendered', async ({ page }) => {
@@ -156,16 +156,16 @@ test('segmented controls and file tabs support arrow-key navigation', async ({ p
 	await expect(stepsLens).toBeFocused();
 
 	const editorTabs = page.getByRole('tablist', { name: 'Editor files' });
-	const orderWorkflowTab = editorTabs.getByRole('tab', { name: 'order-workflow.ts' });
-	const deliveryWorkflowTab = editorTabs.getByRole('tab', { name: 'delivery-workflow.ts' });
-	await expect(orderWorkflowTab).toHaveAttribute('tabindex', '0');
-	await expect(deliveryWorkflowTab).toHaveAttribute('tabindex', '-1');
+	const workflowTab = editorTabs.getByRole('tab', { name: 'workflow.ts' });
+	const activitiesTab = editorTabs.getByRole('tab', { name: 'activities.ts' });
+	await expect(workflowTab).toHaveAttribute('tabindex', '0');
+	await expect(activitiesTab).toHaveAttribute('tabindex', '-1');
 
-	await orderWorkflowTab.focus();
+	await workflowTab.focus();
 	await page.keyboard.press('ArrowRight');
-	await expect(deliveryWorkflowTab).toHaveAttribute('aria-selected', 'true');
-	await expect(deliveryWorkflowTab).toHaveAttribute('tabindex', '0');
-	await expect(deliveryWorkflowTab).toBeFocused();
+	await expect(activitiesTab).toHaveAttribute('aria-selected', 'true');
+	await expect(activitiesTab).toHaveAttribute('tabindex', '0');
+	await expect(activitiesTab).toBeFocused();
 });
 
 test('topology strip shows the client, server, and worker nodes', async ({ page }) => {

@@ -94,28 +94,12 @@
 				return 'Cancel order';
 			case 'accept-restaurant':
 				return 'Send restaurant-accepted signal';
-			case 'reject-restaurant':
-				return 'Send restaurant-rejected signal';
-			case 'food-ready':
-				return 'Mark food ready';
-			case 'update-location':
-				return 'Update courier location';
-			case 'add-tip':
-				return 'Add tip';
-			case 'update-address':
-				return 'Update delivery address';
-			case 'apply-promo':
-				return 'Apply promo code';
 			case 'query-status':
 				return 'Query status';
-			case 'query-timeline':
-				return 'Query timeline';
 			case 'kill-worker':
 				return workerOnline ? 'Kill the worker' : 'Restart the worker';
 			case 'complete-delivery':
 				return 'Complete delivery';
-			case 'list-visibility':
-				return 'List by visibility';
 		}
 		const exhaustive: never = control;
 		return exhaustive;
@@ -140,9 +124,9 @@
 				<div class="journey__card journey__card--complete">
 					<h3 class="journey__card-title">Tour complete</h3>
 					<p class="journey__copy">
-						You started a durable workflow, changed it with a signal and a validated update, queried
-						its state, searched Visibility, killed the worker, watched it replay and recover, and
-						still delivered the order.
+						You started a durable workflow, watched an activity retry itself, moved it forward with
+						signals, queried its state, killed the worker, watched it replay and recover, and still
+						delivered the order.
 					</p>
 				</div>
 			{:else if currentStep !== undefined}

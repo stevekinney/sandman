@@ -7,47 +7,30 @@ import { describe, expect, it } from 'vitest';
 import { FILE_DESCRIPTORS, SHARED_FILE_NAME } from './file-descriptors.ts';
 
 describe('FILE_DESCRIPTORS', () => {
-	it('contains exactly seven files', () => {
-		expect(FILE_DESCRIPTORS).toHaveLength(7);
+	it('contains exactly four files', () => {
+		expect(FILE_DESCRIPTORS).toHaveLength(4);
 	});
 
-	it('includes the split workflow files plus signals, activities, worker, and shared', () => {
+	it('includes workflow, activities, worker, and shared, in that order', () => {
 		const names = FILE_DESCRIPTORS.map((f) => f.name);
-		expect(names).toEqual([
-			'order-workflow.ts',
-			'delivery-workflow.ts',
-			'definitions.ts',
-			'activities.ts',
-			'signals.ts',
-			'worker.ts',
-			'shared.ts'
-		]);
+		expect(names).toEqual(['workflow.ts', 'activities.ts', 'worker.ts', 'shared.ts']);
 	});
 
-	it('the main order workflow is the default (first) tab', () => {
-		expect(FILE_DESCRIPTORS[0].name).toBe('order-workflow.ts');
+	it('the workflow is the default (first) tab', () => {
+		expect(FILE_DESCRIPTORS[0].name).toBe('workflow.ts');
 	});
 
-	it('shared.ts and signals.ts are readOnly', () => {
+	it('only shared.ts is readOnly', () => {
 		const shared = FILE_DESCRIPTORS.find((f) => f.name === SHARED_FILE_NAME);
-		const signals = FILE_DESCRIPTORS.find((f) => f.name === 'signals.ts');
 		expect(shared).toBeDefined();
-		expect(signals).toBeDefined();
 		expect(shared?.readOnly).toBe(true);
-		expect(signals?.readOnly).toBe(true);
 	});
 
-	it('the workflow, definitions, activities, and worker files are NOT readOnly', () => {
+	it('workflow, activities, and worker files are NOT readOnly', () => {
 		const editables = FILE_DESCRIPTORS.filter((f) =>
-			[
-				'order-workflow.ts',
-				'delivery-workflow.ts',
-				'definitions.ts',
-				'activities.ts',
-				'worker.ts'
-			].includes(f.name)
+			['workflow.ts', 'activities.ts', 'worker.ts'].includes(f.name)
 		);
-		expect(editables).toHaveLength(5);
+		expect(editables).toHaveLength(3);
 		for (const f of editables) {
 			expect(f.readOnly, `${f.name} should not be readOnly`).toBe(false);
 		}
@@ -71,40 +54,27 @@ describe('FILE_DESCRIPTORS', () => {
 });
 
 describe('FILE_DESCRIPTORS — contents reflect the real deployed sandbox-template files', () => {
-	it('order-workflow.ts initialContents defines the real orderFoodWorkflow', () => {
-		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'order-workflow.ts');
+	it('workflow.ts initialContents defines the real orderWorkflow', () => {
+		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'workflow.ts');
 		expect(descriptor).toBeDefined();
-		expect(descriptor?.initialContents).toContain('export async function orderFoodWorkflow(');
-	});
-
-	it('delivery-workflow.ts initialContents defines the child deliveryWorkflow', () => {
-		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'delivery-workflow.ts');
-		expect(descriptor).toBeDefined();
-		expect(descriptor?.initialContents).toContain('export async function deliveryWorkflow(');
-	});
-
-	it('definitions.ts initialContents carries the activity retry policy', () => {
-		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'definitions.ts');
-		expect(descriptor).toBeDefined();
-		expect(descriptor?.initialContents).toContain('maximumAttempts: 5');
-		expect(descriptor?.initialContents).toContain('proxyActivities');
-	});
-
-	it('signals.ts initialContents comes from the deployed sandbox-template file', () => {
-		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'signals.ts');
-		expect(descriptor).toBeDefined();
-		expect(descriptor?.initialContents).toContain('defineSignal<[CancelOrderSignal]>');
+		expect(descriptor?.initialContents).toContain('export async function orderWorkflow(');
 	});
 
 	it('activities.ts initialContents comes from the deployed sandbox-template file', () => {
 		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'activities.ts');
 		expect(descriptor).toBeDefined();
-		expect(descriptor?.initialContents).not.toContain('replace with your real provider');
+		expect(descriptor?.initialContents).toContain('export async function chargePayment(');
+	});
+
+	it('worker.ts initialContents comes from the deployed sandbox-template file', () => {
+		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === 'worker.ts');
+		expect(descriptor).toBeDefined();
+		expect(descriptor?.initialContents.length).toBeGreaterThan(0);
 	});
 
 	it('shared.ts initialContents comes from the deployed sandbox-template file', () => {
 		const descriptor = FILE_DESCRIPTORS.find((f) => f.name === SHARED_FILE_NAME);
 		expect(descriptor).toBeDefined();
-		expect(descriptor?.initialContents).not.toContain('./workflow-api-types');
+		expect(descriptor?.initialContents).toContain('export type OrderInput');
 	});
 });

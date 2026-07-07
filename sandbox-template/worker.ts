@@ -1,21 +1,20 @@
 /**
- * worker.ts — Temporal worker bootstrap for the Sandman sandbox.
+ * worker.ts — the process that actually runs your workflow and activities.
  *
- * Run this file with `bun run sandbox-template/worker.ts` (or via the
- * `worker` script in package.json) to start the worker inside the E2B VM.
+ * A worker polls a task queue on the Temporal server, executes whatever
+ * workflow and activity code it is asked to, and reports results back. The
+ * server is the durable brain; the worker is replaceable muscle — kill it and
+ * restart it, and every in-flight workflow picks up where it left off.
  *
- * The worker connects to a locally running Temporal dev server
- * (temporal server start-dev) on gRPC port 7233.
+ * Inside the sandbox this connects to the local dev server
+ * (`temporal server start-dev`) on port 7233. Saving any file in the editor
+ * restarts this process; the Temporal server keeps running.
  */
 
 import { NativeConnection, Worker } from '@temporalio/worker';
 import * as activities from './activities.ts';
 import { TASK_QUEUE } from './shared.ts';
 
-/**
- * Creates and runs the Sandman Temporal worker.
- * Exits the process when the worker shuts down or encounters an error.
- */
 async function run(): Promise<void> {
 	const connection = await NativeConnection.connect({
 		address: 'localhost:7233'
@@ -25,8 +24,9 @@ async function run(): Promise<void> {
 		connection,
 		namespace: 'default',
 		taskQueue: TASK_QUEUE,
-		// workflowsPath resolves relative to this file at runtime
-		workflowsPath: new URL('./workflows.ts', import.meta.url).pathname,
+		// The workflow code is bundled from this file and registered by
+		// function name — `orderWorkflow` becomes the workflow type.
+		workflowsPath: new URL('./workflow.ts', import.meta.url).pathname,
 		activities
 	});
 

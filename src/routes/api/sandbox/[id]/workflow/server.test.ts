@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { POST } from './+server';
-import { GET as VISIBILITY_GET, _buildVisibilityQuery } from './visibility/+server';
+import { GET as LIST_GET } from './list/+server';
 import { GET as QUERY_GET } from './query/+server';
 import { POST as SIGNAL_POST } from './signal/+server';
-import { POST as UPDATE_POST } from './update/+server';
 import { resolveEntry } from '$lib/server/sandbox/registry';
 import { touchSessionActivity } from '$lib/server/security/guards';
 
@@ -59,10 +58,10 @@ function makeRouteEvent(
 	};
 }
 
-function mockSandboxExec(stdout: string): ReturnType<typeof vi.fn> {
+function mockSandboxExec(stdout: string, exitCode = 0): ReturnType<typeof vi.fn> {
 	const writeFile = vi.fn().mockResolvedValue(undefined);
 	const exec = vi.fn().mockResolvedValue({
-		exitCode: 0,
+		exitCode,
 		stdout,
 		stderr: ''
 	});
@@ -99,9 +98,9 @@ describe('POST /api/sandbox/[id]/workflow', () => {
 			stdout: JSON.stringify({
 				workflowId: 'order-1',
 				runId: 'run-1',
-				type: 'orderFoodWorkflow',
+				type: 'orderWorkflow',
 				namespace: 'default',
-				taskQueue: 'sandman-food'
+				taskQueue: 'orders'
 			}),
 			stderr: ''
 		});
@@ -131,17 +130,8 @@ describe('POST /api/sandbox/[id]/workflow', () => {
 		const response = await POST(
 			makeEvent({
 				orderId: 'order-1',
-				restaurantId: 'restaurant-1',
-				customerId: 'customer-1',
-				customerTier: 'standard',
-				items: [{ itemId: 'item-1', name: 'Noodles', quantity: 1, unitPriceCents: 1295 }],
-				deliveryAddress: {
-					street: '221 Market Street',
-					city: 'Denver',
-					state: 'CO',
-					postalCode: '80205'
-				},
-				paymentMethod: { type: 'card', last4: '4242', brand: 'Visa' }
+				cardLast4: '4242',
+				items: [{ name: 'Noodles', quantity: 1, priceCents: 1295 }]
 			})
 		);
 
@@ -160,10 +150,28 @@ describe('POST /api/sandbox/[id]/workflow', () => {
 		);
 	});
 
-	it('does not slide session expiry for invalid workflow start bodies', async () => {
+	it('rejects a missing orderId without invoking Temporal CLI', async () => {
+		const response = await POST(makeEvent({ orderId: '', cardLast4: '4242', items: [] }));
+
+		expect(response.status).toBe(400);
+		expect(touchSessionActivity).not.toHaveBeenCalled();
+	});
+
+	it('rejects a missing cardLast4 without invoking Temporal CLI', async () => {
 		const response = await POST(
-			makeEvent({ orderId: '', restaurantId: 'restaurant-1', items: [] })
+			makeEvent({
+				orderId: 'order-1',
+				cardLast4: '',
+				items: [{ name: 'Noodles', quantity: 1, priceCents: 1295 }]
+			})
 		);
+
+		expect(response.status).toBe(400);
+		expect(touchSessionActivity).not.toHaveBeenCalled();
+	});
+
+	it('rejects empty items without invoking Temporal CLI', async () => {
+		const response = await POST(makeEvent({ orderId: 'order-1', cardLast4: '4242', items: [] }));
 
 		expect(response.status).toBe(400);
 		expect(touchSessionActivity).not.toHaveBeenCalled();
@@ -196,51 +204,24 @@ describe('workflow message route validation', () => {
 		expect(exec).not.toHaveBeenCalled();
 		expect(touchSessionActivity).not.toHaveBeenCalled();
 	});
-
-	it('rejects unknown update names before invoking Temporal CLI', async () => {
-		const exec = mockSandboxExec('{}');
-		const response = await UPDATE_POST(
-			makeRouteEvent('/api/sandbox/sandbox-1/workflow/update', {
-				method: 'POST',
-				body: { workflowId: 'order-1', name: 'unknownUpdate', input: {} }
-			}) as Parameters<typeof UPDATE_POST>[0]
-		);
-
-		expect(response.status).toBe(400);
-		expect(exec).not.toHaveBeenCalled();
-		expect(touchSessionActivity).not.toHaveBeenCalled();
-	});
 });
 
-describe('GET /api/sandbox/[id]/workflow/visibility', () => {
-	it('lists workflows with a Temporal Visibility query', async () => {
+describe('GET /api/sandbox/[id]/workflow/list', () => {
+	it('lists workflows via `temporal workflow list -o json`', async () => {
 		const exec = mockSandboxExec(
 			JSON.stringify({
 				executions: [
 					{
 						execution: { workflowId: 'order-1', runId: 'run-1' },
-						type: { name: 'orderFoodWorkflow' },
-						status: 'WORKFLOW_EXECUTION_STATUS_COMPLETED',
-						searchAttributes: {
-							indexedFields: {
-								OrderStatus: { data: btoa(JSON.stringify(['DELIVERED'])) },
-								CustomerTier: { data: btoa(JSON.stringify(['premium'])) },
-								RestaurantId: { data: btoa(JSON.stringify(['rest-test'])) }
-							}
-						}
+						type: { name: 'orderWorkflow' },
+						status: 'WORKFLOW_EXECUTION_STATUS_COMPLETED'
 					}
 				]
 			})
 		);
 
-		const response = await VISIBILITY_GET(
-			makeRouteEvent('/api/sandbox/sandbox-1/workflow/visibility', {
-				search: {
-					status: 'DELIVERED',
-					customerTier: 'premium',
-					restaurantId: 'rest-test'
-				}
-			}) as Parameters<typeof VISIBILITY_GET>[0]
+		const response = await LIST_GET(
+			makeRouteEvent('/api/sandbox/sandbox-1/workflow/list') as Parameters<typeof LIST_GET>[0]
 		);
 
 		expect(response.status).toBe(200);
@@ -250,109 +231,34 @@ describe('GET /api/sandbox/[id]/workflow/visibility', () => {
 					workflowId: 'order-1',
 					runId: 'run-1',
 					status: 'COMPLETED',
-					type: 'orderFoodWorkflow',
-					businessSnapshot: {
-						OrderStatus: 'DELIVERED',
-						CustomerTier: 'premium',
-						RestaurantId: 'rest-test'
-					}
+					type: 'orderWorkflow'
 				}
 			]
 		});
 		expect(exec).toHaveBeenCalledWith(
 			expect.anything(),
-			expect.stringContaining('OrderStatus='),
-			expect.anything()
-		);
-		expect(exec).toHaveBeenCalledWith(
-			expect.anything(),
-			expect.stringContaining('DELIVERED'),
+			expect.stringContaining('temporal workflow list'),
 			expect.anything()
 		);
 	});
 
-	it('returns a teaching error when Search Attributes are not registered', async () => {
-		const exec = vi.fn().mockResolvedValue({
-			exitCode: 1,
-			stdout: 'invalid search attribute OrderStatus',
-			stderr: ''
-		});
-		vi.mocked(resolveEntry).mockReturnValue({
-			client: {
-				provision: vi.fn(),
-				bootstrap: vi.fn(),
-				restartWorker: vi.fn(),
-				killWorker: vi.fn(),
-				processLiveness: vi.fn(() => null),
-				stopServer: vi.fn(),
-				startServer: vi.fn(),
-				exec,
-				extendTimeout: vi.fn(),
-				writeFile: vi.fn(),
-				terminate: vi.fn(),
-				terminateById: vi.fn()
-			},
-			handle: {
-				id: 'sandbox-1',
-				status: 'Ready',
-				host: vi.fn(),
-				accessToken: ''
-			}
-		});
+	it('returns 502 when the Temporal CLI command fails', async () => {
+		mockSandboxExec('boom', 1);
 
-		const response = await VISIBILITY_GET(
-			makeRouteEvent('/api/sandbox/sandbox-1/workflow/visibility', {
-				search: { status: 'DELIVERED' }
-			}) as Parameters<typeof VISIBILITY_GET>[0]
+		const response = await LIST_GET(
+			makeRouteEvent('/api/sandbox/sandbox-1/workflow/list') as Parameters<typeof LIST_GET>[0]
 		);
 
-		expect(response.status).toBe(422);
-		await expect(response.json()).resolves.toEqual({
-			error: expect.stringContaining('Search Attributes must be registered')
-		});
+		expect(response.status).toBe(502);
 	});
 
-	it('accepts a quote-containing restaurantId instead of rejecting it', async () => {
-		const exec = mockSandboxExec('{"executions":[]}');
+	it('returns 502 when the Temporal CLI returns invalid JSON', async () => {
+		mockSandboxExec('not json');
 
-		const response = await VISIBILITY_GET(
-			makeRouteEvent('/api/sandbox/sandbox-1/workflow/visibility', {
-				search: { restaurantId: "rest' AND OrderStatus='Delivered" }
-			}) as Parameters<typeof VISIBILITY_GET>[0]
+		const response = await LIST_GET(
+			makeRouteEvent('/api/sandbox/sandbox-1/workflow/list') as Parameters<typeof LIST_GET>[0]
 		);
 
-		// The value is accepted (any restaurantId the order path allows stays
-		// searchable) and reaches the sandbox rather than being rejected.
-		expect(response.status).toBe(200);
-		expect(exec).toHaveBeenCalledTimes(1);
-	});
-});
-
-describe('_buildVisibilityQuery — List Filter escaping', () => {
-	it('doubles embedded single quotes so a restaurantId cannot widen the query', () => {
-		const query = _buildVisibilityQuery({
-			status: null,
-			customerTier: null,
-			// A raw single quote would close the RestaurantId='...' literal and let
-			// the rest act as its own clause.
-			restaurantId: "rest' AND OrderStatus='Delivered"
-		});
-
-		// The whole value stays inside one quoted literal, with its quotes doubled.
-		expect(query).toBe("RestaurantId='rest'' AND OrderStatus=''Delivered'");
-		// It is NOT the injectable form where the quote breaks out into a new clause
-		// (which is exactly what raw interpolation would have produced).
-		expect(query).not.toBe("RestaurantId='rest' AND OrderStatus='Delivered'");
-	});
-
-	it('leaves a quote-free restaurantId untouched and ANDs multiple clauses', () => {
-		const query = _buildVisibilityQuery({
-			status: 'DELIVERED',
-			customerTier: 'premium',
-			restaurantId: 'kitchen-44'
-		});
-		expect(query).toBe(
-			"OrderStatus='DELIVERED' AND CustomerTier='premium' AND RestaurantId='kitchen-44'"
-		);
+		expect(response.status).toBe(502);
 	});
 });

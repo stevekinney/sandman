@@ -20,22 +20,26 @@ import {
 import {
 	ORDER_STATUS,
 	QUERY_NAMES,
-	SEARCH_ATTRIBUTE_METADATA,
 	SCENARIOS,
 	SCENARIO_ID,
 	SIGNAL_NAMES,
-	UPDATE_NAMES,
+	TASK_QUEUE,
+	ORDER_WORKFLOW,
 	type OrderStatus,
 	type ScenarioId,
 	type SignalName,
 	type QueryName,
-	type UpdateName,
 	type FeatureId,
-	type BusinessSnapshot,
-	type VisibilityFilter,
-	type VisibilityWorkflowSummary,
-	type ActivityOperationMetadata
+	type WorkflowSummary
 } from './workflow-api.ts';
+
+import {
+	ORDER_STATUS as SHARED_ORDER_STATUS,
+	SIGNAL_NAMES as SHARED_SIGNAL_NAMES,
+	QUERY_NAMES as SHARED_QUERY_NAMES,
+	TASK_QUEUE as SHARED_TASK_QUEUE,
+	ORDER_WORKFLOW as SHARED_ORDER_WORKFLOW
+} from '../../../sandbox-template/shared.ts';
 
 import {
 	PROXIED_UI_PORT,
@@ -154,18 +158,15 @@ describe('SandboxClient interface', () => {
 // ---------------------------------------------------------------------------
 
 describe('ORDER_STATUS', () => {
-	it('has all nine order lifecycle values', () => {
+	it('has all six order lifecycle values', () => {
 		const values = Object.values(ORDER_STATUS);
-		expect(values).toContain('CREATED');
-		expect(values).toContain('VALIDATING');
-		expect(values).toContain('AWAITING_RESTAURANT');
+		expect(values).toContain('RECEIVED');
+		expect(values).toContain('WAITING_FOR_RESTAURANT');
 		expect(values).toContain('PREPARING');
-		expect(values).toContain('AWAITING_COURIER');
-		expect(values).toContain('IN_DELIVERY');
 		expect(values).toContain('DELIVERED');
-		expect(values).toContain('CANCELLED');
 		expect(values).toContain('REFUNDED');
-		expect(values).toHaveLength(9);
+		expect(values).toContain('CANCELLED');
+		expect(values).toHaveLength(6);
 	});
 
 	it('Delivered value is the string literal "DELIVERED"', () => {
@@ -177,53 +178,35 @@ describe('ORDER_STATUS', () => {
 describe('OrderStatus type', () => {
 	it('accepts all valid order status strings', () => {
 		const statuses: OrderStatus[] = Object.values(ORDER_STATUS);
-		expect(statuses).toHaveLength(9);
+		expect(statuses).toHaveLength(6);
 	});
 });
 
-describe('SignalName / QueryName / UpdateName types', () => {
+describe('SignalName / QueryName types', () => {
 	it('are string types matching the workflow-api.ts contract', () => {
 		expectTypeOf<SignalName>().toEqualTypeOf<
-			| 'cancelOrder'
-			| 'restaurantAccepted'
-			| 'restaurantRejected'
-			| 'foodReady'
-			| 'courierLocationUpdate'
-			| 'addTip'
-			| 'deliveryCompleted'
+			'restaurantAccepted' | 'deliveryCompleted' | 'cancelOrder'
 		>();
-		expectTypeOf<QueryName>().toEqualTypeOf<'getStatus' | 'getTimeline'>();
-		expectTypeOf<UpdateName>().toEqualTypeOf<'updateDeliveryAddress' | 'applyPromoCode'>();
+		expectTypeOf<QueryName>().toEqualTypeOf<'getStatus'>();
 
 		// Runtime assertion so requireAssertions is satisfied
 		const signal: SignalName = 'cancelOrder';
 		const query: QueryName = 'getStatus';
-		const update: UpdateName = 'updateDeliveryAddress';
 		expect(signal).toBe('cancelOrder');
 		expect(query).toBe('getStatus');
-		expect(update).toBe('updateDeliveryAddress');
 	});
 });
 
 describe('FeatureId type', () => {
-	it('includes all fifteen features from the workflow-api.ts contract', () => {
+	it('includes all six features from the workflow-api.ts contract', () => {
 		const feature: FeatureId = 'activities-retry';
 		expect(feature).toBe('activities-retry');
 		expectTypeOf<FeatureId>().toEqualTypeOf<
 			| 'activities-retry'
 			| 'non-retryable-failure'
-			| 'saga-compensation'
 			| 'signals'
 			| 'queries'
-			| 'updates-validators'
 			| 'timers-durable-sleep'
-			| 'child-workflow'
-			| 'heartbeats-cancellation'
-			| 'continue-as-new'
-			| 'queryable-business-snapshot'
-			| 'search-attributes'
-			| 'local-activities'
-			| 'replay-safety'
 			| 'durable-recovery'
 		>();
 	});
@@ -231,54 +214,22 @@ describe('FeatureId type', () => {
 
 describe('workflow message allowlists', () => {
 	it('exports runtime allowlists for API route validation', () => {
-		expect(SIGNAL_NAMES).toEqual([
-			'cancelOrder',
-			'restaurantAccepted',
-			'restaurantRejected',
-			'foodReady',
-			'courierLocationUpdate',
-			'addTip',
-			'deliveryCompleted'
-		]);
-		expect(QUERY_NAMES).toEqual(['getStatus', 'getTimeline']);
-		expect(UPDATE_NAMES).toEqual(['updateDeliveryAddress', 'applyPromoCode']);
+		expect(SIGNAL_NAMES).toEqual(['restaurantAccepted', 'deliveryCompleted', 'cancelOrder']);
+		expect(QUERY_NAMES).toEqual(['getStatus']);
 	});
 });
 
-describe('Visibility and idempotency contracts', () => {
-	it('defines the business snapshot and real Temporal Search Attribute metadata', () => {
-		const snapshot: BusinessSnapshot = {
-			OrderStatus: ORDER_STATUS.Created,
-			CustomerTier: 'standard',
-			RestaurantId: 'restaurant-1'
-		};
-		const filter: VisibilityFilter = {
-			status: ORDER_STATUS.Created,
-			customerTier: 'standard',
-			restaurantId: 'restaurant-1'
-		};
-		const summary: VisibilityWorkflowSummary = {
+describe('WorkflowSummary type', () => {
+	it('has workflowId, runId, and status strings with an optional type', () => {
+		const summary: WorkflowSummary = {
 			workflowId: 'order-1',
 			runId: 'run-1',
-			status: 'Running',
-			type: 'orderFoodWorkflow',
-			businessSnapshot: snapshot
+			status: 'RUNNING',
+			type: 'orderWorkflow'
 		};
-		const operation: ActivityOperationMetadata = {
-			operationId: 'charge-payment',
-			idempotencyKey: 'order-1:charge-payment',
-			workflowId: 'order-1',
-			orderId: 'order-1'
-		};
-
-		expect(SEARCH_ATTRIBUTE_METADATA).toEqual([
-			expect.objectContaining({ key: 'OrderStatus', type: 'Keyword' }),
-			expect.objectContaining({ key: 'CustomerTier', type: 'Keyword' }),
-			expect.objectContaining({ key: 'RestaurantId', type: 'Keyword' })
-		]);
-		expect(summary.businessSnapshot).toEqual(snapshot);
-		expect(filter.restaurantId).toBe('restaurant-1');
-		expect(operation.idempotencyKey).toBe('order-1:charge-payment');
+		expect(summary.workflowId).toBe('order-1');
+		expectTypeOf(summary.workflowId).toEqualTypeOf<string>();
+		expectTypeOf(summary.type).toEqualTypeOf<string | undefined>();
 	});
 });
 
@@ -288,28 +239,15 @@ describe('SCENARIOS', () => {
 			'happy-path',
 			'retry',
 			'timeout-refund',
-			'update-rejection',
-			'child-delivery',
-			'worker-recovery',
-			'continue-as-new',
-			'replay-safety',
-			'search-attributes'
+			'worker-recovery'
 		]);
 		expectTypeOf<ScenarioId>().toEqualTypeOf<
-			| 'happy-path'
-			| 'retry'
-			| 'timeout-refund'
-			| 'update-rejection'
-			| 'child-delivery'
-			| 'worker-recovery'
-			| 'continue-as-new'
-			| 'replay-safety'
-			| 'search-attributes'
+			'happy-path' | 'retry' | 'timeout-refund' | 'worker-recovery'
 		>();
 	});
 
 	it('has mechanically verifiable steps for every scenario', () => {
-		expect(SCENARIOS).toHaveLength(9);
+		expect(SCENARIOS).toHaveLength(4);
 		for (const scenario of SCENARIOS) {
 			expect(scenario.title.length).toBeGreaterThan(0);
 			expect(scenario.summary.length).toBeGreaterThan(0);
@@ -422,5 +360,25 @@ describe('WorkflowEvent type', () => {
 		expect(event.type).toBe('WorkflowExecutionStarted');
 		expectTypeOf(event.sequence).toEqualTypeOf<number>();
 		expectTypeOf(event.timestamp).toEqualTypeOf<string>();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// workflow-api.ts <-> sandbox-template/shared.ts parity (anti-drift)
+// ---------------------------------------------------------------------------
+
+describe('workflow-api.ts <-> sandbox-template/shared.ts parity', () => {
+	it('ORDER_STATUS values match exactly between the two mirrors', () => {
+		expect(Object.values(SHARED_ORDER_STATUS)).toEqual(Object.values(ORDER_STATUS));
+	});
+
+	it('TASK_QUEUE and ORDER_WORKFLOW match exactly between the two mirrors', () => {
+		expect(SHARED_TASK_QUEUE).toBe(TASK_QUEUE);
+		expect(SHARED_ORDER_WORKFLOW).toBe(ORDER_WORKFLOW);
+	});
+
+	it('SIGNAL_NAMES and QUERY_NAMES match exactly between the two mirrors', () => {
+		expect(SHARED_SIGNAL_NAMES).toEqual(SIGNAL_NAMES);
+		expect(SHARED_QUERY_NAMES).toEqual(QUERY_NAMES);
 	});
 });

@@ -6,24 +6,18 @@
  *   POST /api/sandbox/[id]/workflow         → start workflow
  *   POST /api/sandbox/[id]/workflow/signal  → send signal
  *   GET  /api/sandbox/[id]/workflow/query   → run query
- *   POST /api/sandbox/[id]/workflow/update  → run update
- *   GET  /api/sandbox/[id]/workflow/visibility → list via Search Attributes
  *   POST /api/sandbox/[id]/worker/kill      → kill worker
  *   POST /api/sandbox/[id]/worker/restart   → restart worker
  */
 
-import type { TemporalController, WorkflowRun, UpdateRejectionError } from './types.ts';
+import type { TemporalController, WorkflowRun } from './types.ts';
 import type {
 	OrderInput,
 	SignalName,
 	SignalPayloadMap,
 	QueryName,
 	QueryReturnMap,
-	UpdateName,
-	UpdateInputMap,
-	UpdateResultMap,
-	VisibilityFilter,
-	VisibilityWorkflowSummary
+	WorkflowSummary
 } from '$lib/contracts/workflow-api';
 import type { ProcessLiveness } from '$lib/contracts/sandbox';
 
@@ -80,33 +74,6 @@ export class FetchController implements TemporalController {
 		return res.json() as Promise<QueryReturnMap[N]>;
 	}
 
-	async update<N extends UpdateName>(
-		workflowId: string,
-		name: N,
-		input: UpdateInputMap[N]
-	): Promise<UpdateResultMap[N]> {
-		const res = await fetch(`${this.base}/workflow/update`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ workflowId, name, input })
-		});
-
-		if (res.status === 422) {
-			const body = (await res.json()) as { reason: string };
-			const rejection: UpdateRejectionError = {
-				kind: 'rejection',
-				reason: body.reason
-			};
-			throw rejection;
-		}
-
-		if (!res.ok) {
-			const message = await readErrorMessage(res);
-			throw new Error(`Update ${name} failed: ${message}`);
-		}
-		return res.json() as Promise<UpdateResultMap[N]>;
-	}
-
 	async killWorker(): Promise<void> {
 		const res = await fetch(`${this.base}/worker/kill`, { method: 'POST' });
 		if (!res.ok) {
@@ -154,21 +121,13 @@ export class FetchController implements TemporalController {
 		}
 	}
 
-	async visibility(filter: VisibilityFilter): Promise<VisibilityWorkflowSummary[]> {
-		const url = new URL(`${this.base}/workflow/visibility`, window.location.href);
-		if (filter.status !== undefined) url.searchParams.set('status', filter.status);
-		if (filter.customerTier !== undefined) {
-			url.searchParams.set('customerTier', filter.customerTier);
-		}
-		if (filter.restaurantId !== undefined)
-			url.searchParams.set('restaurantId', filter.restaurantId);
-
-		const res = await fetch(url.toString());
+	async listWorkflows(): Promise<WorkflowSummary[]> {
+		const res = await fetch(`${this.base}/workflow/list`);
 		if (!res.ok) {
 			const message = await readErrorMessage(res);
-			throw new Error(`Visibility query failed: ${message}`);
+			throw new Error(`Workflow list failed: ${message}`);
 		}
-		const body = (await res.json()) as { workflows: VisibilityWorkflowSummary[] };
+		const body = (await res.json()) as { workflows: WorkflowSummary[] };
 		return body.workflows;
 	}
 }

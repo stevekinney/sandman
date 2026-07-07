@@ -8,12 +8,12 @@
  */
 import type {
 	ControlId,
-	DeliveryAddress,
 	OrderInput,
 	OrderStatus,
-	TimelineEntry
+	TimelineEntry,
+	WorkflowEventType
 } from '$lib/contracts/workflow-api';
-import { CUSTOMER_TIER, ORDER_STATUS } from '$lib/contracts/workflow-api';
+import { ORDER_STATUS } from '$lib/contracts/workflow-api';
 import type { ExecutionPointer } from '$lib/components/editor/execution-pointer';
 
 /** The order lifecycle phase the UI is in — `idle` until a run starts. */
@@ -24,21 +24,18 @@ export type CenterView = 'code' | 'temporal';
 
 /** Order phases in which the workflow is still running (not terminal). */
 const ACTIVE_PHASES: readonly SessionPhase[] = [
-	ORDER_STATUS.Created,
-	ORDER_STATUS.Validating,
-	ORDER_STATUS.AwaitingRestaurant,
-	ORDER_STATUS.Preparing,
-	ORDER_STATUS.AwaitingCourier,
-	ORDER_STATUS.InDelivery
+	ORDER_STATUS.Received,
+	ORDER_STATUS.WaitingForRestaurant,
+	ORDER_STATUS.Preparing
 ];
 
 /**
  * Derive the current phase from the latest polled timeline entry.
- * Before the first timeline entry arrives, a started run reads as Created.
+ * Before the first timeline entry arrives, a started run reads as Received.
  */
 export function derivePhase(hasRun: boolean, entries: readonly TimelineEntry[]): SessionPhase {
 	if (!hasRun) return 'idle';
-	return entries.at(-1)?.status ?? ORDER_STATUS.Created;
+	return entries.at(-1)?.status ?? ORDER_STATUS.Received;
 }
 
 /** Whether the workflow is started and not yet in a terminal state. */
@@ -60,17 +57,13 @@ export type ControlContext = {
  * Every workflow operation needs the Temporal server up. Beyond that, the
  * split is by who actually serves the call:
  *
- *  - **Signals** (accept/reject restaurant, food-ready, add-tip, cancel,
- *    update-location) are accepted by the *server* and appended to history
- *    even while the worker is down — they replay once it returns. They stay
- *    enabled without a worker; that durability is part of the lesson.
- *  - **`list-visibility`** hits the server-side Visibility API (Search
- *    Attributes), so it also does not need the worker.
- *  - **Queries** (get-status, get-timeline), **updates** (update-address,
- *    apply-promo — their validators and handlers run on the worker),
- *    **starting** a workflow (nothing advances it without a poller), and
- *    **observing the delivery child** (complete-delivery) are all
- *    worker-served, so they gate on `workerOnline`.
+ *  - **Signals** (accept-restaurant, complete-delivery, cancel-order) are
+ *    accepted by the *server* and appended to history even while the worker
+ *    is down — they replay once it returns. They stay enabled without a
+ *    worker; that durability is part of the lesson.
+ *  - **Queries** (query-status) and **starting** a workflow (nothing
+ *    advances it without a poller) are worker-served, so they gate on
+ *    `workerOnline`.
  */
 export function canUseControl(control: ControlId, context: ControlContext): boolean {
 	const { phase, sandboxUsable, serverOnline, workerOnline } = context;
@@ -81,34 +74,11 @@ export function canUseControl(control: ControlId, context: ControlContext): bool
 		case 'start-order':
 			return phase === 'idle' && workerOnline;
 		case 'accept-restaurant':
-		case 'reject-restaurant':
-			return phase === ORDER_STATUS.AwaitingRestaurant;
-		case 'food-ready':
-			return phase === ORDER_STATUS.Preparing;
-		case 'update-address':
-		case 'apply-promo':
-			return (
-				workerOnline &&
-				(phase === ORDER_STATUS.AwaitingRestaurant ||
-					phase === ORDER_STATUS.Preparing ||
-					phase === ORDER_STATUS.AwaitingCourier ||
-					phase === ORDER_STATUS.InDelivery)
-			);
-		case 'add-tip':
-			return (
-				phase === ORDER_STATUS.Preparing ||
-				phase === ORDER_STATUS.AwaitingCourier ||
-				phase === ORDER_STATUS.InDelivery
-			);
-		case 'update-location':
-			return phase === ORDER_STATUS.InDelivery;
+			return phase === ORDER_STATUS.WaitingForRestaurant;
 		case 'complete-delivery':
-			return phase === ORDER_STATUS.InDelivery && workerOnline;
+			return phase === ORDER_STATUS.Preparing;
 		case 'query-status':
-		case 'query-timeline':
 			return phase !== 'idle' && workerOnline;
-		case 'list-visibility':
-			return phase !== 'idle';
 		case 'kill-worker':
 			return running && workerOnline;
 		case 'cancel-order':
@@ -122,31 +92,13 @@ export function canUseControl(control: ControlId, context: ControlContext): bool
 // Canned demo payloads — the toolbar is one-click, so inputs are prefilled.
 // ---------------------------------------------------------------------------
 
-/** The demo restaurant and customer used for every one-click order. */
+/** Prefilled values used by every one-click order. */
 export const DEMO_ORDER_DEFAULTS = {
-	restaurantId: 'kitchen-44',
-	customerId: 'customer-2187',
-	estimatedPrepMinutes: 20,
-	tipCents: 500,
-	cancelReason: 'Customer cancelled from the sandbox control plane',
-	rejectReason: 'Kitchen is over capacity',
-	promoCode: 'SAVE10'
-} as const;
-
-/** Address the update-address control switches the order to. */
-export const DEMO_UPDATED_ADDRESS: DeliveryAddress = {
-	street: '44 Maple Avenue',
-	city: 'Denver',
-	state: 'CO',
-	postalCode: '80209',
-	notes: 'Ring the doorbell twice'
-};
-
-/** Courier location the update-location control signals mid-delivery. */
-export const DEMO_COURIER_LOCATION = {
-	lat: 39.7392,
-	lng: -104.9903,
-	speedKmh: 24
+	/** The default demo card: charges succeed on the first attempt. */
+	cardLast4: '4242',
+	/** The flaky demo card: the first charge attempt fails, then Temporal retries. */
+	flakyCardLast4: '0000',
+	cancelReason: 'Customer cancelled from the sandbox control plane'
 } as const;
 
 /**
@@ -157,28 +109,60 @@ export const DEMO_COURIER_LOCATION = {
 export function buildDemoOrder(orderId: string = crypto.randomUUID()): OrderInput {
 	return {
 		orderId,
-		restaurantId: DEMO_ORDER_DEFAULTS.restaurantId,
-		customerId: DEMO_ORDER_DEFAULTS.customerId,
-		customerTier: CUSTOMER_TIER.Standard,
 		items: [
-			{ itemId: 'spicy-noodles', name: 'Spicy noodles', quantity: 1, unitPriceCents: 1295 },
-			{ itemId: 'ginger-lime-soda', name: 'Ginger lime soda', quantity: 1, unitPriceCents: 425 }
+			{ name: 'Spicy noodles', quantity: 1, priceCents: 1295 },
+			{ name: 'Ginger lime soda', quantity: 1, priceCents: 425 }
 		],
-		deliveryAddress: {
-			street: '221 Market Street',
-			city: 'Denver',
-			state: 'CO',
-			postalCode: '80205',
-			notes: 'Leave at the front desk'
-		},
-		paymentMethod: { type: 'card', last4: '4242', brand: 'Visa' },
-		visibilitySearchAttributesEnabled: true
+		cardLast4: DEMO_ORDER_DEFAULTS.cardLast4
 	};
 }
 
-/** The child DeliveryWorkflow id derived from the parent order id. */
-export function deliveryWorkflowIdFor(orderId: string): string {
-	return `delivery-${orderId}`;
+/**
+ * Infer the Temporal history event behind a polled timeline entry from the
+ * status transition it recorded.
+ *
+ * The workflow's timeline is deliberately plain (timestamp + description +
+ * status) so the sandbox code stays focused on teaching Temporal, not on
+ * feeding this UI. Each status transition still maps 1:1 onto a real history
+ * event, so the guided tour and event rail derive their events here instead —
+ * robust to learners editing the description strings in workflow.ts.
+ */
+export function inferWorkflowEventType(
+	previousStatus: OrderStatus | undefined,
+	entry: TimelineEntry
+): WorkflowEventType | undefined {
+	const status = entry.status;
+	if (previousStatus === undefined) {
+		// The first entry accompanies the workflow start, which the UI already
+		// emits synthetically when it starts the run.
+		return undefined;
+	}
+	if (previousStatus === ORDER_STATUS.Received && status === ORDER_STATUS.Received) {
+		// Second RECEIVED entry: the payment charge activity finished.
+		return 'ActivityTaskCompleted';
+	}
+	if (status === ORDER_STATUS.WaitingForRestaurant) {
+		// Entering the restaurant wait starts the durable deadline timer.
+		return 'TimerStarted';
+	}
+	if (status === ORDER_STATUS.Preparing) {
+		// Only the restaurantAccepted signal moves the order to Preparing.
+		return 'WorkflowExecutionSignaled';
+	}
+	if (status === ORDER_STATUS.Delivered) {
+		return 'WorkflowExecutionCompleted';
+	}
+	if (status === ORDER_STATUS.Refunded) {
+		// The deadline timer fired and the workflow refunded the payment.
+		return 'TimerFired';
+	}
+	if (status === ORDER_STATUS.Cancelled) {
+		// Payment failure cancels from Received; otherwise the cancel signal did it.
+		return previousStatus === ORDER_STATUS.Received
+			? 'ActivityTaskFailed'
+			: 'WorkflowExecutionSignaled';
+	}
+	return undefined;
 }
 
 /** Format integer cents as US dollars for toasts and summaries. */
@@ -197,65 +181,36 @@ export function nowIso(): string {
 
 /**
  * Code anchor per order phase. Each anchor is a verbatim substring of
- * `sandbox-template/order-workflow.ts` (the anti-drift test asserts this),
+ * `sandbox-template/workflow.ts` (the anti-drift test asserts this),
  * resolved to a line number against the live editor buffer so it survives
  * edits.
  */
 const EXECUTION_ANCHORS: Partial<Record<OrderStatus, { anchor: string; label: string }>> = {
-	[ORDER_STATUS.Created]: {
-		anchor: 'await validateOrder(currentInput);',
-		label: 'validating the order — a local activity'
-	},
-	[ORDER_STATUS.Validating]: {
+	[ORDER_STATUS.Received]: {
 		anchor: 'await chargePayment(',
 		label: 'charging the customer — an activity with automatic retries'
 	},
-	[ORDER_STATUS.AwaitingRestaurant]: {
+	[ORDER_STATUS.WaitingForRestaurant]: {
 		anchor: 'const accepted = await condition(',
 		label: 'parked on condition() — waiting for the restaurant, guarded by a durable timer'
 	},
 	[ORDER_STATUS.Preparing]: {
-		anchor: 'await condition(() => foodReady',
-		label: 'waiting for the foodReady signal'
-	},
-	[ORDER_STATUS.AwaitingCourier]: {
-		anchor: 'await assignCourier(',
-		label: 'assigning and dispatching the courier — activities'
-	},
-	[ORDER_STATUS.InDelivery]: {
-		// Anchor on `await child.result()`, where the parent is actually parked
-		// for most of the phase — not the `startChild` call that returns at once.
-		anchor: 'await child.result();',
-		label: 'delivery running in a child workflow — the parent awaits its result'
+		anchor: 'await condition(() => delivered',
+		label: 'waiting for the deliveryCompleted signal'
 	},
 	[ORDER_STATUS.Delivered]: {
-		anchor: "'Order delivered',",
+		anchor: "step(ORDER_STATUS.Delivered, 'Order delivered');",
 		label: 'terminal state — the workflow returned its final snapshot'
 	},
 	[ORDER_STATUS.Cancelled]: {
-		anchor: 'compensationStack.length - 1',
-		label: 'saga compensation ran in reverse and refunded the payment'
+		anchor: 'await refundPayment(',
+		label: 'the charge was refunded before the order finished as cancelled'
 	},
 	[ORDER_STATUS.Refunded]: {
-		anchor: 'compensationStack.length - 1',
-		label: 'saga compensation ran in reverse and refunded the payment'
+		anchor: 'await refundPayment(',
+		label: 'the durable timer fired and the payment was refunded automatically'
 	}
 };
-
-const VALIDATING_PAYMENT_DESCRIPTIONS = new Set(['Charging payment', 'Payment charged']);
-
-function executionAnchorFor(
-	phase: OrderStatus,
-	timelineEntries: TimelineEntry[] = []
-): { anchor: string; label: string } | undefined {
-	if (phase === ORDER_STATUS.Validating) {
-		if (timelineEntries.some((entry) => VALIDATING_PAYMENT_DESCRIPTIONS.has(entry.description))) {
-			return EXECUTION_ANCHORS[ORDER_STATUS.Validating];
-		}
-		return EXECUTION_ANCHORS[ORDER_STATUS.Created];
-	}
-	return EXECUTION_ANCHORS[phase];
-}
 
 /**
  * The execution pointer for the current phase, or null while idle.
@@ -265,14 +220,13 @@ function executionAnchorFor(
 export function executionPointerFor(
 	phase: SessionPhase,
 	workerOnline: boolean,
-	workerRestarting: boolean,
-	timelineEntries: TimelineEntry[] = []
+	workerRestarting: boolean
 ): ExecutionPointer | null {
 	if (phase === 'idle') return null;
-	const entry = executionAnchorFor(phase, timelineEntries);
+	const entry = EXECUTION_ANCHORS[phase];
 	if (entry === undefined) return null;
 	return {
-		file: 'order-workflow.ts',
+		file: 'workflow.ts',
 		anchor: entry.anchor,
 		label: entry.label,
 		state: workerRestarting ? 'replaying' : workerOnline ? 'running' : 'paused'
@@ -299,18 +253,12 @@ export function orderStageLabel(phase: SessionPhase): string {
 	switch (phase) {
 		case 'idle':
 			return 'not started';
-		case ORDER_STATUS.Created:
-			return 'placed';
-		case ORDER_STATUS.Validating:
-			return 'charging';
-		case ORDER_STATUS.AwaitingRestaurant:
+		case ORDER_STATUS.Received:
+			return 'charging card';
+		case ORDER_STATUS.WaitingForRestaurant:
 			return 'awaiting restaurant';
 		case ORDER_STATUS.Preparing:
 			return 'preparing';
-		case ORDER_STATUS.AwaitingCourier:
-			return 'awaiting courier';
-		case ORDER_STATUS.InDelivery:
-			return 'out for delivery';
 		case ORDER_STATUS.Delivered:
 			return 'delivered';
 		case ORDER_STATUS.Cancelled:

@@ -904,21 +904,6 @@ describe('startServer()', () => {
 		expect(temporalStart).toBeDefined();
 	});
 
-	it('re-registers the Temporal Search Attributes', async () => {
-		const { client, calls } = makeClient();
-		const handle = await provisionAndBootstrap(client);
-		await client.stopServer(handle);
-		calls.length = 0;
-
-		await client.startServer(handle);
-
-		const registeredAttribute = calls.some(
-			(c) =>
-				c.method === 'commands.run' && c.cmd.includes('search-attribute create --name OrderStatus')
-		);
-		expect(registeredAttribute).toBe(true);
-	});
-
 	it('restarts the worker after the server is ready', async () => {
 		const { client, calls } = makeClient();
 		const handle = await provisionAndBootstrap(client);
@@ -1353,8 +1338,7 @@ describe('loadDefaultTemplateFiles()', () => {
 
 		expect(keys).toContain('/app/package.json');
 		expect(keys).toContain('/app/worker.ts');
-		expect(keys).toContain('/app/workflows.ts');
-		expect(keys).toContain('/app/signals.ts');
+		expect(keys).toContain('/app/workflow.ts');
 		expect(keys).toContain('/app/activities.ts');
 		expect(keys).toContain('/app/shared.ts');
 		expect(keys).toContain('/app/client.ts');

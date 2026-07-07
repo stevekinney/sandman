@@ -1,22 +1,16 @@
 /**
- * demo-script.ts — authoritative data for the Track F teaching layer.
+ * demo-script.ts — authoritative data for the teaching layer.
  *
  * Exports:
  *   FEATURE_MAP  — one entry per FeatureId, with concept, oneLiner, and mechanic.
- *   SIGNAL_FEATURE / QUERY_FEATURE / UPDATE_FEATURE / CONTROL_FEATURE
+ *   SIGNAL_FEATURE / QUERY_FEATURE / CONTROL_FEATURE
  *                — drift-proof Record types: TypeScript errors if the contract
- *                  gains a new signal/query/update/control without this file being updated.
+ *                  gains a new signal/query/control without this file being updated.
  *   SCENARIO_COPY — plain-English scenario copy keyed by OrderStatus.
  *   TOUR         — ordered guided-tour steps with event-driven completion predicates.
  */
 
-import type {
-	ControlId,
-	FeatureId,
-	QueryName,
-	SignalName,
-	UpdateName
-} from '$lib/contracts/workflow-api';
+import type { ControlId, FeatureId, QueryName, SignalName } from '$lib/contracts/workflow-api';
 import { ORDER_STATUS, WORKFLOW_EVENT_TYPE } from '$lib/contracts/workflow-api';
 import type { OrderStatus } from '$lib/contracts/workflow-api';
 import type { WorkflowEvent } from '$lib/contracts/events';
@@ -41,8 +35,6 @@ export type FeatureEntry = {
 	signal?: SignalName;
 	/** Optional query that exercises this feature. */
 	query?: QueryName;
-	/** Optional update that exercises this feature. */
-	update?: UpdateName;
 };
 
 /**
@@ -58,7 +50,7 @@ export const FEATURE_MAP: Record<FeatureId, FeatureEntry> = {
 		oneLiner:
 			'Activities are the durable units of work; Temporal retries them automatically on failure.',
 		mechanic:
-			'Payment charge, restaurant notification, and courier dispatch each run as activities with configurable retry policies. Transient failures are automatically retried with exponential backoff.',
+			'The payment charge runs as an activity with a visible retry policy. Card 0000 fails its first attempt with a fake gateway timeout, and Temporal retries it automatically with exponential backoff — the workflow contains no retry loop.',
 		control: 'start-order'
 	},
 	'non-retryable-failure': {
@@ -67,25 +59,15 @@ export const FEATURE_MAP: Record<FeatureId, FeatureEntry> = {
 		oneLiner:
 			'Some errors should never be retried — mark them nonRetryable to skip the retry policy entirely.',
 		mechanic:
-			'An invalid payment method or out-of-area address throws ApplicationFailure with nonRetryable: true, bypassing the retry policy and immediately triggering the saga compensation path.',
+			'Card 9999 is declined by the issuer. A decline is permanent, so the activity throws ApplicationFailure with nonRetryable: true — the retry policy is skipped and the workflow cancels the order instead.',
 		control: 'start-order'
-	},
-	'saga-compensation': {
-		id: 'saga-compensation',
-		concept: 'Saga / Compensation',
-		oneLiner:
-			'A saga records compensating actions as it goes, so rollback is always the exact inverse of the forward path.',
-		mechanic:
-			'If the workflow fails after charging the customer, a compensation stack issues a refund. Each forward step registers a compensating action so the rollback is always symmetric.',
-		control: 'cancel-order',
-		signal: 'cancelOrder'
 	},
 	signals: {
 		id: 'signals',
 		concept: 'Signals',
 		oneLiner: 'Signals let external systems push events into a running workflow without polling.',
 		mechanic:
-			'Restaurant acceptance, rejection, food-ready, courier location, tip, and order cancellation all use Temporal signals. The workflow blocks on signal receipt using condition(), resuming only when the expected signal arrives.',
+			'Restaurant acceptance, delivery completion, and cancellation are Temporal signals — async messages into the running workflow. The workflow parks on condition() and resumes the moment the signal it is waiting for arrives.',
 		control: 'accept-restaurant',
 		signal: 'restaurantAccepted'
 	},
@@ -95,95 +77,18 @@ export const FEATURE_MAP: Record<FeatureId, FeatureEntry> = {
 		oneLiner:
 			'Queries read workflow state synchronously — no events emitted, no execution advanced.',
 		mechanic:
-			'getStatus returns a live OrderSnapshot of all workflow state without advancing execution. getTimeline returns the annotated event log consumed by the guided-tour panel.',
+			'getStatus returns a live OrderSnapshot — status, total, payment attempts, and the order timeline — without advancing execution or writing history.',
 		control: 'query-status',
 		query: 'getStatus'
-	},
-	'updates-validators': {
-		id: 'updates-validators',
-		concept: 'Updates with Validators',
-		oneLiner:
-			'Updates combine a synchronous validator (reject immediately) with a handler that mutates workflow state.',
-		mechanic:
-			'updateDeliveryAddress is rejected synchronously by a validator if the order is already in delivery. applyPromoCode validates the code before mutating state, returning a typed rejection to the caller without re-driving the workflow.',
-		control: 'update-address',
-		update: 'updateDeliveryAddress'
 	},
 	'timers-durable-sleep': {
 		id: 'timers-durable-sleep',
-		concept: 'Durable Timers / sleep()',
+		concept: 'Durable Timers',
 		oneLiner:
 			'Timers live in the Temporal server, not in your process — they survive worker restarts.',
 		mechanic:
-			'A configurable deadline timer fires if the restaurant does not accept within N minutes, automatically triggering cancellation and saga compensation. The timer survives worker restarts.',
+			'A deadline timer fires if the restaurant does not accept in time, automatically refunding the payment. The timer lives in the Temporal server, not the worker — it survives worker restarts.',
 		control: 'start-order'
-	},
-	'child-workflow': {
-		id: 'child-workflow',
-		concept: 'Child Workflows',
-		oneLiner:
-			'Child workflows let you decompose complex orchestrations into independently observable units.',
-		mechanic:
-			'Once a courier is assigned, the delivery leg is handed off to a DeliveryWorkflow child workflow. Its lifecycle is independently visible in the Temporal Web UI, demonstrating workflow composition.',
-		control: 'food-ready',
-		signal: 'foodReady'
-	},
-	'heartbeats-cancellation': {
-		id: 'heartbeats-cancellation',
-		concept: 'Activity Heartbeats & Cancellation',
-		oneLiner:
-			'Heartbeats let a long-running activity prove it is alive — and receive cancellation signals without polling.',
-		mechanic:
-			'The courier-tracking activity heartbeats every 5 seconds with its latest location. Cancelling the order propagates cancellation to the activity via the heartbeat token, allowing a clean shutdown.',
-		control: 'kill-worker',
-		signal: 'courierLocationUpdate'
-	},
-	'continue-as-new': {
-		id: 'continue-as-new',
-		concept: 'ContinueAsNew',
-		oneLiner:
-			"ContinueAsNew truncates a long-running workflow's event history by starting a fresh run with the same state.",
-		mechanic:
-			'After 100 courier location updates, the workflow calls continueAsNew to keep event history bounded. The new run receives the current OrderSnapshot as its seed state so no data is lost.',
-		signal: 'courierLocationUpdate'
-	},
-	'queryable-business-snapshot': {
-		id: 'queryable-business-snapshot',
-		concept: 'Queryable Business Snapshot',
-		oneLiner:
-			'The workflow query returns business dimensions before you introduce indexed Visibility.',
-		mechanic:
-			'getStatus returns OrderStatus, CustomerTier, and RestaurantId in businessSnapshot. This gives learners a simple read model before the advanced Search Attributes scenario.',
-		control: 'query-status',
-		query: 'getStatus'
-	},
-	'search-attributes': {
-		id: 'search-attributes',
-		concept: 'Temporal Search Attributes',
-		oneLiner:
-			'Search Attributes index workflow executions so Temporal Web and list APIs can filter across runs.',
-		mechanic:
-			'The advanced Visibility scenario upserts OrderStatus, CustomerTier, and RestaurantId as real Temporal Search Attributes and lists matching executions through Temporal Visibility.',
-		control: 'list-visibility',
-		query: 'getStatus'
-	},
-	'local-activities': {
-		id: 'local-activities',
-		concept: 'Local Activities',
-		oneLiner:
-			'Local activities execute in the same worker process — no round-trip to the Temporal server — trading some durability for lower latency.',
-		mechanic:
-			'Audit-log writes and metrics emission run as local activities (executed in the same process, no round-trip to the Temporal server) to demonstrate the durability/performance trade-off.',
-		control: 'start-order'
-	},
-	'replay-safety': {
-		id: 'replay-safety',
-		concept: 'Replay Safety',
-		oneLiner:
-			'Workflow code must be deterministic — all non-deterministic work belongs in activities, not the workflow function itself.',
-		mechanic:
-			'All non-deterministic operations (random IDs, current time, external HTTP calls) are wrapped in activities. The workflow function itself is a pure deterministic function of its history, as verified by the replayer.',
-		query: 'getTimeline'
 	},
 	'durable-recovery': {
 		id: 'durable-recovery',
@@ -206,13 +111,9 @@ export const FEATURE_MAP: Record<FeatureId, FeatureEntry> = {
  * Adding a signal to the contract without updating this causes a compile error.
  */
 export const SIGNAL_FEATURE: Record<SignalName, FeatureId> = {
-	cancelOrder: 'saga-compensation',
 	restaurantAccepted: 'signals',
-	restaurantRejected: 'signals',
-	foodReady: 'child-workflow',
-	courierLocationUpdate: 'heartbeats-cancellation',
-	addTip: 'signals',
-	deliveryCompleted: 'child-workflow'
+	deliveryCompleted: 'signals',
+	cancelOrder: 'signals'
 };
 
 /**
@@ -220,17 +121,7 @@ export const SIGNAL_FEATURE: Record<SignalName, FeatureId> = {
  * Adding a query to the contract without updating this causes a compile error.
  */
 export const QUERY_FEATURE: Record<QueryName, FeatureId> = {
-	getStatus: 'queries',
-	getTimeline: 'replay-safety'
-};
-
-/**
- * Maps every UpdateName to the primary FeatureId it demonstrates.
- * Adding an update to the contract without updating this causes a compile error.
- */
-export const UPDATE_FEATURE: Record<UpdateName, FeatureId> = {
-	updateDeliveryAddress: 'updates-validators',
-	applyPromoCode: 'updates-validators'
+	getStatus: 'queries'
 };
 
 /**
@@ -239,19 +130,11 @@ export const UPDATE_FEATURE: Record<UpdateName, FeatureId> = {
  */
 export const CONTROL_FEATURE: Record<ControlId, FeatureId> = {
 	'start-order': 'activities-retry',
-	'cancel-order': 'saga-compensation',
 	'accept-restaurant': 'signals',
-	'reject-restaurant': 'signals',
-	'food-ready': 'child-workflow',
-	'update-location': 'heartbeats-cancellation',
-	'add-tip': 'signals',
-	'update-address': 'updates-validators',
-	'apply-promo': 'updates-validators',
-	'complete-delivery': 'child-workflow',
-	'kill-worker': 'durable-recovery',
-	'list-visibility': 'search-attributes',
+	'complete-delivery': 'signals',
+	'cancel-order': 'signals',
 	'query-status': 'queries',
-	'query-timeline': 'replay-safety'
+	'kill-worker': 'durable-recovery'
 };
 
 // ---------------------------------------------------------------------------
@@ -264,24 +147,18 @@ export const CONTROL_FEATURE: Record<ControlId, FeatureId> = {
  * Rendered by the Scenario Panel when the workflow is in a given status.
  */
 export const SCENARIO_COPY: Record<OrderStatus, string> = {
-	[ORDER_STATUS.Created]:
-		'The order has been placed. The workflow is validating the request and charging the payment method.',
-	[ORDER_STATUS.Validating]:
-		'The order details are being validated. If the payment method or address is invalid, a non-retryable failure triggers saga compensation immediately.',
-	[ORDER_STATUS.AwaitingRestaurant]:
-		'A notification was sent to the restaurant. The workflow is now blocking on a condition(), waiting for the restaurant to accept or reject. A durable timer will fire if no response arrives within the deadline.',
+	[ORDER_STATUS.Received]:
+		'The order has been placed. The workflow is charging the card — an activity that Temporal retries automatically if it fails.',
+	[ORDER_STATUS.WaitingForRestaurant]:
+		'Payment succeeded. The workflow is parked on a condition(), waiting for the restaurant to accept. A durable timer will refund the payment if no acceptance arrives in time.',
 	[ORDER_STATUS.Preparing]:
-		'The restaurant accepted the order and is preparing the food. A child workflow will be started once the courier is assigned.',
-	[ORDER_STATUS.AwaitingCourier]:
-		'The food is ready. The workflow is waiting for a courier to be dispatched via the delivery child workflow.',
-	[ORDER_STATUS.InDelivery]:
-		'The courier has picked up the food. The tracking activity is heartbeating with location updates. ContinueAsNew will fire after 100 location updates to keep event history bounded.',
+		'The restaurant accepted and is cooking. The workflow is waiting for the deliveryCompleted signal — this wait can last hours and survives worker crashes.',
 	[ORDER_STATUS.Delivered]:
-		'The order has been delivered successfully. The workflow has reached a terminal completed state.',
+		'The order has been delivered. The workflow has reached a terminal completed state.',
 	[ORDER_STATUS.Cancelled]:
-		'The order was cancelled. The saga compensation stack is executing — any charges will be reversed and the restaurant will be notified.',
+		'The order was cancelled. If the card had already been charged, the workflow refunded it before finishing.',
 	[ORDER_STATUS.Refunded]:
-		'The saga compensation completed successfully. The payment has been refunded and the workflow has reached a terminal state.'
+		'The restaurant never accepted, so the durable timer fired and the workflow refunded the payment automatically before finishing.'
 };
 
 // ---------------------------------------------------------------------------
@@ -366,15 +243,15 @@ export const TOUR: readonly TourStep[] = [
 	{
 		id: 'activities-run',
 		concept: 'Activities & retries',
-		title: 'Activities run — with automatic retries',
+		title: 'An activity runs — with automatic retries',
 		instruction:
-			'Payment charge, restaurant notification, and courier dispatch each run as activities. If a transient failure occurs, Temporal retries automatically with exponential backoff. You do not write retry loops.',
+			'The payment charge runs as an activity. If a transient failure occurs, Temporal retries automatically with exponential backoff. You do not write retry loops.',
 		watch: 'Activity tasks complete in the event stream — retries happen on their own.',
 		experiment: {
 			prompt:
-				"Make the charge fail once: in `activities.ts`, `chargePayment` simulates a gateway timeout for card `'0000'` — change it to `'4242'` (the demo card), then Reset and place a new order. Attempt 1 fails and Temporal retries it for you.",
+				"Make the charge fail once: in `activities.ts`, `chargePayment` simulates a gateway timeout for card `'0000'` — change it to `'4242'` (the default demo card), then Reset and place a new order. Attempt 1 fails and Temporal retries it for you.",
 			file: 'activities.ts',
-			anchor: "last4 === '0000'"
+			anchor: "cardLast4 === '0000'"
 		},
 		lookAt: {
 			surface: 'events',
@@ -391,9 +268,9 @@ export const TOUR: readonly TourStep[] = [
 		watch: 'A TimerStarted event is recorded in history.',
 		experiment: {
 			prompt:
-				'Shrink the deadline: change the `?? 10` minute fallback to `?? 1`, save, then Reset and place a new order without accepting it. After a minute the durable timer fires and the saga refunds the payment.',
-			file: 'order-workflow.ts',
-			anchor: 'restaurantAcceptTimeoutMinutes ?? 10'
+				'Shrink the deadline: change the `?? 300` second fallback in `workflow.ts` to `?? 30`, save, then Reset and place a new order without accepting it. Thirty seconds later the durable timer fires and the payment is refunded.',
+			file: 'workflow.ts',
+			anchor: 'input.restaurantTimeoutSeconds ?? 300'
 		},
 		lookAt: {
 			surface: 'temporal-ui',
@@ -407,68 +284,22 @@ export const TOUR: readonly TourStep[] = [
 		title: 'Send a signal to resume',
 		instruction:
 			'The order is parked waiting for the restaurant. Sending the restaurant-accepted signal appends an event to history and resumes the workflow.',
-		watch: '"Waiting for restaurant" flips to preparing.',
+		watch: '"Awaiting restaurant" flips to preparing.',
 		control: 'accept-restaurant',
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.WorkflowExecutionSignaled
 	},
 	{
-		id: 'update-with-validator',
-		concept: 'Updates & validators',
-		title: 'Update with a synchronous validator',
-		instruction:
-			'Update the delivery address while the order is preparing. A validator accepts or rejects the change before any workflow state mutates — bad changes are rejected immediately.',
-		watch: 'The update is validated, then recorded in history.',
-		experiment: {
-			prompt:
-				'Make the validator stricter: add `|| status === ORDER_STATUS.Preparing` to the rejection check, save, then try Update address while the order is preparing — the change is rejected synchronously and no history is written.',
-			file: 'order-workflow.ts',
-			anchor: 'ORDER_STATUS.InDelivery || status === ORDER_STATUS.Delivered'
-		},
-		control: 'update-address',
-		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.WorkflowExecutionUpdateAccepted
-	},
-	{
-		id: 'child-workflow',
-		concept: 'Child workflows',
-		title: 'Hand delivery to a child workflow',
-		instruction:
-			'Food ready spawns a DeliveryWorkflow child. The parent keeps owning the order, while the delivery workflow can be tracked on its own in the Temporal UI.',
-		watch: 'A child workflow execution starts in the event stream.',
-		lookAt: {
-			surface: 'temporal-ui',
-			note: 'The Workflows list now shows **two executions**: your order and its `delivery-…` child. Open the child — Temporal links parents and children automatically, so composed processes stay fully observable.'
-		},
-		control: 'food-ready',
-		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.ChildWorkflowExecutionStarted
-	},
-	{
-		id: 'queryable-business-snapshot',
+		id: 'query-status',
 		concept: 'Queries',
 		title: 'Read state with a query',
 		instruction:
 			'Ask the running workflow for its current order snapshot. Queries are read-only: they inspect state without moving the workflow forward.',
 		watch: 'A snapshot returns; no new history event is written.',
-		experiment: {
-			prompt:
-				'Change the delivery fee: edit the `?? 299` fallback in `order-workflow.ts`, save, Reset, and place a new order — then Get status again and the snapshot total reflects your fee.',
-			file: 'order-workflow.ts',
-			anchor: 'deliveryFeeCents ?? 299'
-		},
 		lookAt: {
 			surface: 'steps',
 			note: 'Flip the right rail to **Steps**: the same durable history, translated to plain language. Compare it with the raw **Events** lens to see exactly what Temporal stores.'
 		},
 		control: 'query-status',
-		completes: (e) => e.type === 'QueryCompleted'
-	},
-	{
-		id: 'search-attributes',
-		concept: 'Visibility',
-		title: 'Search across workflows',
-		instruction:
-			'List executions by indexed Search Attributes — order status, customer tier, and restaurant — across every workflow, no specific handle needed.',
-		watch: 'Matching executions are reported back.',
-		control: 'list-visibility',
 		completes: (e) => e.type === 'QueryCompleted'
 	},
 	{
@@ -491,7 +322,7 @@ export const TOUR: readonly TourStep[] = [
 		concept: 'Completion',
 		title: 'Finish the delivery',
 		instruction:
-			'Complete the child delivery workflow. The parent observes that result and moves the order to its delivered final state.',
+			'Send the delivery-completed signal. The workflow resumes from its final wait, records the delivery, and returns its result.',
 		watch: 'The run reaches its final state.',
 		control: 'complete-delivery',
 		completes: (e) => e.type === WORKFLOW_EVENT_TYPE.WorkflowExecutionCompleted
