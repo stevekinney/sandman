@@ -181,12 +181,12 @@
 		border-bottom: 1px solid var(--cinder-border);
 	}
 
-	/* Take the row and push the view switch to the far edge. The Toolbar only
-	   wraps at its own 30rem container breakpoint, which leaves intermediate
-	   widths overflowing — allow its groups to wrap so buttons never collide.
-	   Workaround for stevekinney/cinder#613. */
+	/* Take the available row and push the view switch to the far edge. The
+	   Toolbar only wraps at its own 30rem container breakpoint, which leaves
+	   intermediate widths overflowing — allow its groups to wrap so buttons
+	   never collide. Workaround for stevekinney/cinder#613. */
 	.toolbar-shell :global(.cinder-toolbar) {
-		flex: 1 1 100%;
+		flex: 1 1 0;
 		flex-wrap: wrap;
 		min-width: 0;
 		row-gap: 0.5rem;

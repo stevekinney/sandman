@@ -99,6 +99,30 @@ test('the center view switch exposes Code and Temporal UI as tabs', async ({ pag
 	await expect(page.locator('#center-panel-code')).toBeHidden();
 });
 
+test('order controls and the center view switch share the toolbar row on wide screens', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 2048, height: 768 });
+	await mockReadySandbox(page);
+	await page.goto(`/${TEST_SESSION_ID}`);
+
+	const orderControls = page.getByRole('toolbar', { name: 'Order controls' });
+	const viewSwitch = page.getByRole('tablist', { name: 'Workbench view' });
+	await expect(orderControls).toBeVisible();
+	await expect(viewSwitch).toBeVisible();
+
+	const orderControlsBox = await orderControls.boundingBox();
+	const viewSwitchBox = await viewSwitch.boundingBox();
+	expect(orderControlsBox).not.toBeNull();
+	expect(viewSwitchBox).not.toBeNull();
+	if (orderControlsBox === null || viewSwitchBox === null) {
+		throw new Error('Expected the toolbar controls and view switch to have layout boxes.');
+	}
+
+	expect(Math.abs(orderControlsBox.y - viewSwitchBox.y)).toBeLessThan(12);
+	expect(viewSwitchBox.x).toBeGreaterThan(orderControlsBox.x + orderControlsBox.width);
+});
+
 test('segmented controls and file tabs support arrow-key navigation', async ({ page }) => {
 	await mockReadySandbox(page);
 	await page.goto(`/${TEST_SESSION_ID}`);
