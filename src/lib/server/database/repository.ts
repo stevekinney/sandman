@@ -65,11 +65,12 @@ const ACTIVE_SANDBOX_STATUSES = [
 
 export async function createDemoSession(
 	database: Database,
-	input: { sessionId: string; tokenHash: string; now: Date }
+	input: { sessionId: string; tokenHash: string; email: string; now: Date }
 ): Promise<void> {
 	await database.insert(demoSession).values({
 		id: input.sessionId,
 		tokenHash: input.tokenHash,
+		email: input.email,
 		status: DEMO_SESSION_STATUS.Active,
 		createdAt: input.now,
 		lastSeenAt: input.now

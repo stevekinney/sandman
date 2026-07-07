@@ -31,7 +31,7 @@ bun run dev
 | `MIGRATION_DATABASE_URL` | Direct Neon Postgres connection string for `bun run db:migrate`; do not set as a Fly runtime secret. |
 | `SANDMAN_DEMO_TOKEN_SHA256` | SHA-256 hash of the shared invite code, shown in the UI as the demo token. Store the raw code outside the repo. |
 | `SANDMAN_SESSION_SECRET` | Signing secret for the HttpOnly demo session cookie. |
-| `SANDMAN_SESSION_TTL_MS` | Sandbox lifetime in milliseconds (default: `300000` / 5 min)             |
+| `SANDMAN_SESSION_TTL_MS` | Sandbox lifetime in milliseconds (default: `900000` / 15 min)             |
 | `SANDMAN_MAX_ACTIVE_SANDBOXES` | Global active sandbox limit (default: `20`) |
 | `SANDMAN_MAX_ACTIVE_SANDBOXES_PER_SESSION` | Active sandbox limit per browser session (default: `1`) |
 | `SANDMAN_SESSION_CREATIONS_PER_TOKEN_PER_HOUR` | Hourly sandbox creation limit per invite code hash (default: `5`) |

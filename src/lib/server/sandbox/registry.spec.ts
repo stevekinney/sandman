@@ -13,7 +13,7 @@ vi.mock('$lib/server/configuration', () => ({
 	getProductionConfiguration: vi.fn(() => ({
 		e2bApiKey: 'test-key',
 		e2bTemplateId: undefined,
-		sessionTtlMs: 300_000
+		sessionTtlMs: 900_000
 	}))
 }));
 
@@ -101,6 +101,19 @@ describe('getSandboxRegistry() — reconciler deps wiring', () => {
 		});
 
 		expect(ids).toEqual(['sbx-orphaned']);
+	});
+
+	it('threads the configured session TTL into the sandbox client as its VM timeout', async () => {
+		const { createSandboxClient } = await import('./client.ts');
+		const { getSandboxRegistry } = await import('./registry.ts');
+		getSandboxRegistry();
+
+		// The VM's provider-side timeout must track the session TTL, or a freshly
+		// provisioned sandbox would be killed at the client's built-in default
+		// (10 min) before a longer configured TTL elapses.
+		expect(createSandboxClient).toHaveBeenCalledWith(
+			expect.objectContaining({ sandboxTimeoutMs: 900_000 })
+		);
 	});
 
 	it('excludes sandboxes this process still holds a handle for from the bookkeeping sweep', async () => {

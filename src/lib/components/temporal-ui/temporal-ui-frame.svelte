@@ -35,6 +35,14 @@
 		probe?: TemporalUiProbe;
 		/** Optional iframe source override for tests that should not load the proxy route. */
 		frameSource?: string;
+		/**
+		 * Called on genuine user gestures INSIDE the embedded Temporal UI. The
+		 * proxied UI is same-origin but lives in a separate document, so its
+		 * pointer/key events never reach the parent window's activity listeners —
+		 * without this bridge, a user working only in the Temporal panel would let
+		 * the sliding session TTL lapse mid-use.
+		 */
+		onActivity?: () => void;
 	};
 
 	async function probeTemporalUi(url: string, signal: AbortSignal): Promise<boolean> {
@@ -51,8 +59,52 @@
 		sandboxStatus = 'provisioning',
 		class: className,
 		probe = probeTemporalUi,
-		frameSource
+		frameSource,
+		onActivity
 	}: Props = $props();
+
+	/**
+	 * Bridges genuine gestures inside the same-origin proxied iframe to the
+	 * parent's activity heartbeat. Re-attaches on every iframe `load` (the SPA
+	 * keeps one contentWindow across internal navigation, but a full reload or
+	 * re-key swaps it), and tears everything down when the iframe unmounts.
+	 */
+	function bridgeIframeActivity(iframe: HTMLIFrameElement) {
+		if (!onActivity) return;
+		const notify = () => onActivity?.();
+		let attached: Window | null = null;
+
+		function detach() {
+			try {
+				attached?.removeEventListener('pointerdown', notify);
+				attached?.removeEventListener('keydown', notify);
+			} catch {
+				// contentWindow already torn down — nothing to remove.
+			}
+			attached = null;
+		}
+
+		function attach() {
+			try {
+				const win = iframe.contentWindow;
+				if (!win || win === attached) return;
+				detach();
+				win.addEventListener('pointerdown', notify, { passive: true });
+				win.addEventListener('keydown', notify, { passive: true });
+				attached = win;
+			} catch {
+				// Cross-origin access shouldn't happen for the same-origin proxy;
+				// if it ever does, silently skip rather than throw.
+			}
+		}
+
+		iframe.addEventListener('load', attach);
+		attach(); // in case the iframe is already loaded when this attaches
+		return () => {
+			iframe.removeEventListener('load', attach);
+			detach();
+		};
+	}
 
 	let connectionState = $state<StatusDotConnectionState>('connecting');
 	let iframeRevision = $state(0);
@@ -145,6 +197,7 @@
 				data-proxied-src={src}
 				title="Temporal Web UI"
 				class="temporal-ui-frame__iframe"
+				{@attach bridgeIframeActivity}
 			></iframe>
 		{/key}
 	{:else}
