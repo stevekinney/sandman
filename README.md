@@ -29,19 +29,32 @@ bun run dev
 | `E2B_TEMPLATE_ID`        | ID of the prebuilt E2B template with Node, the Temporal CLI, and worker dependencies baked in. Required in production. Optional in local development. |
 | `DATABASE_URL`           | Pooled Neon Postgres runtime connection string for demo sessions, sandbox ownership, and rate limits. |
 | `MIGRATION_DATABASE_URL` | Direct Neon Postgres connection string for `bun run db:migrate`; do not set as a Fly runtime secret. |
-| `SANDMAN_DEMO_TOKEN_SHA256` | SHA-256 hash of the shared invite code, shown in the UI as the demo token. Store the raw code outside the repo. |
+| `SANDMAN_INVITE_CODE_REQUIRED` | Set to `true` to require the shared invite code. Invite codes are disabled by default. |
+| `SANDMAN_DEMO_TOKEN_SHA256` | SHA-256 hash of the shared invite code. Required only when `SANDMAN_INVITE_CODE_REQUIRED=true`; store the raw code outside the repo. |
 | `SANDMAN_SESSION_SECRET` | Signing secret for the HttpOnly demo session cookie. |
 | `SANDMAN_SESSION_TTL_MS` | Sandbox lifetime in milliseconds (default: `900000` / 15 min)             |
 | `SANDMAN_MAX_ACTIVE_SANDBOXES` | Global active sandbox limit (default: `20`) |
 | `SANDMAN_MAX_ACTIVE_SANDBOXES_PER_SESSION` | Active sandbox limit per browser session (default: `1`) |
+| `SANDMAN_SESSION_CREATIONS_PER_VISITOR_PER_HOUR` | Hourly session creation limit per visitor email hash (default: `20`) |
 | `SANDMAN_SANDBOX_CREATIONS_PER_VISITOR_PER_HOUR` | Hourly sandbox creation limit per visitor hash (default: `5`) |
 
 ## Invite Codes
 
-Sandman uses one shared invite code for production v1. The landing page labels
-this value as the demo token. The raw invite code is never stored in source,
-Fly configuration, GitHub Actions, or Neon. Sandman stores only a SHA-256 hash
-in `SANDMAN_DEMO_TOKEN_SHA256` and compares submitted tokens server-side.
+Invite codes are disabled by default. In the default flow, visitors enter only
+their email address. Sandman validates the email format, stores it for session
+attribution, and uses a normalized email hash for session and sandbox creation
+rate limits.
+
+To turn invite codes back on, set `SANDMAN_INVITE_CODE_REQUIRED=true` and
+provide one shared invite code hash in `SANDMAN_DEMO_TOKEN_SHA256`. The landing
+page labels this value as the demo token. The raw invite code is never stored in
+source, Fly configuration, GitHub Actions, or Neon. Sandman stores only the
+SHA-256 hash and compares submitted tokens server-side.
+
+For Fly production secrets, omit `SANDMAN_INVITE_CODE_REQUIRED` entirely when
+invite codes are disabled. `flyctl secrets list` does not expose secret values,
+so `bun run deploy:status` treats the presence of that secret as the signal that
+invite codes are enabled and the token hash must also be present.
 
 Generate a new invite code:
 
@@ -59,12 +72,14 @@ printf '%s' '<raw-invite-code>' | shasum -a 256 | awk '{print $1}'
 Use that hash as the runtime secret:
 
 ```sh
+flyctl secrets set -a sandman SANDMAN_INVITE_CODE_REQUIRED=true
 flyctl secrets set -a sandman SANDMAN_DEMO_TOKEN_SHA256="<sha256-hash>"
 ```
 
 For local development, put the same hash in `.env`:
 
 ```sh
+SANDMAN_INVITE_CODE_REQUIRED=true
 SANDMAN_DEMO_TOKEN_SHA256=<sha256-hash>
 ```
 

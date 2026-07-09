@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	buildNextCommands,
+	findRequiredFlySecrets,
 	findMissingNames,
 	findOptionalInviteCodeSecret
 } from '../../../scripts/deploy';
@@ -25,17 +26,25 @@ describe('deploy status helpers', () => {
 		).toEqual(['MIGRATION_DATABASE_URL']);
 	});
 
-	it('treats the invite code hash as optional for deploy status', () => {
+	it('treats the invite code hash as optional when invite codes are disabled', () => {
 		expect(
-			findMissingNames('DATABASE_URL\tupdated\nE2B_API_KEY\tupdated\nE2B_TEMPLATE_ID\tupdated\n', [
-				'DATABASE_URL',
-				'E2B_API_KEY',
-				'E2B_TEMPLATE_ID',
-				'SANDMAN_SESSION_SECRET'
-			])
+			findRequiredFlySecrets(
+				'DATABASE_URL\tupdated\nE2B_API_KEY\tupdated\nE2B_TEMPLATE_ID\tupdated\n'
+			)
 		).toEqual(['SANDMAN_SESSION_SECRET']);
 		expect(findOptionalInviteCodeSecret('DATABASE_URL\tupdated\n')).toEqual([
 			'SANDMAN_DEMO_TOKEN_SHA256'
 		]);
+	});
+
+	it('requires the invite code hash when invite codes are enabled', () => {
+		expect(
+			findRequiredFlySecrets(
+				'DATABASE_URL\tupdated\nE2B_API_KEY\tupdated\nE2B_TEMPLATE_ID\tupdated\nSANDMAN_SESSION_SECRET\tupdated\nSANDMAN_INVITE_CODE_REQUIRED\tupdated\n'
+			)
+		).toEqual(['SANDMAN_DEMO_TOKEN_SHA256']);
+		expect(
+			findOptionalInviteCodeSecret('DATABASE_URL\tupdated\nSANDMAN_INVITE_CODE_REQUIRED\tupdated\n')
+		).toEqual([]);
 	});
 });
