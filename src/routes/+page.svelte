@@ -341,11 +341,9 @@
 								</div>
 							</div>
 							<div class="sd-history__actions">
-								<span class="cinder-button" data-cinder-variant="soft" data-cinder-size="xs"
-									><span>Send signal</span></span
-								>
-								<span class="cinder-button" data-cinder-variant="soft-danger" data-cinder-size="xs"
-									><span class="cinder-button__icon"
+								<span class="sd-history-action"><span>Send signal</span></span>
+								<span class="sd-history-action sd-history-action--danger"
+									><span class="sd-history-action__icon"
 										><svg viewBox="0 0 24 24" class="sd-svg"
 											><path d="M12 2v10" /><path d="M18.4 6.6a9 9 0 1 1-12.77.04" /></svg
 										></span
@@ -882,8 +880,32 @@
 		flex-direction: column;
 		gap: var(--cinder-space-2);
 	}
-	.sd-history__actions .cinder-button {
+	.sd-history-action {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--cinder-space-2);
 		justify-content: flex-start;
+		min-height: 1.75rem;
+		padding: 0 var(--cinder-space-2-5);
+		border: 1px solid var(--cinder-border-muted);
+		border-radius: var(--cinder-radius-md);
+		background: color-mix(in oklch, var(--cinder-accent), transparent 90%);
+		color: var(--cinder-accent-text);
+		font-size: 0.75rem;
+		font-weight: 600;
+		line-height: 1;
+	}
+	.sd-history-action--danger {
+		background: color-mix(in oklch, var(--cinder-danger), transparent 90%);
+		color: var(--cinder-danger);
+	}
+	.sd-history-action__icon {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 0.9rem;
+		height: 0.9rem;
+		flex: 0 0 auto;
 	}
 
 	/* ---------------- BANDS / SECTION HEADS ---------------- */

@@ -15,6 +15,22 @@ test('home page uses the Cinder button for session provisioning', async ({ page 
 	await expect(page.getByRole('button', { name: 'New Session' })).toHaveClass(/cinder-button/);
 });
 
+test('home page mock history actions use app-owned inert markup', async ({ page }) => {
+	await page.goto('/');
+
+	const historyActions = page.locator('.sd-history__actions');
+	await expect(
+		historyActions.locator('.sd-history-action').filter({ hasText: 'Send signal' })
+	).toHaveCount(1);
+	await expect(
+		historyActions.locator('.sd-history-action').filter({ hasText: 'Kill worker' })
+	).toHaveCount(1);
+	await expect(historyActions.locator('.cinder-button')).toHaveCount(0);
+	await expect(historyActions.locator('.cinder-button__icon')).toHaveCount(0);
+	await expect(historyActions.locator('[data-cinder-variant], [data-cinder-size]')).toHaveCount(0);
+	await expect(historyActions.getByRole('button')).toHaveCount(0);
+});
+
 test('home page carries complete HTML and OpenGraph metadata', async ({ page }) => {
 	await page.goto('/');
 
