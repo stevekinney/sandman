@@ -40,6 +40,7 @@
 			<SegmentedControl
 				id="history-lens"
 				label="History lens"
+				hideLabel
 				size="sm"
 				fullWidth
 				variant="tablist"

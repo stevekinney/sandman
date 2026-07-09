@@ -110,6 +110,7 @@
 		<SegmentedControl
 			id="center-view"
 			label="Workbench view"
+			hideLabel
 			density="toolbar"
 			fullWidth
 			variant="tablist"
