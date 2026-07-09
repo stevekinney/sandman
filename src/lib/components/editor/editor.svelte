@@ -25,11 +25,8 @@
 	} from '$lib/components/editor/execution-pointer';
 	import WorkerStatusStrip from '$lib/components/editor/worker-status-strip.svelte';
 	import Tab from '@lostgradient/cinder/tab';
-	import '@lostgradient/cinder/tab/styles';
 	import TabList from '@lostgradient/cinder/tab-list';
-	import '@lostgradient/cinder/tab-list/styles';
 	import Tabs from '@lostgradient/cinder/tabs';
-	import '@lostgradient/cinder/tabs/styles';
 	import type { WorkerStatus } from '$lib/contracts/sandbox';
 	import type * as Monaco from 'monaco-editor';
 	import { SvelteMap } from 'svelte/reactivity';
