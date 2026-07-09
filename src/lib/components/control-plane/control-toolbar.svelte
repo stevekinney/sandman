@@ -81,7 +81,7 @@
 </script>
 
 <div class="toolbar-shell">
-	<Toolbar aria-label="Order controls">
+	<Toolbar aria-label="Order controls" class="toolbar-shell__controls">
 		<Toolbar.Group role="group" aria-label="Order lifecycle">
 			{#each lifecycleControls as { control, label } (control)}
 				<Button
@@ -175,15 +175,8 @@
 		border-bottom: 1px solid var(--cinder-border);
 	}
 
-	/* Take the available row and push the view switch to the far edge. The
-	   Toolbar only wraps at its own 30rem container breakpoint, which leaves
-	   intermediate widths overflowing — allow its groups to wrap so buttons
-	   never collide. Workaround for stevekinney/cinder#613. */
-	.toolbar-shell :global(.cinder-toolbar) {
+	:global(.toolbar-shell__controls) {
 		flex: 1 1 0;
-		flex-wrap: wrap;
-		min-width: 0;
-		row-gap: 0.5rem;
 	}
 
 	.toolbar-shell__view {
