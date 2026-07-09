@@ -175,7 +175,7 @@
 		border-bottom: 1px solid var(--cinder-border);
 	}
 
-	:global(.toolbar-shell__controls) {
+	.toolbar-shell :global(.toolbar-shell__controls) {
 		flex: 1 1 0;
 	}
 
