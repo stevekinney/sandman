@@ -13,10 +13,12 @@
         "@temporalio/testing": "^1.18.1",
         "@temporalio/worker": "^1.18.1",
         "@temporalio/workflow": "^1.18.1",
+        "conversationalist": "^0.2.1",
         "drizzle-orm": "^0.45.2",
         "e2b": "^2.31.0",
         "lucide-svelte": "0.577.0",
         "monaco-editor": "^0.55.1",
+        "zod": "4.4.1",
       },
       "devDependencies": {
         "@e2b/cli": "^2.13.0",
