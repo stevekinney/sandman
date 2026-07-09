@@ -8,11 +8,12 @@ describe('createHealthResponse', () => {
 			e2bApiKey: undefined,
 			e2bTemplateId: undefined,
 			demoTokenHash: undefined,
+			inviteCodeRequired: false,
 			sessionSecret: undefined,
 			sessionTtlMs: 300_000,
 			maxActiveSandboxes: 20,
 			maxActiveSandboxesPerSession: 1,
-			sessionCreationsPerTokenPerHour: 5,
+			sandboxCreationsPerVisitorPerHour: 5,
 			isProduction: true
 		});
 
@@ -25,12 +26,13 @@ describe('createHealthResponse', () => {
 				databaseUrl: 'postgres://example',
 				e2bApiKey: 'e2b',
 				e2bTemplateId: 'template',
-				demoTokenHash: 'hash',
+				demoTokenHash: undefined,
+				inviteCodeRequired: false,
 				sessionSecret: 'secret',
 				sessionTtlMs: 300_000,
 				maxActiveSandboxes: 20,
 				maxActiveSandboxesPerSession: 1,
-				sessionCreationsPerTokenPerHour: 5,
+				sandboxCreationsPerVisitorPerHour: 5,
 				isProduction: true
 			},
 			{ database: async () => undefined }

@@ -33,13 +33,11 @@
 	const currentReadinessStep = $derived(startupProgress.currentStepNumber - 1);
 	const gateRole = $derived(starting ? 'status' : 'alert');
 	const gateLive = $derived(starting ? 'polite' : 'assertive');
-	const unavailableEyebrow = $derived(
-		inviteRequired ? 'Invite session required' : 'Sandbox unavailable'
-	);
+	const unavailableEyebrow = $derived(inviteRequired ? 'Session required' : 'Sandbox unavailable');
 	const unavailableTitle = $derived(
 		inviteRequired ? 'This sandbox link needs a session' : 'This sandbox is done'
 	);
-	const unavailableAction = $derived(inviteRequired ? 'Enter invite code' : 'Start a new session');
+	const unavailableAction = $derived('Start a new session');
 </script>
 
 {#if visible}

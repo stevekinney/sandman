@@ -217,8 +217,8 @@ export const faqs: Faq[] = [
 		a: 'It’s a familiar scenario that exercises the core Temporal primitives — activities with retries, signals, queries, durable timers, and crash recovery — in under 200 lines of code.'
 	},
 	{
-		q: 'What is the invite code for?',
-		a: 'Sandman uses one shared invite code to gate who can boot sandboxes. Only a hash is ever stored; your submitted code is compared server-side and never exposed.'
+		q: 'Why ask for my email?',
+		a: 'It gives us lightweight attribution for who tried the demo. No account is created, and sessions stay temporary.'
 	},
 	{
 		q: 'Can I edit the workflow code?',
