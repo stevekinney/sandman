@@ -1,17 +1,16 @@
 import { expect, test, type Page } from '@playwright/test';
 
-const DEMO_TOKEN = 'playwright-demo-token';
 const DEMO_EMAIL = 'visitor@example.com';
 const SANDBOX_ID = 'sbx-playwright-flow';
 
 async function mockSessionExchange(
 	page: Page
-): Promise<{ sessionRequests: Array<{ email: string; token: string }> }> {
-	const sessionRequests: Array<{ email: string; token: string }> = [];
+): Promise<{ sessionRequests: Array<{ email: string; token?: string }> }> {
+	const sessionRequests: Array<{ email: string; token?: string }> = [];
 	await page.route('**/api/session', async (route) => {
 		const request = route.request();
 		const payload = request.postDataJSON() as { email?: string; token?: string };
-		sessionRequests.push({ email: payload.email ?? '', token: payload.token ?? '' });
+		sessionRequests.push({ email: payload.email ?? '', token: payload.token });
 		await route.fulfill({
 			status: 201,
 			contentType: 'application/json',
@@ -53,7 +52,7 @@ async function mockSandboxStatus(
 	});
 }
 
-test('invite code exchange provisions a sandbox and redirects to the session page', async ({
+test('email-only session start provisions a sandbox and redirects to the session page', async ({
 	page
 }) => {
 	const { sessionRequests } = await mockSessionExchange(page);
@@ -61,16 +60,16 @@ test('invite code exchange provisions a sandbox and redirects to the session pag
 	await mockSandboxStatus(page, SANDBOX_ID, 'ready');
 
 	// The landing page follows the OS color scheme by default (no stored
-	// preference), so pin a dark preference to assert the token input is
+	// preference), so pin a dark preference to assert the email input is
 	// legibly dark-themed rather than rendering with unstyled light defaults.
 	await page.emulateMedia({ colorScheme: 'dark' });
 	await page.goto('/');
-	await page.getByLabel('Email').fill(`  ${DEMO_EMAIL}  `);
-	const tokenInput = page.getByLabel('Invite code');
-	await tokenInput.fill(`  ${DEMO_TOKEN}  `);
+	const emailInput = page.getByLabel('Email');
+	await emailInput.fill(DEMO_EMAIL);
 
-	await expect(tokenInput).toHaveValue(`  ${DEMO_TOKEN}  `);
-	const tokenInputStyles = await tokenInput.evaluate((element) => {
+	await expect(page.getByLabel('Invite code')).toHaveCount(0);
+	await expect(emailInput).toHaveValue(DEMO_EMAIL);
+	const emailInputStyles = await emailInput.evaluate((element) => {
 		const styles = getComputedStyle(element);
 		return {
 			backgroundColor: styles.backgroundColor,
@@ -78,14 +77,14 @@ test('invite code exchange provisions a sandbox and redirects to the session pag
 			colorScheme: styles.colorScheme
 		};
 	});
-	expect(tokenInputStyles.colorScheme).toContain('dark');
-	expect(tokenInputStyles.backgroundColor).not.toBe('rgb(255, 255, 255)');
-	expect(tokenInputStyles.color).not.toBe('rgb(17, 24, 39)');
+	expect(emailInputStyles.colorScheme).toContain('dark');
+	expect(emailInputStyles.backgroundColor).not.toBe('rgb(255, 255, 255)');
+	expect(emailInputStyles.color).not.toBe('rgb(17, 24, 39)');
 
 	await page.getByRole('button', { name: 'New Session' }).click();
 
 	await expect(page).toHaveURL(`/${SANDBOX_ID}`);
-	expect(sessionRequests).toEqual([{ email: DEMO_EMAIL, token: DEMO_TOKEN }]);
+	expect(sessionRequests).toEqual([{ email: DEMO_EMAIL, token: undefined }]);
 	await expect(page.locator('.session__id')).toContainText(SANDBOX_ID);
 	await expect(page.locator('[data-chip="sandbox"]')).toContainText('Ready');
 
@@ -119,41 +118,18 @@ test('keyboard users can jump directly to the guided journey', async ({ page }) 
 	await expect(page.getByRole('navigation', { name: 'Tour progress' })).toBeVisible();
 });
 
-test('pressing Enter in the invite code field submits the session form', async ({ page }) => {
+test('pressing Enter in the email field submits the session form', async ({ page }) => {
 	const { sessionRequests } = await mockSessionExchange(page);
 	await mockSandboxCreation(page);
 	await mockSandboxStatus(page, SANDBOX_ID, 'ready');
 
 	await page.goto('/');
-	await page.getByLabel('Email').fill(DEMO_EMAIL);
-	const tokenInput = page.getByLabel('Invite code');
-	await tokenInput.fill(DEMO_TOKEN);
-	await tokenInput.press('Enter');
+	const emailInput = page.getByLabel('Email');
+	await emailInput.fill(DEMO_EMAIL);
+	await emailInput.press('Enter');
 
 	await expect(page).toHaveURL(`/${SANDBOX_ID}`);
-	expect(sessionRequests).toEqual([{ email: DEMO_EMAIL, token: DEMO_TOKEN }]);
-});
-
-test('invalid invite code keeps the user on the landing page with a clear error', async ({
-	page
-}) => {
-	await page.route('**/api/session', async (route) => {
-		await route.fulfill({
-			status: 401,
-			contentType: 'text/plain',
-			body: 'Invalid invite code'
-		});
-	});
-
-	await page.goto('/');
-	await page.getByLabel('Email').fill(DEMO_EMAIL);
-	await page.getByLabel('Invite code').fill('wrong-token');
-	await page.getByRole('button', { name: 'New Session' }).click();
-
-	await expect(page).toHaveURL('/');
-	await expect(page.getByRole('alert')).toContainText(
-		'That invite code did not work. Check the code and try again.'
-	);
+	expect(sessionRequests).toEqual([{ email: DEMO_EMAIL, token: undefined }]);
 });
 
 test('configuration failures show a user-facing alert instead of raw server JSON', async ({
@@ -169,7 +145,6 @@ test('configuration failures show a user-facing alert instead of raw server JSON
 
 	await page.goto('/');
 	await page.getByLabel('Email').fill(DEMO_EMAIL);
-	await page.getByLabel('Invite code').fill(DEMO_TOKEN);
 	await page.getByRole('button', { name: 'New Session' }).click();
 
 	const alert = page.getByRole('alert');
@@ -189,7 +164,6 @@ test('database configuration failures show actionable setup copy', async ({ page
 
 	await page.goto('/');
 	await page.getByLabel('Email').fill(DEMO_EMAIL);
-	await page.getByLabel('Invite code').fill(DEMO_TOKEN);
 	await page.getByRole('button', { name: 'New Session' }).click();
 
 	const alert = page.getByRole('alert');
@@ -204,17 +178,16 @@ test('sandbox creation failures keep the user on the landing page with the serve
 	await mockSandboxCreation(
 		page,
 		429,
-		'This invite code has reached its hourly session creation limit'
+		'This session has reached its hourly sandbox creation limit'
 	);
 
 	await page.goto('/');
 	await page.getByLabel('Email').fill(DEMO_EMAIL);
-	await page.getByLabel('Invite code').fill(DEMO_TOKEN);
 	await page.getByRole('button', { name: 'New Session' }).click();
 
 	await expect(page).toHaveURL('/');
 	await expect(page.getByRole('alert')).toContainText(
-		'This invite code has reached its hourly session creation limit'
+		'This session has reached its hourly sandbox creation limit'
 	);
 });
 
@@ -224,7 +197,6 @@ test('sandbox E2B configuration failures show actionable setup copy', async ({ p
 
 	await page.goto('/');
 	await page.getByLabel('Email').fill(DEMO_EMAIL);
-	await page.getByLabel('Invite code').fill(DEMO_TOKEN);
 	await page.getByRole('button', { name: 'New Session' }).click();
 
 	const alert = page.getByRole('alert');

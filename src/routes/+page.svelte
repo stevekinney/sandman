@@ -3,8 +3,8 @@
 	 * +page.svelte — Sandman landing page.
 	 *
 	 * Marketing splash for the ephemeral Temporal sandbox. The "Get started"
-	 * section provisions a real sandbox: POST /api/session exchanges the demo
-	 * token, POST /api/sandbox boots the MicroVM, then we redirect to /{sandboxId}.
+	 * section provisions a real sandbox: POST /api/session creates a demo
+	 * session, POST /api/sandbox boots the MicroVM, then we redirect to /{sandboxId}.
 	 *
 	 * Server-side configuration failures are shown as generic availability
 	 * errors so the browser never exposes deployment internals.
@@ -16,7 +16,6 @@
 	import { concepts, faqs, phases, surfaces, tour, type IconPart } from './splash-content';
 
 	let email = $state('');
-	let demoToken = $state('');
 	let provisioning = $state(false);
 	let provisionError = $state<string | null>(null);
 
@@ -25,9 +24,7 @@
 	// effect resolves it from the stored preference or the OS setting.
 	let theme = $state<'light' | 'dark' | undefined>(undefined);
 	const isDark = $derived(theme === 'dark');
-	const startDisabled = $derived(
-		provisioning || email.trim().length === 0 || demoToken.trim().length === 0
-	);
+	const startDisabled = $derived(provisioning || email.trim().length === 0);
 
 	$effect(() => {
 		// Runs once after mount — reads only non-reactive sources, so it never re-runs.
@@ -82,8 +79,8 @@
 		// Move keyboard focus into the form so the next Tab lands inside the first
 		// field rather than the off-screen CTA. preventScroll keeps the smooth
 		// scroll above from being overridden by the focus jump.
-		const tokenField = document.querySelector('#get-started input');
-		if (tokenField instanceof HTMLElement) tokenField.focus({ preventScroll: true });
+		const emailField = document.querySelector('#get-started input');
+		if (emailField instanceof HTMLElement) emailField.focus({ preventScroll: true });
 	}
 
 	async function startSession(event: SubmitEvent | undefined = undefined): Promise<void> {
@@ -91,13 +88,12 @@
 		provisioning = true;
 		provisionError = null;
 		const trimmedEmail = email.trim();
-		const trimmedToken = demoToken.trim();
 
 		try {
 			const sessionResponse = await fetch('/api/session', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ email: trimmedEmail, token: trimmedToken })
+				body: JSON.stringify({ email: trimmedEmail })
 			});
 			if (!sessionResponse.ok) {
 				provisionError = await getUserFacingErrorMessage(
@@ -521,9 +517,9 @@
 				<div class="sd-start__grid">
 					<div>
 						<div class="sd-kicker">Get started</div>
-						<h2 class="sd-h2 sd-h2--tight">Enter your email and invite code to boot a sandbox.</h2>
+						<h2 class="sd-h2 sd-h2--tight">Enter your email to boot a sandbox.</h2>
 						<ol class="sd-steps-list">
-							<li><span>1.</span> Share your email and paste the invite code.</li>
+							<li><span>1.</span> Share your email so we can see who tried the demo.</li>
 							<li><span>2.</span> A Firecracker MicroVM boots with Temporal and a worker.</li>
 							<li>
 								<span>3.</span> Start ordering, then break things — the session self-destructs after ~15
@@ -545,15 +541,6 @@
 								disabled={provisioning}
 								placeholder="you@example.com"
 							/>
-							<Input
-								id="invite-code"
-								label="Invite code"
-								type="password"
-								autocomplete="off"
-								bind:value={demoToken}
-								disabled={provisioning}
-								placeholder="Enter invite code"
-							/>
 							<Button
 								type="submit"
 								variant="primary"
@@ -565,7 +552,7 @@
 								label={provisioning ? 'Provisioning sandbox…' : 'New Session'}
 							/>
 							<p class="sd-start__hint">
-								No account is created. Don't have a token? Ask whoever shared Sandman with you.
+								No account is created. Sessions are temporary and expire automatically.
 							</p>
 						</form>
 					</div>

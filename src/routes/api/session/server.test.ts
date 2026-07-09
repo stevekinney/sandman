@@ -39,6 +39,8 @@ describe('POST /api/session', () => {
 	});
 
 	it('rejects invalid invite codes', async () => {
+		vi.stubEnv('SANDMAN_INVITE_CODE_REQUIRED', 'true');
+
 		await expect(
 			POST(makeEvent({ token: 'wrong-token', email: 'test@example.com' }))
 		).rejects.toMatchObject({
@@ -49,21 +51,23 @@ describe('POST /api/session', () => {
 
 	it('rejects mismatched origins', async () => {
 		await expect(
-			POST(makeEvent({ token: 'demo-token', email: 'test@example.com' }, 'https://evil.example'))
+			POST(makeEvent({ email: 'test@example.com' }, 'https://evil.example'))
 		).rejects.toMatchObject({
 			status: 403
 		});
 	});
 
 	it('rejects requests without an email', async () => {
-		await expect(POST(makeEvent({ token: 'demo-token' }))).rejects.toMatchObject({
+		await expect(POST(makeEvent({}))).rejects.toMatchObject({
 			status: 400,
 			body: { message: 'Request body must include "email"' }
 		});
 		expect(createDemoSession).not.toHaveBeenCalled();
 	});
 
-	it('rejects non-string or blank invite codes', async () => {
+	it('rejects non-string or blank invite codes when invite codes are required', async () => {
+		vi.stubEnv('SANDMAN_INVITE_CODE_REQUIRED', 'true');
+
 		for (const token of [123, '   ']) {
 			await expect(POST(makeEvent({ token, email: 'test@example.com' }))).rejects.toMatchObject({
 				status: 400,
@@ -75,7 +79,7 @@ describe('POST /api/session', () => {
 
 	it('rejects non-string or blank emails', async () => {
 		for (const email of [123, '   ']) {
-			await expect(POST(makeEvent({ token: 'demo-token', email }))).rejects.toMatchObject({
+			await expect(POST(makeEvent({ email }))).rejects.toMatchObject({
 				status: 400,
 				body: { message: 'Request body must include "email"' }
 			});
@@ -86,9 +90,7 @@ describe('POST /api/session', () => {
 	it('rejects invalid database configuration before creating a session', async () => {
 		vi.stubEnv('DATABASE_URL', 'postgres://example');
 
-		await expect(
-			POST(makeEvent({ token: 'demo-token', email: 'test@example.com' }))
-		).rejects.toMatchObject({
+		await expect(POST(makeEvent({ email: 'test@example.com' }))).rejects.toMatchObject({
 			status: 503,
 			body: {
 				message: 'DATABASE_URL is not a valid Postgres connection string'
@@ -97,7 +99,27 @@ describe('POST /api/session', () => {
 		expect(createDemoSession).not.toHaveBeenCalled();
 	});
 
-	it('creates a session and sets a signed HttpOnly cookie for a valid token', async () => {
+	it('creates a session and sets a signed HttpOnly cookie without an invite code', async () => {
+		const event = makeEvent({ email: '  not an email but useful  ' });
+		const response = await POST(event);
+
+		expect(response.status).toBe(201);
+		expect(createDemoSession).toHaveBeenCalledWith(
+			{},
+			expect.objectContaining({
+				email: 'not an email but useful',
+				tokenHash: expect.any(String)
+			})
+		);
+		expect(event.cookies.set).toHaveBeenCalledWith(
+			SESSION_COOKIE_NAME,
+			expect.any(String),
+			expect.objectContaining({ httpOnly: true, sameSite: 'lax', path: '/' })
+		);
+	});
+
+	it('preserves invite-code validation when invite codes are required', async () => {
+		vi.stubEnv('SANDMAN_INVITE_CODE_REQUIRED', 'true');
 		const event = makeEvent({ token: '  demo-token  ', email: '  not an email but useful  ' });
 		const response = await POST(event);
 
@@ -119,9 +141,7 @@ describe('POST /api/session', () => {
 	it('returns a friendly 503 (not a bare Internal Error) when the database write fails', async () => {
 		vi.mocked(createDemoSession).mockRejectedValueOnce(new Error('connection refused'));
 
-		await expect(
-			POST(makeEvent({ token: 'demo-token', email: 'test@example.com' }))
-		).rejects.toMatchObject({
+		await expect(POST(makeEvent({ email: 'test@example.com' }))).rejects.toMatchObject({
 			status: 503,
 			body: { message: 'Could not start a session. Please try again in a moment.' }
 		});

@@ -7,6 +7,13 @@ describe('getProductionConfiguration', () => {
 		expect(configuration.sessionTtlMs).toBe(900_000);
 	});
 
+	it('keeps invite codes disabled unless explicitly required', () => {
+		expect(getProductionConfiguration({}).inviteCodeRequired).toBe(false);
+		expect(
+			getProductionConfiguration({ SANDMAN_INVITE_CODE_REQUIRED: 'true' }).inviteCodeRequired
+		).toBe(true);
+	});
+
 	it('honors a valid SANDMAN_SESSION_TTL_MS override', () => {
 		const configuration = getProductionConfiguration({ SANDMAN_SESSION_TTL_MS: '120000' });
 		expect(configuration.sessionTtlMs).toBe(120_000);

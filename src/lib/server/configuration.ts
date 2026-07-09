@@ -8,6 +8,7 @@ export type ProductionConfiguration = {
 	e2bApiKey: string | undefined;
 	e2bTemplateId: string | undefined;
 	demoTokenHash: string | undefined;
+	inviteCodeRequired: boolean;
 	sessionSecret: string | undefined;
 	sessionTtlMs: number;
 	maxActiveSandboxes: number;
@@ -26,6 +27,7 @@ export function getProductionConfiguration(
 		e2bApiKey: environment.E2B_API_KEY,
 		e2bTemplateId: environment.E2B_TEMPLATE_ID,
 		demoTokenHash: environment.SANDMAN_DEMO_TOKEN_SHA256,
+		inviteCodeRequired: environment.SANDMAN_INVITE_CODE_REQUIRED === 'true',
 		sessionSecret: environment.SANDMAN_SESSION_SECRET,
 		sessionTtlMs: readPositiveInteger(environment.SANDMAN_SESSION_TTL_MS, DEFAULT_SESSION_TTL_MS),
 		maxActiveSandboxes: readPositiveInteger(
@@ -70,7 +72,9 @@ export function getMissingProductionRequirements(
 	const missing: string[] = [];
 	if (!configuration.databaseUrl) missing.push('DATABASE_URL');
 	if (!configuration.e2bApiKey) missing.push('E2B_API_KEY');
-	if (!configuration.demoTokenHash) missing.push('SANDMAN_DEMO_TOKEN_SHA256');
+	if (configuration.inviteCodeRequired && !configuration.demoTokenHash) {
+		missing.push('SANDMAN_DEMO_TOKEN_SHA256');
+	}
 	if (!configuration.sessionSecret) missing.push('SANDMAN_SESSION_SECRET');
 	if (configuration.isProduction && !configuration.e2bTemplateId) missing.push('E2B_TEMPLATE_ID');
 	return missing;

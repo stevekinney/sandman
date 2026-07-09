@@ -6,7 +6,7 @@ const UNUSABLE_SANDBOX_STATUSES = new Set([
 ]);
 
 const SANDBOX_STATUS_LABELS = new Map([
-	['authentication-required', 'Invite required'],
+	['authentication-required', 'Session required'],
 	['bootstrapping', 'Bootstrapping'],
 	['error', 'Error'],
 	['expired', 'Expired'],
@@ -16,7 +16,7 @@ const SANDBOX_STATUS_LABELS = new Map([
 ]);
 
 const AUTHENTICATION_FAILURE_MESSAGE =
-	'This sandbox link needs an active invite session. Enter your invite code to start a new sandbox.';
+	'This sandbox link needs an active session. Start a new sandbox to continue.';
 
 const READY_SANDBOX_STATUS = 'ready';
 

@@ -33,11 +33,9 @@ describe('session status helpers', () => {
 	it('does not show raw API JSON when the demo session is missing', () => {
 		expect(
 			getSandboxStatusResponseFailureMessage(401, '{"message":"A valid demo session is required"}')
-		).toBe(
-			'This sandbox link needs an active invite session. Enter your invite code to start a new sandbox.'
-		);
+		).toBe('This sandbox link needs an active session. Start a new sandbox to continue.');
 		expect(isSandboxUnusable('authentication-required')).toBe(true);
-		expect(getSandboxStatusDisplayLabel('authentication-required')).toBe('Invite required');
+		expect(getSandboxStatusDisplayLabel('authentication-required')).toBe('Session required');
 	});
 
 	it('extracts plain API messages without leaking serialized response bodies', () => {

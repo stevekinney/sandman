@@ -13,6 +13,8 @@ import {
 import { assertSameOrigin } from '$lib/server/security/origin';
 import { logError, logInfo, logWarning } from '$lib/server/logging';
 
+const INVITE_CODE_DISABLED_TOKEN_PREFIX = 'invite-code-disabled';
+
 function getStringField(value: unknown, field: string): string | null {
 	if (typeof value !== 'object' || value === null) return null;
 	const fieldValue = Reflect.get(value, field);
@@ -23,7 +25,9 @@ export const POST: RequestHandler = async (event) => {
 	assertSameOrigin(event);
 
 	const configuration = getProductionConfiguration();
-	if (!configuration.demoTokenHash) throw error(503, 'SANDMAN_DEMO_TOKEN_SHA256 is not configured');
+	if (configuration.inviteCodeRequired && !configuration.demoTokenHash) {
+		throw error(503, 'SANDMAN_DEMO_TOKEN_SHA256 is not configured');
+	}
 	if (!configuration.sessionSecret) throw error(503, 'SANDMAN_SESSION_SECRET is not configured');
 	if (!configuration.databaseUrl) throw error(503, 'DATABASE_URL is not configured');
 	if (!isPostgresConnectionString(configuration.databaseUrl)) {
@@ -37,27 +41,18 @@ export const POST: RequestHandler = async (event) => {
 		throw error(400, 'Request body must be valid JSON');
 	}
 
-	const token = getStringField(body, 'token')?.trim();
-	if (!token) {
-		throw error(400, 'Request body must include "token"');
-	}
-
 	const email = getStringField(body, 'email')?.trim();
 	if (!email) {
 		throw error(400, 'Request body must include "email"');
 	}
 
-	if (!validateDemoToken(token, configuration.demoTokenHash)) {
-		logWarning({ event: 'demo_session.rejected', status: 'invalid-token' });
-		throw error(401, 'Invalid invite code');
-	}
-
 	const now = new Date();
 	const sessionId = crypto.randomUUID();
+	const tokenHash = getSessionTokenHash(body, configuration, sessionId);
 	try {
 		await createDemoSession(getDatabase(configuration.databaseUrl), {
 			sessionId,
-			tokenHash: hashDemoToken(token),
+			tokenHash,
 			email,
 			now
 		});
@@ -83,4 +78,26 @@ function isPostgresConnectionString(value: string): boolean {
 	} catch {
 		return false;
 	}
+}
+
+function getSessionTokenHash(
+	body: unknown,
+	configuration: ReturnType<typeof getProductionConfiguration>,
+	sessionId: string
+): string {
+	if (!configuration.inviteCodeRequired) {
+		return hashDemoToken(`${INVITE_CODE_DISABLED_TOKEN_PREFIX}:${sessionId}`);
+	}
+
+	const token = getStringField(body, 'token')?.trim();
+	if (!token) {
+		throw error(400, 'Request body must include "token"');
+	}
+
+	if (!configuration.demoTokenHash || !validateDemoToken(token, configuration.demoTokenHash)) {
+		logWarning({ event: 'demo_session.rejected', status: 'invalid-token' });
+		throw error(401, 'Invalid invite code');
+	}
+
+	return hashDemoToken(token);
 }

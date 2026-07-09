@@ -26,7 +26,7 @@ describe('SandboxReadinessGate', () => {
 		await expect.element(page.getByText('Start Temporal services')).toBeInTheDocument();
 	});
 
-	it('shows the unavailable alert and recovery action for invite-gated sandboxes', async () => {
+	it('shows the unavailable alert and recovery action for unauthenticated sandboxes', async () => {
 		render(SandboxReadinessGate, {
 			props: { status: 'authentication-required', errorMessage: null, inviteRequired: true }
 		});
@@ -34,7 +34,7 @@ describe('SandboxReadinessGate', () => {
 		await expect.element(page.getByRole('alert')).toBeInTheDocument();
 		await expect.element(page.getByText('This sandbox link needs a session')).toBeInTheDocument();
 		await expect
-			.element(page.getByRole('link', { name: 'Enter invite code' }))
+			.element(page.getByRole('link', { name: 'Start a new session' }))
 			.toHaveAttribute('href', '/');
 	});
 

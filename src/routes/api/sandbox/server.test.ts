@@ -113,7 +113,7 @@ describe('POST /api/sandbox', () => {
 		expect(vi.mocked(getSandboxRegistry)).not.toHaveBeenCalled();
 		// The rate-limit bucket was already incremented before the reservation
 		// query threw — roll it back so a transient DB error doesn't burn the
-		// invite code's hourly quota.
+		// session's hourly quota.
 		expect(decrementRateLimitBucket).toHaveBeenCalledWith(
 			expect.anything(),
 			expect.objectContaining({ key: 'session-create:token-hash' })

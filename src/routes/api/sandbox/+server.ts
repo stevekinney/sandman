@@ -63,7 +63,7 @@ export const POST: RequestHandler = async (event) => {
 				sessionId: session.id,
 				status: 'rate-limit'
 			});
-			throw error(429, 'This invite code has reached its hourly session creation limit');
+			throw error(429, 'This session has reached its hourly sandbox creation limit');
 		}
 
 		reservation = await reserveSandboxSlot(database, {
