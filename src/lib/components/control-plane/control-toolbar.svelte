@@ -12,6 +12,8 @@
 	 * the guided tour gets a glow.
 	 */
 	import Button from '@lostgradient/cinder/button';
+	import Segment from '@lostgradient/cinder/segment';
+	import SegmentedControl from '@lostgradient/cinder/segmented-control';
 	import Toolbar from '@lostgradient/cinder/toolbar';
 	import type { ControlId } from '$lib/contracts/workflow-api';
 	import type { SessionState } from './session-state.svelte.ts';
@@ -55,28 +57,6 @@
 		if (!session.serverOnline) return 'Start the Temporal server (topology strip) to use this.';
 		if (!session.workerOnline) return 'Restart the worker (topology strip) to use this.';
 		return 'Not available at this point in the order yet.';
-	}
-
-	function focusWorkbenchTab(nextView: CenterView): void {
-		const element = document.getElementById(`center-view-${nextView}-tab`);
-		if (element instanceof HTMLButtonElement) element.focus();
-	}
-
-	function selectWorkbenchView(nextView: CenterView): void {
-		view = nextView;
-		focusWorkbenchTab(nextView);
-	}
-
-	function handleWorkbenchTabKeydown(event: KeyboardEvent): void {
-		const nextView =
-			event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === 'End'
-				? 'temporal'
-				: event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'Home'
-					? 'code'
-					: null;
-		if (nextView === null) return;
-		event.preventDefault();
-		selectWorkbenchView(nextView);
 	}
 </script>
 
@@ -127,40 +107,30 @@
 	</Toolbar>
 
 	<div class="toolbar-shell__view">
-		<div role="tablist" aria-label="Workbench view" class="cinder-tab-list toolbar-shell__tabs">
-			<button
-				type="button"
-				role="tab"
+		<SegmentedControl
+			id="center-view"
+			label="Workbench view"
+			density="toolbar"
+			fullWidth
+			variant="tablist"
+			class="toolbar-shell__tabs"
+			bind:value={view}
+		>
+			<Segment
+				value="code"
 				id="center-view-code-tab"
-				class="cinder-tab"
-				data-cinder-active={view === 'code' ? '' : undefined}
-				data-cinder-value="code"
-				data-variant="horizontal"
-				aria-selected={view === 'code'}
-				aria-controls="center-panel-code"
-				tabindex={view === 'code' ? 0 : -1}
-				onclick={() => selectWorkbenchView('code')}
-				onkeydown={handleWorkbenchTabKeydown}
+				controls="center-panel-code"
 			>
 				Code
-			</button>
-			<button
-				type="button"
-				role="tab"
+			</Segment>
+			<Segment
+				value="temporal"
 				id="center-view-temporal-tab"
-				class="cinder-tab"
-				data-cinder-active={view === 'temporal' ? '' : undefined}
-				data-cinder-value="temporal"
-				data-variant="horizontal"
-				aria-selected={view === 'temporal'}
-				aria-controls="center-panel-temporal"
-				tabindex={view === 'temporal' ? 0 : -1}
-				onclick={() => selectWorkbenchView('temporal')}
-				onkeydown={handleWorkbenchTabKeydown}
+				controls="center-panel-temporal"
 			>
 				Temporal UI
-			</button>
-		</div>
+			</Segment>
+		</SegmentedControl>
 	</div>
 </div>
 
@@ -185,7 +155,7 @@
 		margin-inline-start: auto;
 	}
 
-	.toolbar-shell__view .toolbar-shell__tabs {
+	.toolbar-shell__view :global(.toolbar-shell__tabs) {
 		inline-size: 100%;
 	}
 
