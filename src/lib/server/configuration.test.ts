@@ -14,6 +14,14 @@ describe('getProductionConfiguration', () => {
 		).toBe(true);
 	});
 
+	it('defaults session creation rate limits and honors valid overrides', () => {
+		expect(getProductionConfiguration({}).sessionCreationsPerVisitorPerHour).toBe(20);
+		expect(
+			getProductionConfiguration({ SANDMAN_SESSION_CREATIONS_PER_VISITOR_PER_HOUR: '12' })
+				.sessionCreationsPerVisitorPerHour
+		).toBe(12);
+	});
+
 	it('honors a valid SANDMAN_SESSION_TTL_MS override', () => {
 		const configuration = getProductionConfiguration({ SANDMAN_SESSION_TTL_MS: '120000' });
 		expect(configuration.sessionTtlMs).toBe(120_000);

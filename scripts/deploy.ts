@@ -9,6 +9,7 @@ const REQUIRED_SECRETS = [
 	'E2B_TEMPLATE_ID',
 	'SANDMAN_SESSION_SECRET'
 ];
+const INVITE_CODE_REQUIRED_SECRET = 'SANDMAN_INVITE_CODE_REQUIRED';
 const INVITE_CODE_SECRET = 'SANDMAN_DEMO_TOKEN_SHA256';
 const REQUIRED_GITHUB_SECRETS = ['FLY_API_TOKEN', 'MIGRATION_DATABASE_URL', 'E2B_API_KEY'];
 const REQUIRED_GITHUB_VARIABLES = ['FLY_ORG', 'PRODUCTION_WEB_ORIGIN'];
@@ -67,8 +68,19 @@ export function findMissingNames(output: string, requiredNames: readonly string[
 	return requiredNames.filter((name) => !new RegExp(`(^|\\s)${name}(\\s|$)`, 'm').test(output));
 }
 
+export function findRequiredFlySecrets(output: string): string[] {
+	const requiredSecrets = [...REQUIRED_SECRETS];
+	if (hasName(output, INVITE_CODE_REQUIRED_SECRET)) requiredSecrets.push(INVITE_CODE_SECRET);
+	return findMissingNames(output, requiredSecrets);
+}
+
 export function findOptionalInviteCodeSecret(output: string): string[] {
+	if (hasName(output, INVITE_CODE_REQUIRED_SECRET)) return [];
 	return findMissingNames(output, [INVITE_CODE_SECRET]);
+}
+
+function hasName(output: string, name: string): boolean {
+	return new RegExp(`(^|\\s)${name}(\\s|$)`, 'm').test(output);
 }
 
 async function main(): Promise<void> {
@@ -87,7 +99,7 @@ async function main(): Promise<void> {
 	console.log(appExists ? `Fly app: ${APP_NAME} exists` : `Fly app: ${APP_NAME} missing`);
 
 	if (secrets.exitCode === 0) {
-		const missing = findMissingNames(secrets.stdout, REQUIRED_SECRETS);
+		const missing = findRequiredFlySecrets(secrets.stdout);
 		console.log(
 			missing.length === 0 ? 'Fly secrets: complete' : `Fly secrets missing: ${missing.join(', ')}`
 		);

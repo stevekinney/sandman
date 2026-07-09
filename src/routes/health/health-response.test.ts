@@ -13,6 +13,7 @@ describe('createHealthResponse', () => {
 			sessionTtlMs: 300_000,
 			maxActiveSandboxes: 20,
 			maxActiveSandboxesPerSession: 1,
+			sessionCreationsPerVisitorPerHour: 20,
 			sandboxCreationsPerVisitorPerHour: 5,
 			isProduction: true
 		});
@@ -32,6 +33,7 @@ describe('createHealthResponse', () => {
 				sessionTtlMs: 300_000,
 				maxActiveSandboxes: 20,
 				maxActiveSandboxesPerSession: 1,
+				sessionCreationsPerVisitorPerHour: 20,
 				sandboxCreationsPerVisitorPerHour: 5,
 				isProduction: true
 			},

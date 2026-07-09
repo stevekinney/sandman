@@ -1,6 +1,7 @@
 const DEFAULT_SESSION_TTL_MS = 900_000;
 const DEFAULT_MAX_ACTIVE_SANDBOXES = 20;
 const DEFAULT_MAX_ACTIVE_SANDBOXES_PER_SESSION = 1;
+const DEFAULT_SESSION_CREATIONS_PER_VISITOR_PER_HOUR = 20;
 const DEFAULT_SANDBOX_CREATIONS_PER_VISITOR_PER_HOUR = 5;
 
 export type ProductionConfiguration = {
@@ -13,6 +14,7 @@ export type ProductionConfiguration = {
 	sessionTtlMs: number;
 	maxActiveSandboxes: number;
 	maxActiveSandboxesPerSession: number;
+	sessionCreationsPerVisitorPerHour: number;
 	sandboxCreationsPerVisitorPerHour: number;
 	isProduction: boolean;
 };
@@ -37,6 +39,10 @@ export function getProductionConfiguration(
 		maxActiveSandboxesPerSession: readPositiveInteger(
 			environment.SANDMAN_MAX_ACTIVE_SANDBOXES_PER_SESSION,
 			DEFAULT_MAX_ACTIVE_SANDBOXES_PER_SESSION
+		),
+		sessionCreationsPerVisitorPerHour: readPositiveInteger(
+			environment.SANDMAN_SESSION_CREATIONS_PER_VISITOR_PER_HOUR,
+			DEFAULT_SESSION_CREATIONS_PER_VISITOR_PER_HOUR
 		),
 		sandboxCreationsPerVisitorPerHour: readPositiveInteger(
 			environment.SANDMAN_SANDBOX_CREATIONS_PER_VISITOR_PER_HOUR,

@@ -1,14 +1,20 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { POST } from './+server.ts';
 import { hashDemoToken, SESSION_COOKIE_NAME } from '$lib/server/security/session';
-import { createDemoSession } from '$lib/server/database/repository';
+import {
+	createDemoSession,
+	decrementRateLimitBucket,
+	incrementRateLimitBucket
+} from '$lib/server/database/repository';
 
 vi.mock('$lib/server/database/connection', () => ({
 	getDatabase: vi.fn(() => ({}))
 }));
 
 vi.mock('$lib/server/database/repository', () => ({
-	createDemoSession: vi.fn().mockResolvedValue(undefined)
+	createDemoSession: vi.fn().mockResolvedValue(undefined),
+	decrementRateLimitBucket: vi.fn().mockResolvedValue(0),
+	incrementRateLimitBucket: vi.fn().mockResolvedValue(1)
 }));
 
 function makeEvent(body: unknown, origin = 'http://localhost') {
@@ -31,6 +37,7 @@ describe('POST /api/session', () => {
 		vi.stubEnv('DATABASE_URL', 'postgresql://user:password@example.com/sandman');
 		vi.stubEnv('SANDMAN_SESSION_SECRET', 'secret');
 		vi.stubEnv('SANDMAN_DEMO_TOKEN_SHA256', hashDemoToken('demo-token'));
+		vi.stubEnv('SANDMAN_SESSION_CREATIONS_PER_VISITOR_PER_HOUR', '5');
 	});
 
 	afterEach(() => {
@@ -85,6 +92,37 @@ describe('POST /api/session', () => {
 			});
 		}
 		expect(createDemoSession).not.toHaveBeenCalled();
+		expect(incrementRateLimitBucket).not.toHaveBeenCalled();
+	});
+
+	it('rejects malformed email strings before writing a session row', async () => {
+		for (const email of ['visitor', 'visitor@', '@example.com', 'visitor@example']) {
+			await expect(POST(makeEvent({ email }))).rejects.toMatchObject({
+				status: 400,
+				body: { message: 'Request body must include a valid email' }
+			});
+		}
+		expect(createDemoSession).not.toHaveBeenCalled();
+		expect(incrementRateLimitBucket).not.toHaveBeenCalled();
+	});
+
+	it('rate-limits email-only session creation before writing a session row', async () => {
+		vi.mocked(incrementRateLimitBucket).mockResolvedValueOnce(6);
+
+		await expect(POST(makeEvent({ email: 'visitor@example.com' }))).rejects.toMatchObject({
+			status: 429,
+			body: { message: 'This visitor has reached the hourly session creation limit' }
+		});
+
+		expect(incrementRateLimitBucket).toHaveBeenCalledWith(
+			{},
+			expect.objectContaining({
+				key: `session-create:${hashDemoToken('invite-code-disabled-email:visitor@example.com')}`,
+				windowStart: expect.any(Date),
+				now: expect.any(Date)
+			})
+		);
+		expect(createDemoSession).not.toHaveBeenCalled();
 	});
 
 	it('rejects invalid database configuration before creating a session', async () => {
@@ -111,6 +149,12 @@ describe('POST /api/session', () => {
 				tokenHash: hashDemoToken('invite-code-disabled-email:visitor@example.com')
 			})
 		);
+		expect(incrementRateLimitBucket).toHaveBeenCalledWith(
+			{},
+			expect.objectContaining({
+				key: `session-create:${hashDemoToken('invite-code-disabled-email:visitor@example.com')}`
+			})
+		);
 		expect(event.cookies.set).toHaveBeenCalledWith(
 			SESSION_COOKIE_NAME,
 			expect.any(String),
@@ -129,14 +173,14 @@ describe('POST /api/session', () => {
 
 	it('preserves invite-code validation when invite codes are required', async () => {
 		vi.stubEnv('SANDMAN_INVITE_CODE_REQUIRED', 'true');
-		const event = makeEvent({ token: '  demo-token  ', email: '  not an email but useful  ' });
+		const event = makeEvent({ token: '  demo-token  ', email: '  visitor@example.com  ' });
 		const response = await POST(event);
 
 		expect(response.status).toBe(201);
 		expect(createDemoSession).toHaveBeenCalledWith(
 			{},
 			expect.objectContaining({
-				email: 'not an email but useful',
+				email: 'visitor@example.com',
 				tokenHash: hashDemoToken('demo-token')
 			})
 		);
@@ -154,5 +198,13 @@ describe('POST /api/session', () => {
 			status: 503,
 			body: { message: 'Could not start a session. Please try again in a moment.' }
 		});
+		expect(decrementRateLimitBucket).toHaveBeenCalledWith(
+			{},
+			expect.objectContaining({
+				key: `session-create:${hashDemoToken('invite-code-disabled-email:test@example.com')}`,
+				windowStart: expect.any(Date),
+				now: expect.any(Date)
+			})
+		);
 	});
 });
