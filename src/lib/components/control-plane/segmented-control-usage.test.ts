@@ -13,6 +13,7 @@ describe('control plane segmented controls', () => {
 
 			expect(source).toContain("from '@lostgradient/cinder/segmented-control'");
 			expect(source).toContain("from '@lostgradient/cinder/segment'");
+			expect(source).toMatch(/<SegmentedControl[\s\S]*?\s+hideLabel[\s\S]*?>/);
 			expect(source).not.toMatch(/handle[A-Za-z]+TabKeydown/);
 			expect(source).not.toMatch(/focus[A-Za-z]+Tab/);
 			expect(source).not.toContain('class="cinder-tab');
