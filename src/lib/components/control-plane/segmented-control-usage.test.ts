@@ -2,14 +2,14 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
 const segmentedControlFiles = [
-	'src/lib/components/control-plane/history-rail.svelte',
-	'src/lib/components/control-plane/control-toolbar.svelte'
+	new URL('./history-rail.svelte', import.meta.url),
+	new URL('./control-toolbar.svelte', import.meta.url)
 ] as const;
 
 describe('control plane segmented controls', () => {
 	it('use Cinder primitives instead of hand-rolled tab markup', async () => {
-		for (const filePath of segmentedControlFiles) {
-			const source = await readFile(filePath, 'utf8');
+		for (const fileUrl of segmentedControlFiles) {
+			const source = await readFile(fileUrl, 'utf8');
 
 			expect(source).toContain("from '@lostgradient/cinder/segmented-control'");
 			expect(source).toContain("from '@lostgradient/cinder/segment'");
