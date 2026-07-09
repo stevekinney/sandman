@@ -9,6 +9,8 @@
 	 */
 	import EmptyState from '@lostgradient/cinder/empty-state';
 	import type { EventStreamState } from '@lostgradient/cinder/event-stream-viewer';
+	import Segment from '@lostgradient/cinder/segment';
+	import SegmentedControl from '@lostgradient/cinder/segmented-control';
 	import EventRail from './event-rail.svelte';
 	import OrderTimeline from './order-timeline.svelte';
 	import type { SessionState } from './session-state.svelte.ts';
@@ -29,68 +31,27 @@
 	function historyTabId(nextLens: 'events' | 'steps'): string {
 		return `history-lens-${nextLens}-tab`;
 	}
-
-	function focusHistoryTab(nextLens: 'events' | 'steps'): void {
-		const element = document.getElementById(historyTabId(nextLens));
-		if (element instanceof HTMLButtonElement) element.focus();
-	}
-
-	function selectHistoryLens(nextLens: 'events' | 'steps'): void {
-		lens = nextLens;
-		focusHistoryTab(nextLens);
-	}
-
-	function handleHistoryTabKeydown(event: KeyboardEvent): void {
-		const nextLens =
-			event.key === 'ArrowRight' || event.key === 'ArrowDown' || event.key === 'End'
-				? 'steps'
-				: event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'Home'
-					? 'events'
-					: null;
-		if (nextLens === null) return;
-		event.preventDefault();
-		selectHistoryLens(nextLens);
-	}
 </script>
 
 <aside class="history" aria-label="Workflow history">
 	<div class="history__header">
 		<h2 class="history__title">Workflow history</h2>
 		<div class="history__tabs">
-			<div role="tablist" aria-label="History lens" class="cinder-tab-list">
-				<button
-					type="button"
-					role="tab"
-					id={historyTabId('events')}
-					class="cinder-tab"
-					data-cinder-active={lens === 'events' ? '' : undefined}
-					data-cinder-value="events"
-					data-variant="horizontal"
-					aria-selected={lens === 'events'}
-					aria-controls="history-lens-events-panel"
-					tabindex={lens === 'events' ? 0 : -1}
-					onclick={() => selectHistoryLens('events')}
-					onkeydown={handleHistoryTabKeydown}
-				>
+			<SegmentedControl
+				id="history-lens"
+				label="History lens"
+				size="sm"
+				fullWidth
+				variant="tablist"
+				bind:value={lens}
+			>
+				<Segment value="events" id={historyTabId('events')} controls="history-lens-events-panel">
 					Events
-				</button>
-				<button
-					type="button"
-					role="tab"
-					id={historyTabId('steps')}
-					class="cinder-tab"
-					data-cinder-active={lens === 'steps' ? '' : undefined}
-					data-cinder-value="steps"
-					data-variant="horizontal"
-					aria-selected={lens === 'steps'}
-					aria-controls="history-lens-steps-panel"
-					tabindex={lens === 'steps' ? 0 : -1}
-					onclick={() => selectHistoryLens('steps')}
-					onkeydown={handleHistoryTabKeydown}
-				>
+				</Segment>
+				<Segment value="steps" id={historyTabId('steps')} controls="history-lens-steps-panel">
 					Steps
-				</button>
-			</div>
+				</Segment>
+			</SegmentedControl>
 		</div>
 	</div>
 
