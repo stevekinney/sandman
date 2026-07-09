@@ -69,7 +69,7 @@ export const POST: RequestHandler = async (event) => {
 		});
 		rateLimitIncremented = true;
 		if (rateLimitCount > configuration.sessionCreationsPerVisitorPerHour) {
-			logWarning({ event: 'demo_session.blocked', status: 'rate-limit' });
+			logWarning({ event: 'demo_session.blocked', sessionId, status: 'rate-limit' });
 			throw error(429, 'This visitor has reached the hourly session creation limit');
 		}
 

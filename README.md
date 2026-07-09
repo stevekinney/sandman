@@ -51,6 +51,11 @@ page labels this value as the demo token. The raw invite code is never stored in
 source, Fly configuration, GitHub Actions, or Neon. Sandman stores only the
 SHA-256 hash and compares submitted tokens server-side.
 
+For Fly production secrets, omit `SANDMAN_INVITE_CODE_REQUIRED` entirely when
+invite codes are disabled. `flyctl secrets list` does not expose secret values,
+so `bun run deploy:status` treats the presence of that secret as the signal that
+invite codes are enabled and the token hash must also be present.
+
 Generate a new invite code:
 
 ```sh

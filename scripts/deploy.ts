@@ -70,6 +70,8 @@ export function findMissingNames(output: string, requiredNames: readonly string[
 
 export function findRequiredFlySecrets(output: string): string[] {
 	const requiredSecrets = [...REQUIRED_SECRETS];
+	// `flyctl secrets list` hides values, so operators must omit this Fly secret
+	// unless invite codes are enabled.
 	if (hasName(output, INVITE_CODE_REQUIRED_SECRET)) requiredSecrets.push(INVITE_CODE_SECRET);
 	return findMissingNames(output, requiredSecrets);
 }
