@@ -7,9 +7,9 @@ const REQUIRED_SECRETS = [
 	'DATABASE_URL',
 	'E2B_API_KEY',
 	'E2B_TEMPLATE_ID',
-	'SANDMAN_DEMO_TOKEN_SHA256',
 	'SANDMAN_SESSION_SECRET'
 ];
+const INVITE_CODE_SECRET = 'SANDMAN_DEMO_TOKEN_SHA256';
 const REQUIRED_GITHUB_SECRETS = ['FLY_API_TOKEN', 'MIGRATION_DATABASE_URL', 'E2B_API_KEY'];
 const REQUIRED_GITHUB_VARIABLES = ['FLY_ORG', 'PRODUCTION_WEB_ORIGIN'];
 
@@ -67,6 +67,10 @@ export function findMissingNames(output: string, requiredNames: readonly string[
 	return requiredNames.filter((name) => !new RegExp(`(^|\\s)${name}(\\s|$)`, 'm').test(output));
 }
 
+export function findOptionalInviteCodeSecret(output: string): string[] {
+	return findMissingNames(output, [INVITE_CODE_SECRET]);
+}
+
 async function main(): Promise<void> {
 	const auth = await flyctl(['auth', 'whoami']);
 	const app = await flyctl(['apps', 'list']);
@@ -87,6 +91,10 @@ async function main(): Promise<void> {
 		console.log(
 			missing.length === 0 ? 'Fly secrets: complete' : `Fly secrets missing: ${missing.join(', ')}`
 		);
+		const optionalInviteCodeSecret = findOptionalInviteCodeSecret(secrets.stdout);
+		if (optionalInviteCodeSecret.length > 0) {
+			console.log(`Fly optional secret missing: ${optionalInviteCodeSecret.join(', ')}`);
+		}
 	} else {
 		console.log('Fly secrets: unreadable until the app exists and flyctl is authenticated');
 	}

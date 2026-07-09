@@ -13,7 +13,7 @@ import {
 import { assertSameOrigin } from '$lib/server/security/origin';
 import { logError, logInfo, logWarning } from '$lib/server/logging';
 
-const INVITE_CODE_DISABLED_TOKEN_PREFIX = 'invite-code-disabled';
+const INVITE_CODE_DISABLED_EMAIL_PREFIX = 'invite-code-disabled-email';
 
 function getStringField(value: unknown, field: string): string | null {
 	if (typeof value !== 'object' || value === null) return null;
@@ -48,7 +48,7 @@ export const POST: RequestHandler = async (event) => {
 
 	const now = new Date();
 	const sessionId = crypto.randomUUID();
-	const tokenHash = getSessionTokenHash(body, configuration, sessionId);
+	const tokenHash = getSessionTokenHash(body, configuration, email);
 	try {
 		await createDemoSession(getDatabase(configuration.databaseUrl), {
 			sessionId,
@@ -83,10 +83,10 @@ function isPostgresConnectionString(value: string): boolean {
 function getSessionTokenHash(
 	body: unknown,
 	configuration: ReturnType<typeof getProductionConfiguration>,
-	sessionId: string
+	email: string
 ): string {
 	if (!configuration.inviteCodeRequired) {
-		return hashDemoToken(`${INVITE_CODE_DISABLED_TOKEN_PREFIX}:${sessionId}`);
+		return hashDemoToken(`${INVITE_CODE_DISABLED_EMAIL_PREFIX}:${normalizeEmailForQuota(email)}`);
 	}
 
 	const token = getStringField(body, 'token')?.trim();
@@ -100,4 +100,8 @@ function getSessionTokenHash(
 	}
 
 	return hashDemoToken(token);
+}
+
+function normalizeEmailForQuota(email: string): string {
+	return email.trim().toLowerCase();
 }

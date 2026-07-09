@@ -178,7 +178,7 @@ test('sandbox creation failures keep the user on the landing page with the serve
 	await mockSandboxCreation(
 		page,
 		429,
-		'This session has reached its hourly sandbox creation limit'
+		'This visitor has reached the hourly sandbox creation limit'
 	);
 
 	await page.goto('/');
@@ -187,7 +187,7 @@ test('sandbox creation failures keep the user on the landing page with the serve
 
 	await expect(page).toHaveURL('/');
 	await expect(page.getByRole('alert')).toContainText(
-		'This session has reached its hourly sandbox creation limit'
+		'This visitor has reached the hourly sandbox creation limit'
 	);
 });
 

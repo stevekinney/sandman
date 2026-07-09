@@ -14,8 +14,11 @@
 	import Input from '@lostgradient/cinder/input';
 	import { SITE_DESCRIPTION, SITE_TITLE } from '$lib/metadata';
 	import { concepts, faqs, phases, surfaces, tour, type IconPart } from './splash-content';
+	import type { PageData } from './$types';
 
+	let { data }: { data: PageData } = $props();
 	let email = $state('');
+	let demoToken = $state('');
 	let provisioning = $state(false);
 	let provisionError = $state<string | null>(null);
 
@@ -24,7 +27,12 @@
 	// effect resolves it from the stored preference or the OS setting.
 	let theme = $state<'light' | 'dark' | undefined>(undefined);
 	const isDark = $derived(theme === 'dark');
-	const startDisabled = $derived(provisioning || email.trim().length === 0);
+	const inviteCodeRequired = $derived(data.inviteCodeRequired);
+	const startDisabled = $derived(
+		provisioning ||
+			email.trim().length === 0 ||
+			(inviteCodeRequired && demoToken.trim().length === 0)
+	);
 
 	$effect(() => {
 		// Runs once after mount — reads only non-reactive sources, so it never re-runs.
@@ -88,12 +96,15 @@
 		provisioning = true;
 		provisionError = null;
 		const trimmedEmail = email.trim();
+		const trimmedToken = demoToken.trim();
+		const sessionPayload: { email: string; token?: string } = { email: trimmedEmail };
+		if (inviteCodeRequired) sessionPayload.token = trimmedToken;
 
 		try {
 			const sessionResponse = await fetch('/api/session', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ email: trimmedEmail })
+				body: JSON.stringify(sessionPayload)
 			});
 			if (!sessionResponse.ok) {
 				provisionError = await getUserFacingErrorMessage(
@@ -541,6 +552,17 @@
 								disabled={provisioning}
 								placeholder="you@example.com"
 							/>
+							{#if inviteCodeRequired}
+								<Input
+									id="invite-code"
+									label="Invite code"
+									type="password"
+									autocomplete="off"
+									bind:value={demoToken}
+									disabled={provisioning}
+									placeholder="Enter invite code"
+								/>
+							{/if}
 							<Button
 								type="submit"
 								variant="primary"

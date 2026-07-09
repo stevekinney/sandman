@@ -100,15 +100,15 @@ describe('POST /api/session', () => {
 	});
 
 	it('creates a session and sets a signed HttpOnly cookie without an invite code', async () => {
-		const event = makeEvent({ email: '  not an email but useful  ' });
+		const event = makeEvent({ email: '  Visitor@Example.COM  ' });
 		const response = await POST(event);
 
 		expect(response.status).toBe(201);
 		expect(createDemoSession).toHaveBeenCalledWith(
 			{},
 			expect.objectContaining({
-				email: 'not an email but useful',
-				tokenHash: expect.any(String)
+				email: 'Visitor@Example.COM',
+				tokenHash: hashDemoToken('invite-code-disabled-email:visitor@example.com')
 			})
 		);
 		expect(event.cookies.set).toHaveBeenCalledWith(
@@ -116,6 +116,15 @@ describe('POST /api/session', () => {
 			expect.any(String),
 			expect.objectContaining({ httpOnly: true, sameSite: 'lax', path: '/' })
 		);
+	});
+
+	it('uses the same no-invite quota hash for the same email casing and whitespace', async () => {
+		await POST(makeEvent({ email: ' Visitor@Example.COM ' }));
+		await POST(makeEvent({ email: 'visitor@example.com' }));
+
+		const firstCall = vi.mocked(createDemoSession).mock.calls[0]?.[1];
+		const secondCall = vi.mocked(createDemoSession).mock.calls[1]?.[1];
+		expect(firstCall?.tokenHash).toBe(secondCall?.tokenHash);
 	});
 
 	it('preserves invite-code validation when invite codes are required', async () => {
