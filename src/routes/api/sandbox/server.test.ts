@@ -78,7 +78,7 @@ describe('POST /api/sandbox', () => {
 		vi.stubEnv('DATABASE_URL', 'postgres://example');
 		vi.stubEnv('E2B_API_KEY', 'e2b-key');
 		vi.stubEnv('SANDMAN_SESSION_SECRET', 'session-secret');
-		vi.stubEnv('SANDMAN_SESSION_CREATIONS_PER_TOKEN_PER_HOUR', '5');
+		vi.stubEnv('SANDMAN_SANDBOX_CREATIONS_PER_SESSION_PER_HOUR', '5');
 		vi.stubEnv('SANDMAN_MAX_ACTIVE_SANDBOXES', '20');
 		vi.stubEnv('SANDMAN_MAX_ACTIVE_SANDBOXES_PER_SESSION', '1');
 		vi.stubEnv('SANDMAN_SESSION_TTL_MS', '900000');
@@ -97,7 +97,7 @@ describe('POST /api/sandbox', () => {
 		expect(decrementRateLimitBucket).toHaveBeenCalledWith(
 			expect.anything(),
 			expect.objectContaining({
-				key: 'session-create:token-hash'
+				key: 'sandbox-create:session-1'
 			})
 		);
 		expect(vi.mocked(getSandboxRegistry)).not.toHaveBeenCalled();
@@ -116,7 +116,7 @@ describe('POST /api/sandbox', () => {
 		// session's hourly quota.
 		expect(decrementRateLimitBucket).toHaveBeenCalledWith(
 			expect.anything(),
-			expect.objectContaining({ key: 'session-create:token-hash' })
+			expect.objectContaining({ key: 'sandbox-create:session-1' })
 		);
 	});
 
@@ -177,7 +177,7 @@ describe('POST /api/sandbox', () => {
 		expect(decrementRateLimitBucket).toHaveBeenCalledWith(
 			expect.anything(),
 			expect.objectContaining({
-				key: 'session-create:token-hash'
+				key: 'sandbox-create:session-1'
 			})
 		);
 	});

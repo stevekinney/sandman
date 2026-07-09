@@ -46,7 +46,7 @@ export const POST: RequestHandler = async (event) => {
 
 	const database = getDatabase();
 	const now = new Date();
-	const rateLimitKey = `session-create:${session.tokenHash}`;
+	const rateLimitKey = `sandbox-create:${session.id}`;
 	const rateLimitWindowStart = getHourWindowStart(now);
 	let rateLimitIncremented = false;
 	let reservation: Awaited<ReturnType<typeof reserveSandboxSlot>>;
@@ -57,7 +57,7 @@ export const POST: RequestHandler = async (event) => {
 			now
 		});
 		rateLimitIncremented = true;
-		if (rateLimitCount > configuration.sessionCreationsPerTokenPerHour) {
+		if (rateLimitCount > configuration.sandboxCreationsPerSessionPerHour) {
 			logWarning({
 				event: 'sandbox.provision.blocked',
 				sessionId: session.id,

@@ -34,7 +34,7 @@ bun run dev
 | `SANDMAN_SESSION_TTL_MS` | Sandbox lifetime in milliseconds (default: `900000` / 15 min)             |
 | `SANDMAN_MAX_ACTIVE_SANDBOXES` | Global active sandbox limit (default: `20`) |
 | `SANDMAN_MAX_ACTIVE_SANDBOXES_PER_SESSION` | Active sandbox limit per browser session (default: `1`) |
-| `SANDMAN_SESSION_CREATIONS_PER_TOKEN_PER_HOUR` | Hourly sandbox creation limit per invite code hash (default: `5`) |
+| `SANDMAN_SANDBOX_CREATIONS_PER_SESSION_PER_HOUR` | Hourly sandbox creation limit per demo session (default: `5`) |
 
 ## Invite Codes
 

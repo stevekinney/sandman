@@ -13,7 +13,7 @@ describe('createHealthResponse', () => {
 			sessionTtlMs: 300_000,
 			maxActiveSandboxes: 20,
 			maxActiveSandboxesPerSession: 1,
-			sessionCreationsPerTokenPerHour: 5,
+			sandboxCreationsPerSessionPerHour: 5,
 			isProduction: true
 		});
 
@@ -32,7 +32,7 @@ describe('createHealthResponse', () => {
 				sessionTtlMs: 300_000,
 				maxActiveSandboxes: 20,
 				maxActiveSandboxesPerSession: 1,
-				sessionCreationsPerTokenPerHour: 5,
+				sandboxCreationsPerSessionPerHour: 5,
 				isProduction: true
 			},
 			{ database: async () => undefined }
