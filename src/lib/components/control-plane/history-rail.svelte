@@ -45,18 +45,10 @@
 				variant="tablist"
 				bind:value={lens}
 			>
-				<Segment
-					value="events"
-					id={historyTabId('events')}
-					controls="history-lens-events-panel"
-				>
+				<Segment value="events" id={historyTabId('events')} controls="history-lens-events-panel">
 					Events
 				</Segment>
-				<Segment
-					value="steps"
-					id={historyTabId('steps')}
-					controls="history-lens-steps-panel"
-				>
+				<Segment value="steps" id={historyTabId('steps')} controls="history-lens-steps-panel">
 					Steps
 				</Segment>
 			</SegmentedControl>

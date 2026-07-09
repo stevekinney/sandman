@@ -116,18 +116,8 @@
 			class="toolbar-shell__tabs"
 			bind:value={view}
 		>
-			<Segment
-				value="code"
-				id="center-view-code-tab"
-				controls="center-panel-code"
-			>
-				Code
-			</Segment>
-			<Segment
-				value="temporal"
-				id="center-view-temporal-tab"
-				controls="center-panel-temporal"
-			>
+			<Segment value="code" id="center-view-code-tab" controls="center-panel-code">Code</Segment>
+			<Segment value="temporal" id="center-view-temporal-tab" controls="center-panel-temporal">
 				Temporal UI
 			</Segment>
 		</SegmentedControl>
