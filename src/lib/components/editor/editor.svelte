@@ -24,6 +24,9 @@
 		type ExecutionPointer
 	} from '$lib/components/editor/execution-pointer';
 	import WorkerStatusStrip from '$lib/components/editor/worker-status-strip.svelte';
+	import Tab from '@lostgradient/cinder/tab';
+	import TabList from '@lostgradient/cinder/tab-list';
+	import Tabs from '@lostgradient/cinder/tabs';
 	import type { WorkerStatus } from '$lib/contracts/sandbox';
 	import type * as Monaco from 'monaco-editor';
 	import { SvelteMap } from 'svelte/reactivity';
@@ -59,36 +62,6 @@
 
 	function editorTabId(fileName: string): string {
 		return `editor-tab-${fileName}`;
-	}
-
-	function focusEditorTab(fileName: string): void {
-		const element = document.getElementById(editorTabId(fileName));
-		if (element instanceof HTMLButtonElement) element.focus();
-	}
-
-	function selectEditorFile(fileName: string): void {
-		activeFileName = fileName;
-		focusEditorTab(fileName);
-	}
-
-	function handleEditorTabKeydown(event: KeyboardEvent): void {
-		const currentIndex = FILE_DESCRIPTORS.findIndex(
-			(descriptor) => descriptor.name === activeFileName
-		);
-		const lastIndex = FILE_DESCRIPTORS.length - 1;
-		const nextIndex =
-			event.key === 'Home'
-				? 0
-				: event.key === 'End'
-					? lastIndex
-					: event.key === 'ArrowRight' || event.key === 'ArrowDown'
-						? Math.min(currentIndex + 1, lastIndex)
-						: event.key === 'ArrowLeft' || event.key === 'ArrowUp'
-							? Math.max(currentIndex - 1, 0)
-							: null;
-		if (nextIndex === null) return;
-		event.preventDefault();
-		selectEditorFile(FILE_DESCRIPTORS[nextIndex].name);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -344,31 +317,23 @@
 
 <div class="sandman-editor">
 	<div class="editor-tabs">
-		<div role="tablist" aria-label="Editor files" class="cinder-tab-list editor-tab-list">
-			{#each FILE_DESCRIPTORS as descriptor (descriptor.name)}
-				<button
-					type="button"
-					role="tab"
-					id={editorTabId(descriptor.name)}
-					class={`cinder-tab editor-tab${activeFile.name === descriptor.name ? ' active' : ''}${
-						descriptor.readOnly ? ' readonly' : ''
-					}`}
-					data-cinder-active={activeFile.name === descriptor.name ? '' : undefined}
-					data-cinder-value={descriptor.name}
-					data-variant="horizontal"
-					aria-selected={activeFile.name === descriptor.name}
-					aria-controls="editor-panel"
-					tabindex={activeFile.name === descriptor.name ? 0 : -1}
-					onclick={() => selectEditorFile(descriptor.name)}
-					onkeydown={handleEditorTabKeydown}
-				>
-					{descriptor.name}
-					{#if descriptor.readOnly}
-						<span class="readonly-badge" aria-hidden="true">read-only</span>
-					{/if}
-				</button>
-			{/each}
-		</div>
+		<Tabs bind:value={activeFileName}>
+			<TabList label="Editor files" class="editor-tab-list">
+				{#each FILE_DESCRIPTORS as descriptor (descriptor.name)}
+					<Tab
+						id={editorTabId(descriptor.name)}
+						value={descriptor.name}
+						controls="editor-panel"
+						class={`editor-tab${descriptor.readOnly ? ' editor-tab--readonly' : ''}`}
+					>
+						{descriptor.name}
+						{#if descriptor.readOnly}
+							<span class="readonly-badge" aria-hidden="true">read-only</span>
+						{/if}
+					</Tab>
+				{/each}
+			</TabList>
+		</Tabs>
 	</div>
 
 	{#if isLoading}
@@ -412,9 +377,8 @@
 		color: var(--cinder-text-muted, #94a3b8);
 	}
 
-	.sandman-editor :global(.editor-tabs) {
+	.editor-tabs {
 		flex-shrink: 0;
-		gap: 0;
 	}
 
 	.sandman-editor :global(.editor-tab-list) {
@@ -440,18 +404,18 @@
 		flex-shrink: 0;
 	}
 
-	.sandman-editor :global(.editor-tab:hover:not(.active)) {
+	.sandman-editor :global(.editor-tab:hover:not([aria-selected='true'])) {
 		background: var(--cinder-surface-hover, #17263a);
 		color: var(--cinder-text, #e2e8f0);
 	}
 
-	.sandman-editor :global(.editor-tab.active) {
+	.sandman-editor :global(.editor-tab[aria-selected='true']) {
 		background: var(--cinder-bg, #0b0f17);
 		border-color: var(--cinder-border, #334155);
 		color: var(--cinder-text, #f8fafc);
 	}
 
-	.sandman-editor :global(.editor-tab.readonly) {
+	.sandman-editor :global(.editor-tab--readonly) {
 		cursor: default;
 		opacity: 0.75;
 	}
