@@ -196,13 +196,15 @@
 </script>
 
 <div class="temporal-ui-frame {className ?? ''}">
-	<div class="temporal-ui-frame__status" data-testid="temporal-ui-status">
-		<StatusDot
-			{connectionState}
-			label="Temporal UI"
-			aria-label={`Temporal UI: ${accessibleConnectionState}`}
-			showLabel
-		/>
+	<div
+		class="temporal-ui-frame__status"
+		data-testid="temporal-ui-status"
+		role="status"
+		aria-live="polite"
+		aria-atomic="true"
+		aria-label={`Temporal UI: ${accessibleConnectionState}`}
+	>
+		<StatusDot {connectionState} label="Temporal UI" live={false} showLabel />
 	</div>
 	{#if iframeReady}
 		{#key iframeRevision}

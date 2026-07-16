@@ -13,7 +13,7 @@ import TemporalUiFrame from './temporal-ui-frame.svelte';
 const connectedProbe = () => vi.fn(async () => true);
 const disconnectedProbe = () => vi.fn(async () => false);
 const inertFrameSource = 'about:blank';
-const temporalUiStatus = () => page.getByTestId('temporal-ui-status').getByRole('status');
+const temporalUiStatus = () => page.getByTestId('temporal-ui-status');
 
 describe('TemporalUiFrame', () => {
 	afterEach(() => vi.restoreAllMocks());
@@ -27,11 +27,15 @@ describe('TemporalUiFrame', () => {
 		await expect.element(iframe).toHaveAttribute('data-proxied-src', '/sbx/sbx-test-123/ui/');
 	});
 
-	it('renders a live-region StatusDot for connection state', async () => {
+	it('renders a named live region for connection state', async () => {
 		render(TemporalUiFrame, {
 			props: { sandboxId: 'sbx-test-123', probe: connectedProbe(), frameSource: inertFrameSource }
 		});
-		await expect.element(temporalUiStatus()).toHaveTextContent('Temporal UI: Connected');
+		await expect.element(temporalUiStatus()).toHaveAttribute('role', 'status');
+		await expect.element(temporalUiStatus()).toHaveAttribute('aria-live', 'polite');
+		await expect
+			.element(temporalUiStatus())
+			.toHaveAttribute('aria-label', 'Temporal UI: Connected');
 	});
 
 	it('shows "Temporal UI" label text', async () => {
@@ -118,7 +122,9 @@ describe('TemporalUiFrame', () => {
 		const probe = disconnectedProbe();
 		render(TemporalUiFrame, { props: { sandboxId: 'sbx-test-123', probe } });
 		await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce());
-		await expect.element(temporalUiStatus()).toHaveTextContent('Temporal UI: Disconnected');
+		await expect
+			.element(temporalUiStatus())
+			.toHaveAttribute('aria-label', 'Temporal UI: Disconnected');
 		await expect
 			.element(page.getByRole('heading', { name: 'Starting Temporal services' }))
 			.toBeInTheDocument();
@@ -131,7 +137,9 @@ describe('TemporalUiFrame', () => {
 		});
 		render(TemporalUiFrame, { props: { sandboxId: 'sbx-test-123', probe } });
 		await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce());
-		await expect.element(temporalUiStatus()).toHaveTextContent('Temporal UI: Disconnected');
+		await expect
+			.element(temporalUiStatus())
+			.toHaveAttribute('aria-label', 'Temporal UI: Disconnected');
 		await expect
 			.element(page.getByRole('heading', { name: 'Starting Temporal services' }))
 			.toBeInTheDocument();
