@@ -205,6 +205,7 @@
 		aria-label={`Temporal UI: ${accessibleConnectionState}`}
 	>
 		<StatusDot {connectionState} label="Temporal UI" live={false} showLabel />
+		<span class="temporal-ui-frame__state">Temporal UI: {accessibleConnectionState}</span>
 	</div>
 	{#if iframeReady}
 		{#key iframeRevision}
@@ -239,6 +240,18 @@
 		padding: 0.25rem 0.5rem;
 		flex-shrink: 0;
 		background: var(--cinder-bg);
+	}
+
+	.temporal-ui-frame__state {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	.temporal-ui-frame__iframe {

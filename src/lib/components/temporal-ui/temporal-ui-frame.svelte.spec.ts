@@ -36,6 +36,7 @@ describe('TemporalUiFrame', () => {
 		await expect
 			.element(temporalUiStatus())
 			.toHaveAttribute('aria-label', 'Temporal UI: Connected');
+		await expect.element(temporalUiStatus()).toHaveTextContent('Temporal UI: Connected');
 	});
 
 	it('shows "Temporal UI" label text', async () => {

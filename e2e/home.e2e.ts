@@ -17,6 +17,10 @@ test('home page enables session provisioning after the user enters an email', as
 	await expect(newSessionButton).toBeDisabled();
 
 	await page.getByLabel('Email').fill('sandman@example.com');
+	const inviteCodeInput = page.getByLabel('Invite code');
+	if (await inviteCodeInput.isVisible()) {
+		await inviteCodeInput.fill('playwright-invite-code');
+	}
 	await expect(newSessionButton).toBeEnabled();
 });
 
