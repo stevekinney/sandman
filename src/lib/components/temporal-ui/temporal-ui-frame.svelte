@@ -126,6 +126,15 @@
 	const src = $derived(`/sbx/${sandboxId}/ui/`);
 	const iframeSource = $derived(frameSource ?? src);
 	const iframeReady = $derived(connectionState === 'connected');
+	const accessibleConnectionState = $derived(
+		connectionState === 'connected'
+			? 'Connected'
+			: connectionState === 'disconnected'
+				? 'Disconnected'
+				: connectionState === 'error'
+					? 'Error'
+					: 'Connecting'
+	);
 	const startupTitle = $derived(
 		sandboxStatus === 'ready' ? 'Connecting to Temporal UI' : 'Starting Temporal services'
 	);
@@ -188,7 +197,12 @@
 
 <div class="temporal-ui-frame {className ?? ''}">
 	<div class="temporal-ui-frame__status" data-testid="temporal-ui-status">
-		<StatusDot {connectionState} label="Temporal UI" showLabel />
+		<StatusDot
+			{connectionState}
+			label="Temporal UI"
+			aria-label={`Temporal UI: ${accessibleConnectionState}`}
+			showLabel
+		/>
 	</div>
 	{#if iframeReady}
 		{#key iframeRevision}

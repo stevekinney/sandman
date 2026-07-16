@@ -44,7 +44,7 @@ describe('WorkerStatusStrip', () => {
 		const { container } = render(WorkerStatusStrip, {
 			workerStatus: { ok: false, phase: 'compile-error', stderr: '' }
 		});
-		// CodeBlock should not be rendered for empty stderr
-		expect(container.querySelector('.cinder-code-block')).toBeNull();
+		// No semantic preformatted error output should be rendered for empty stderr.
+		expect(container.querySelector('pre')).toBeNull();
 	});
 });

@@ -10,9 +10,14 @@ test('home page renders the hero heading and Sandman brand', async ({ page }) =>
 	await expect(page.getByText('Ephemeral Temporal sandboxes in the browser')).toBeVisible();
 });
 
-test('home page uses the Cinder button for session provisioning', async ({ page }) => {
+test('home page enables session provisioning after the user enters an email', async ({ page }) => {
 	await page.goto('/');
-	await expect(page.getByRole('button', { name: 'New Session' })).toHaveClass(/cinder-button/);
+	const newSessionButton = page.getByRole('button', { name: 'New Session' });
+	await expect(newSessionButton).toBeVisible();
+	await expect(newSessionButton).toBeDisabled();
+
+	await page.getByLabel('Email').fill('sandman@example.com');
+	await expect(newSessionButton).toBeEnabled();
 });
 
 test('home page mock history actions use app-owned inert markup', async ({ page }) => {
@@ -25,9 +30,6 @@ test('home page mock history actions use app-owned inert markup', async ({ page 
 	await expect(
 		historyActions.locator('.sd-history-action').filter({ hasText: 'Kill worker' })
 	).toHaveCount(1);
-	await expect(historyActions.locator('.cinder-button')).toHaveCount(0);
-	await expect(historyActions.locator('.cinder-button__icon')).toHaveCount(0);
-	await expect(historyActions.locator('[data-cinder-variant], [data-cinder-size]')).toHaveCount(0);
 	await expect(historyActions.getByRole('button')).toHaveCount(0);
 });
 

@@ -66,11 +66,11 @@ describe('GuidedTour', () => {
 
 		const nav = page.getByRole('navigation', { name: 'Tour progress' });
 		const skippedItem = nav.getByText(TOUR[1].title).element().closest('li');
-		expect(skippedItem?.getAttribute('data-cinder-state')).toBe('skipped');
+		expect(skippedItem?.textContent).toContain('Skipped');
 
 		// The completed step still reads as done.
 		const doneItem = nav.getByText(TOUR[0].title).element().closest('li');
-		expect(doneItem?.getAttribute('data-cinder-state')).toBe('complete');
+		expect(doneItem?.textContent).toContain('Completed');
 		await expect.element(nav.getByText('Skipped', { exact: false })).toBeInTheDocument();
 	});
 
