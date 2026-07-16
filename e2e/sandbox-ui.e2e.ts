@@ -68,12 +68,16 @@ test('TemporalUiFrame renders an iframe whose src is the proxied path', async ({
 	expect(src).toBe(`/sbx/${TEST_SESSION_ID}/ui/`);
 });
 
-test('editor is the default center view with Cinder file tabs', async ({ page }) => {
+test('editor is the default center view with accessible file tabs', async ({ page }) => {
 	await page.goto(`/${TEST_SESSION_ID}`);
 	await expect(page.locator('#center-panel-code')).toBeVisible();
 	await expect(page.locator('.editor-tabs')).toBeVisible();
-	await expect(page.getByRole('tablist', { name: 'Editor files' })).toHaveClass(/cinder-tab-list/);
-	await expect(page.getByRole('tab', { name: 'workflow.ts' })).toHaveClass(/cinder-tab/);
+
+	const editorTabs = page.getByRole('tablist', { name: 'Editor files' });
+	const workflowTab = editorTabs.getByRole('tab', { name: 'workflow.ts' });
+	await expect(editorTabs).toBeVisible();
+	await expect(workflowTab).toHaveAttribute('aria-selected', 'true');
+	await expect(workflowTab).toHaveAttribute('tabindex', '0');
 });
 
 test('guided journey and workflow history rails are rendered', async ({ page }) => {

@@ -126,6 +126,15 @@
 	const src = $derived(`/sbx/${sandboxId}/ui/`);
 	const iframeSource = $derived(frameSource ?? src);
 	const iframeReady = $derived(connectionState === 'connected');
+	const accessibleConnectionState = $derived(
+		connectionState === 'connected'
+			? 'Connected'
+			: connectionState === 'disconnected'
+				? 'Disconnected'
+				: connectionState === 'error'
+					? 'Error'
+					: 'Connecting'
+	);
 	const startupTitle = $derived(
 		sandboxStatus === 'ready' ? 'Connecting to Temporal UI' : 'Starting Temporal services'
 	);
@@ -187,8 +196,16 @@
 </script>
 
 <div class="temporal-ui-frame {className ?? ''}">
-	<div class="temporal-ui-frame__status" data-testid="temporal-ui-status">
-		<StatusDot {connectionState} label="Temporal UI" showLabel />
+	<div
+		class="temporal-ui-frame__status"
+		data-testid="temporal-ui-status"
+		role="status"
+		aria-live="polite"
+		aria-atomic="true"
+		aria-label={`Temporal UI: ${accessibleConnectionState}`}
+	>
+		<StatusDot {connectionState} label="Temporal UI" live={false} showLabel />
+		<span class="temporal-ui-frame__state">Temporal UI: {accessibleConnectionState}</span>
 	</div>
 	{#if iframeReady}
 		{#key iframeRevision}
@@ -223,6 +240,18 @@
 		padding: 0.25rem 0.5rem;
 		flex-shrink: 0;
 		background: var(--cinder-bg);
+	}
+
+	.temporal-ui-frame__state {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		margin: -1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+		border: 0;
 	}
 
 	.temporal-ui-frame__iframe {
