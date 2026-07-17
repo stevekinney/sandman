@@ -60,8 +60,11 @@ the sandbox before calling `SandboxClient.restartWorker(handle)`. The method nam
 
 Always verify a Cinder component exists in
 `node_modules/@lostgradient/cinder/dist/index.d.ts` before importing it.
-Import from the per-component subpath (`@lostgradient/cinder/badge`, not the barrel), and
-import the matching styles (`@lostgradient/cinder/badge/styles`).
+Import components from their per-component subpaths (`@lostgradient/cinder/badge`, not the
+barrel). The app intentionally loads Cinder component CSS globally from
+`src/routes/+layout.svelte` via `@lostgradient/cinder/styles/all`; do not add per-component
+sidecar style imports unless the repository intentionally changes that root stylesheet strategy
+in the same change.
 
 ## TypeScript conventions
 
